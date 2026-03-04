@@ -1,0 +1,16 @@
+# Python
+backend/venv/
+backend/__pycache__/
+*.pyc
+backend/.env
+# Node.js
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+frontend/out/
+# Data & SQLite
+data/*.db
+data/uploads/
+*.log
+# OS
+.DS_Store
