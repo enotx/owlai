@@ -9,8 +9,8 @@ frontend/.next/
 frontend/.env.local
 frontend/out/
 # Data & SQLite
-data/*.db
-data/uploads/
+backend/data/*.db
+backend/data/uploads/
 *.log
 # OS
 .DS_Store

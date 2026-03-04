@@ -1,0 +1,49 @@
+.
+├── .gitignore
+├── backend
+│   ├── app
+│   │   ├── __init__.py
+│   │   ├── database.py
+│   │   ├── main.py
+│   │   ├── models.py
+│   │   ├── routers
+│   │   │   ├── __init__.py
+│   │   │   ├── chat.py
+│   │   │   ├── execute.py
+│   │   │   ├── knowledge.py
+│   │   │   └── tasks.py
+│   │   └── schemas.py
+│   └── requirements.txt
+├── frontend
+│   ├── app
+│   │   └── api
+│   │       └── backend
+│   │           └── [...path]
+│   │               └── route.ts
+│   ├── eslint.config.mjs
+│   ├── lib
+│   │   └── api.ts
+│   ├── next-env.d.ts
+│   ├── next.config.ts
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── postcss.config.mjs
+│   ├── public
+│   │   ├── file.svg
+│   │   ├── globe.svg
+│   │   ├── next.svg
+│   │   ├── vercel.svg
+│   │   └── window.svg
+│   ├── README.md
+│   ├── src
+│   │   └── app
+│   │       ├── favicon.ico
+│   │       ├── globals.css
+│   │       ├── layout.tsx
+│   │       └── page.tsx
+│   ├── store
+│   │   └── app-store.ts
+│   └── tsconfig.json
+└── README.md
+
+14 directories, 33 files
