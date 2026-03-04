@@ -1,9 +1,11 @@
+# backend/app/main.py
+
 """FastAPI 应用入口"""
 
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-
+from fastapi.middleware.cors import CORSMiddleware
 from app.database import init_db
 from app.schemas import HealthResponse
 from app.routers import tasks, knowledge, chat, execute

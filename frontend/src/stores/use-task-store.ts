@@ -1,3 +1,5 @@
+// frontend/src/stores/use-task-store.ts
+
 /**
  * Zustand 全局状态管理：Task、Knowledge、Chat
  */
@@ -52,6 +54,11 @@ interface TaskStore {
   setSteps: (steps: Step[]) => void;
   addStep: (step: Step) => void;
 
+  /** 将 token 追加到最后一条 assistant 消息的 content */
+  appendToLastStep: (token: string) => void;
+  /** 流结束后用持久化数据替换临时 Step */
+  finalizeLastStep: (step: Step) => void;
+
   // 数据面板展示
   previewData: Record<string, unknown>[] | null;
   previewColumns: string[];
@@ -86,6 +93,25 @@ export const useTaskStore = create<TaskStore>((set) => ({
   steps: [],
   setSteps: (steps) => set({ steps }),
   addStep: (step) => set((s) => ({ steps: [...s.steps, step] })),
+
+  appendToLastStep: (token) =>
+    set((s) => {
+      const steps = [...s.steps];
+      const last = steps[steps.length - 1];
+      if (last && last.role === "assistant") {
+        steps[steps.length - 1] = { ...last, content: last.content + token };
+      }
+      return { steps };
+    }),
+  finalizeLastStep: (step) =>
+    set((s) => {
+      const steps = [...s.steps];
+      const idx = steps.length - 1;
+      if (idx >= 0 && steps[idx].role === "assistant") {
+        steps[idx] = step;
+      }
+      return { steps };
+    }),
 
   // Data Panel
   previewData: null,

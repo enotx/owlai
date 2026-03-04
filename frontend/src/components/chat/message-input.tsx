@@ -11,12 +11,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useTaskStore } from "@/stores/use-task-store";
 import { sendMessage } from "@/lib/api";
+import { streamChat } from "@/lib/api";
+import type { Step } from "@/stores/use-task-store";
 import { SendHorizonal, Loader2 } from "lucide-react";
+
 
 export default function MessageInput() {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { currentTaskId, addStep, isSending, setIsSending } = useTaskStore();
+  // const { currentTaskId, addStep, isSending, setIsSending } = useTaskStore();
+  const { currentTaskId, addStep, appendToLastStep, finalizeLastStep, isSending, setIsSending } =
+  useTaskStore();
+
 
   /* 自动调整 textarea 高度 */
   useEffect(() => {
@@ -27,14 +33,49 @@ export default function MessageInput() {
     }
   }, [text]);
 
+  // const handleSend = async () => {
+  //   if (!text.trim() || !currentTaskId || isSending) return;
+  //   const message = text.trim();
+  //   setText("");
+
+  //   // 立即将用户消息添加到界面
+  //   addStep({
+  //     id: `temp-${Date.now()}`,
+  //     task_id: currentTaskId,
+  //     role: "user",
+  //     content: message,
+  //     code: null,
+  //     code_output: null,
+  //     created_at: new Date().toISOString(),
+  //   });
+
+  //   setIsSending(true);
+  //   try {
+  //     const res = await sendMessage(currentTaskId, message);
+  //     addStep(res.data);
+  //   } catch (err) {
+  //     console.error("Send failed:", err);
+  //     addStep({
+  //       id: `error-${Date.now()}`,
+  //       task_id: currentTaskId,
+  //       role: "assistant",
+  //       content: "⚠️ 请求失败，请稍后重试。",
+  //       code: null,
+  //       code_output: null,
+  //       created_at: new Date().toISOString(),
+  //     });
+  //   } finally {
+  //     setIsSending(false);
+  //   }
+  // };
+
   const handleSend = async () => {
     if (!text.trim() || !currentTaskId || isSending) return;
     const message = text.trim();
     setText("");
-
-    // 立即将用户消息添加到界面
+    // 1. 立即显示用户消息
     addStep({
-      id: `temp-${Date.now()}`,
+      id: `temp-user-${Date.now()}`,
       task_id: currentTaskId,
       role: "user",
       content: message,
@@ -42,26 +83,42 @@ export default function MessageInput() {
       code_output: null,
       created_at: new Date().toISOString(),
     });
-
+    // 2. 插入空的 assistant 占位（后续逐 token 填充）
+    addStep({
+      id: `temp-ai-${Date.now()}`,
+      task_id: currentTaskId,
+      role: "assistant",
+      content: "",
+      code: null,
+      code_output: null,
+      created_at: new Date().toISOString(),
+    });
     setIsSending(true);
     try {
-      const res = await sendMessage(currentTaskId, message);
-      addStep(res.data);
+      await streamChat(
+        currentTaskId,
+        message,
+        // onToken —— 逐 token 追加到最后一条 assistant 消息
+        (token) => {
+          appendToLastStep(token);
+        },
+        // onDone —— 用后端持久化后的完整 Step 数据替换临时条目
+        (stepData) => {
+          finalizeLastStep(stepData as unknown as Step);
+        },
+        // onError
+        (error) => {
+          appendToLastStep(`\n\n⚠️ ${error}`);
+        },
+      );
     } catch (err) {
-      console.error("Send failed:", err);
-      addStep({
-        id: `error-${Date.now()}`,
-        task_id: currentTaskId,
-        role: "assistant",
-        content: "⚠️ 请求失败，请稍后重试。",
-        code: null,
-        code_output: null,
-        created_at: new Date().toISOString(),
-      });
+      console.error("Stream failed:", err);
+      appendToLastStep("\n\n⚠️ 网络请求失败，请检查后端是否正常运行。");
     } finally {
       setIsSending(false);
     }
   };
+
 
   /* Enter 发送，Shift+Enter 换行 */
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
