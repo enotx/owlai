@@ -11,6 +11,7 @@ from app.database import get_db
 from app.models import Step
 from app.schemas import ChatRequest, StepResponse
 from app.services.agent import run_agent_stream
+import asyncio
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -24,12 +25,21 @@ async def stream_message(body: ChatRequest, db: AsyncSession = Depends(get_db)):
     """
 
     async def event_generator():
-        async for sse_line in run_agent_stream(
-            task_id=body.task_id,
-            user_message=body.message,
-            db=db,
-        ):
-            yield sse_line
+        try:
+            async for sse_line in run_agent_stream(
+                task_id=body.task_id,
+                user_message=body.message,
+                db=db,
+            ):
+                yield sse_line
+        except asyncio.CancelledError:
+            # 客户端断开连接，静默退出
+            return
+        except Exception as e:
+            # 未预期错误，发送错误事件后关闭
+            import json
+            yield f"data: {json.dumps({'type': 'error', 'content': f'Stream error: {str(e)}'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'steps': []}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_generator(),

@@ -112,11 +112,29 @@ export default function MessageInput() {
             break;
           }
 
-          case "done":
-            // 全部完成
+          case "done": {
+            // 全部完成 — 冲刷可能残留的流式文本
+            const finalState = useTaskStore.getState();
+            if (
+              finalState.streamingMessage &&
+              finalState.streamingMessage.content.trim()
+            ) {
+              addStep({
+                id: `stream-flush-${Date.now()}`,
+                task_id: currentTaskId!,
+                role: "assistant",
+                step_type: "assistant_message",
+                content: finalState.streamingMessage.content.trim(),
+                code: null,
+                code_output: null,
+                created_at: new Date().toISOString(),
+              });
+            }
             clearStreaming();
             setPendingTool(null);
             break;
+          }
+
 
           case "error":
             clearStreaming();

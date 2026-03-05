@@ -16,6 +16,10 @@ import tempfile
 import textwrap
 import time
 from typing import Any
+from app.services.code_security import check_code_security
+
+
+
 # 沙箱参数
 SANDBOX_TIMEOUT = 60  # 秒
 MAX_OUTPUT_LENGTH = 50_000  # 最大输出字符数
@@ -64,8 +68,8 @@ def _build_sandbox_script(
     _safe_builtins = {{}}
     _BLOCKED = {{'exec', 'eval', 'compile', '__import__', 'open',
                  'input', 'breakpoint', 'exit', 'quit', 'globals',
-                 'locals', 'vars', 'dir', 'getattr', 'setattr',
-                 'delattr', 'memoryview', 'classmethod', 'staticmethod'}}
+                 'locals', 'vars', 'setattr', 'delattr',
+                 'memoryview', 'classmethod', 'staticmethod'}}
     for _k in dir(_builtins_mod):
         if _k not in _BLOCKED and not _k.startswith('_'):
             _safe_builtins[_k] = getattr(_builtins_mod, _k)
@@ -115,6 +119,33 @@ def _build_sandbox_script(
     _safe_builtins['StopIteration'] = StopIteration
     _safe_builtins['ZeroDivisionError'] = ZeroDivisionError
     _safe_builtins['NotImplementedError'] = NotImplementedError
+    _safe_builtins['dir'] = dir
+    _safe_builtins['getattr'] = getattr
+    _safe_builtins['super'] = super
+    _safe_builtins['property'] = property
+    _safe_builtins['frozenset'] = frozenset
+    _safe_builtins['bytes'] = bytes
+    _safe_builtins['bytearray'] = bytearray
+    _safe_builtins['complex'] = complex
+    _safe_builtins['format'] = format
+    _safe_builtins['iter'] = iter
+    _safe_builtins['next'] = next
+    _safe_builtins['callable'] = callable
+    _safe_builtins['chr'] = chr
+    _safe_builtins['ord'] = ord
+    _safe_builtins['hex'] = hex
+    _safe_builtins['oct'] = oct
+    _safe_builtins['bin'] = bin
+    _safe_builtins['pow'] = pow
+    _safe_builtins['divmod'] = divmod
+    _safe_builtins['object'] = object
+    _safe_builtins['ArithmeticError'] = ArithmeticError
+    _safe_builtins['LookupError'] = LookupError
+    _safe_builtins['OverflowError'] = OverflowError
+    _safe_builtins['UnicodeError'] = UnicodeError
+    _safe_builtins['UnicodeDecodeError'] = UnicodeDecodeError
+    _safe_builtins['UnicodeEncodeError'] = UnicodeEncodeError
+
     # ── 预加载数据分析库 ────────────────────────────────────
     import pandas as __pd
     import numpy as __np
@@ -175,6 +206,21 @@ async def execute_code_in_sandbox(
     Returns:
         {"success": bool, "output": str|None, "error": str|None, "execution_time": float}
     """
+
+    # ── AST 静态安全检查（在子进程之前拦截） ──────────────
+    security_result = check_code_security(code)
+    if not security_result.safe:
+        return {
+            "success": False,
+            "output": None,
+            "error": (
+                "🛡️ Code blocked by security check:\n"
+                + "\n".join(f"  • {v}" for v in security_result.violations)
+            ),
+            "execution_time": 0.0,
+        }
+
+
     # 写入临时脚本文件
     script_content = _build_sandbox_script(code, csv_var_map)
     tmp_file = None

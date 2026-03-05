@@ -93,40 +93,87 @@ export async function streamChat(
   message: string,
   onEvent: (event: SSEEvent) => void,
 ) {
-  const res = await fetch("/api/chat/stream", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ task_id: taskId, message }),
-  });
-  if (!res.ok || !res.body) {
-    onEvent({
-      type: "error",
-      content: `HTTP ${res.status}: ${res.statusText}`,
+  // 整体超时控制：5 分钟（覆盖多轮 tool 调用场景）
+  const controller = new AbortController();
+  const globalTimeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+  try {
+    const res = await fetch("/api/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_id: taskId, message }),
+      signal: controller.signal,
     });
-    return;
-  }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    // SSE 协议：事件以 \n\n 分隔
-    const parts = buffer.split("\n\n");
-    buffer = parts.pop() || "";
-    for (const part of parts) {
-      for (const line of part.split("\n")) {
+    if (!res.ok || !res.body) {
+      onEvent({
+        type: "error",
+        content: `HTTP ${res.status}: ${res.statusText}`,
+      });
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    // 单 chunk 间隔超时：90 秒无数据视为异常
+    let chunkTimer: ReturnType<typeof setTimeout> | null = null;
+    const resetChunkTimer = () => {
+      if (chunkTimer) clearTimeout(chunkTimer);
+      chunkTimer = setTimeout(() => {
+        reader.cancel();
+        onEvent({
+          type: "error",
+          content: "Response stream timed out (no data for 90s).",
+        });
+        onEvent({ type: "done", steps: [] });
+      }, 90_000);
+    };
+    resetChunkTimer();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      resetChunkTimer();
+      buffer += decoder.decode(value, { stream: true });
+      // SSE 协议：事件以 \n\n 分隔
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+      for (const part of parts) {
+        for (const line of part.split("\n")) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data: SSEEvent = JSON.parse(line.slice(6));
+              onEvent(data);
+            } catch {
+              // JSON 解析失败忽略
+            }
+          }
+        }
+      }
+    }
+    if (chunkTimer) clearTimeout(chunkTimer);
+    // 处理 buffer 中可能残留的最后一个事件
+    if (buffer.trim()) {
+      for (const line of buffer.split("\n")) {
         if (line.startsWith("data: ")) {
           try {
             const data: SSEEvent = JSON.parse(line.slice(6));
             onEvent(data);
           } catch {
-            // JSON 解析失败忽略
+            // ignore
           }
         }
       }
     }
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      onEvent({
+        type: "error",
+        content: "Request timed out (exceeded 5 minutes).",
+      });
+      onEvent({ type: "done", steps: [] });
+    } else {
+      throw err; // 让 message-input.tsx 的 catch 处理
+    }
+  } finally {
+    clearTimeout(globalTimeout);
   }
 }
 

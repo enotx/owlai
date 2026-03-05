@@ -109,7 +109,19 @@ export const useTaskStore = create<TaskStore>((set) => ({
   tasks: [],
   currentTaskId: null,
   setTasks: (tasks) => set({ tasks }),
-  setCurrentTaskId: (id) => set({ currentTaskId: id }),
+  setCurrentTaskId: (id) =>
+    set({
+      currentTaskId: id,
+      // 切换 Task 时重置聊天相关状态
+      steps: [],
+      streamingMessage: null,
+      pendingTool: null,
+      isSending: false,
+      knowledgeList: [],
+      previewData: null,
+      previewColumns: [],
+    }),
+
   addTask: (task) => set((s) => ({ tasks: [task, ...s.tasks] })),
   removeTask: (id) =>
     set((s) => ({

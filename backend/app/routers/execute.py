@@ -37,15 +37,30 @@ async def _build_csv_var_map(task_id: str, db: AsyncSession) -> dict[str, str]:
 
 
 @router.post("", response_model=ExecuteResponse)
+
 async def execute_code(body: ExecuteRequest, db: AsyncSession = Depends(get_db)):
     """执行 Pandas 代码（沙箱隔离）"""
-    csv_var_map = await _build_csv_var_map(body.task_id, db)
-
-    result = await execute_code_in_sandbox(
-        code=body.code,
-        csv_var_map=csv_var_map,
-    )
-
+    try:
+        csv_var_map = await _build_csv_var_map(body.task_id, db)
+    except Exception as e:
+        return ExecuteResponse(
+            success=False,
+            output=None,
+            error=f"Failed to load datasets: {str(e)}",
+            execution_time=0.0,
+        )
+    try:
+        result = await execute_code_in_sandbox(
+            code=body.code,
+            csv_var_map=csv_var_map,
+        )
+    except Exception as e:
+        return ExecuteResponse(
+            success=False,
+            output=None,
+            error=f"Sandbox error: {str(e)}",
+            execution_time=0.0,
+        )
     return ExecuteResponse(
         success=result["success"],
         output=result.get("output"),

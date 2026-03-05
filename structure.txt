@@ -16,7 +16,9 @@
 │   │   ├── schemas.py
 │   │   └── services
 │   │       ├── __init__.py
-│   │       └── data_processor.py
+│   │       ├── agent.py
+│   │       ├── data_processor.py
+│   │       └── sandbox.py
 │   └── requirements.txt
 ├── frontend
 │   ├── components.json
@@ -72,4 +74,4 @@
 ├── README.md
 └── structure.txt
 
-19 directories, 54 files
+19 directories, 56 files
