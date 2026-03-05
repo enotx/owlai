@@ -19,6 +19,7 @@ from typing import Any
 # 沙箱参数
 SANDBOX_TIMEOUT = 60  # 秒
 MAX_OUTPUT_LENGTH = 50_000  # 最大输出字符数
+
 def _build_sandbox_script(
     code: str,
     csv_var_map: dict[str, str],
@@ -27,13 +28,20 @@ def _build_sandbox_script(
     构建在子进程中执行的 Python 脚本。
     csv_var_map: {variable_name: absolute_file_path}
     """
-    # CSV 加载语句
+    # CSV 加载语句 —— 每行带 4 空格缩进，与 textwrap.dedent 模板对齐
     loader_lines = []
     for var_name, fpath in csv_var_map.items():
         # 转义路径中的反斜杠（Windows 兼容）
         escaped_path = fpath.replace("\\", "\\\\")
-        loader_lines.append(f'{var_name} = __pd.read_csv("{escaped_path}")')
+        # 注意：4空格前缀与 textwrap.dedent 模板缩进一致
+        loader_lines.append(f'    {var_name} = __pd.read_csv("{escaped_path}")')
     loader_code = "\n".join(loader_lines)
+
+    # namespace 注入语句 —— 同样带 4 空格缩进
+    namespace_inject = chr(10).join(
+        f"    _namespace['{var}'] = {var}" for var in csv_var_map.keys()
+    )
+
     script = textwrap.dedent(f"""\
     import sys
     import json
@@ -62,7 +70,7 @@ def _build_sandbox_script(
         if _k not in _BLOCKED and not _k.startswith('_'):
             _safe_builtins[_k] = getattr(_builtins_mod, _k)
     _safe_builtins['__import__'] = _safe_import
-    _safe_builtins['print'] = print  # 保留 print
+    _safe_builtins['print'] = print
     _safe_builtins['range'] = range
     _safe_builtins['len'] = len
     _safe_builtins['enumerate'] = enumerate
@@ -111,7 +119,7 @@ def _build_sandbox_script(
     import pandas as __pd
     import numpy as __np
     # ── 加载 CSV 数据 ──────────────────────────────────────
-    {loader_code}
+{loader_code}
     # ── 捕获 stdout ────────────────────────────────────────
     _stdout_capture = StringIO()
     _original_stdout = sys.stdout
@@ -125,7 +133,7 @@ def _build_sandbox_script(
         'numpy': __np,
     }}
     # 注入 DataFrame 变量
-    {chr(10).join(f"_namespace['{var}'] = {var}" for var in csv_var_map.keys())}
+{namespace_inject}
     # ── 执行用户代码 ───────────────────────────────────────
     _error = None
     try:
@@ -152,6 +160,7 @@ def _build_sandbox_script(
     print(json.dumps(result, ensure_ascii=False))
     """)
     return script
+
 async def execute_code_in_sandbox(
     code: str,
     csv_var_map: dict[str, str],
