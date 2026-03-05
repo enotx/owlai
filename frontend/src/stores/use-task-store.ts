@@ -2,6 +2,7 @@
 
 /**
  * Zustand 全局状态管理：Task、Knowledge、Chat
+ * 支持 ReAct Agent 的多种 Step 类型
  */
 import { create } from "zustand";
 
@@ -24,14 +25,42 @@ export interface Knowledge {
   created_at: string;
 }
 
+export type StepType = "user_message" | "assistant_message" | "tool_use";
+
 export interface Step {
   id: string;
   task_id: string;
   role: "user" | "assistant";
+  step_type: StepType;
   content: string;
   code: string | null;
   code_output: string | null;
   created_at: string;
+}
+
+/**
+ * 正在进行中的流式 assistant 回复（尚未持久化）
+ * 用于在 UI 上实时显示 token 流
+ */
+export interface StreamingMessage {
+  role: "assistant";
+  step_type: "assistant_message";
+  content: string;
+}
+
+/**
+ * 正在执行的代码块（tool_start → tool_result 之间的状态）
+ */
+export interface PendingToolExecution {
+  code: string;
+  purpose: string;
+  status: "running" | "done";
+  result?: {
+    success: boolean;
+    output: string | null;
+    error: string | null;
+    time: number;
+  };
 }
 
 interface TaskStore {
@@ -49,15 +78,21 @@ interface TaskStore {
   addKnowledge: (item: Knowledge) => void;
   removeKnowledge: (id: string) => void;
 
-  // Chat 状态
+  // Chat 状态 — 已持久化的 Steps
   steps: Step[];
   setSteps: (steps: Step[]) => void;
   addStep: (step: Step) => void;
 
-  /** 将 token 追加到最后一条 assistant 消息的 content */
-  appendToLastStep: (token: string) => void;
-  /** 流结束后用持久化数据替换临时 Step */
-  finalizeLastStep: (step: Step) => void;
+  // 流式消息（未持久化的临时文本）
+  streamingMessage: StreamingMessage | null;
+  startStreaming: () => void;
+  appendStreamingToken: (token: string) => void;
+  clearStreaming: () => void;
+
+  // 代码执行状态
+  pendingTool: PendingToolExecution | null;
+  setPendingTool: (tool: PendingToolExecution | null) => void;
+  updatePendingToolResult: (result: PendingToolExecution["result"]) => void;
 
   // 数据面板展示
   previewData: Record<string, unknown>[] | null;
@@ -89,28 +124,42 @@ export const useTaskStore = create<TaskStore>((set) => ({
   removeKnowledge: (id) =>
     set((s) => ({ knowledgeList: s.knowledgeList.filter((k) => k.id !== id) })),
 
-  // Chat
+  // Chat — 已持久化的 Steps
   steps: [],
   setSteps: (steps) => set({ steps }),
   addStep: (step) => set((s) => ({ steps: [...s.steps, step] })),
 
-  appendToLastStep: (token) =>
-    set((s) => {
-      const steps = [...s.steps];
-      const last = steps[steps.length - 1];
-      if (last && last.role === "assistant") {
-        steps[steps.length - 1] = { ...last, content: last.content + token };
-      }
-      return { steps };
+  // 流式消息
+  streamingMessage: null,
+  startStreaming: () =>
+    set({
+      streamingMessage: {
+        role: "assistant",
+        step_type: "assistant_message",
+        content: "",
+      },
     }),
-  finalizeLastStep: (step) =>
+  appendStreamingToken: (token) =>
     set((s) => {
-      const steps = [...s.steps];
-      const idx = steps.length - 1;
-      if (idx >= 0 && steps[idx].role === "assistant") {
-        steps[idx] = step;
-      }
-      return { steps };
+      if (!s.streamingMessage) return s;
+      return {
+        streamingMessage: {
+          ...s.streamingMessage,
+          content: s.streamingMessage.content + token,
+        },
+      };
+    }),
+  clearStreaming: () => set({ streamingMessage: null }),
+
+  // 代码执行
+  pendingTool: null,
+  setPendingTool: (tool) => set({ pendingTool: tool }),
+  updatePendingToolResult: (result) =>
+    set((s) => {
+      if (!s.pendingTool) return s;
+      return {
+        pendingTool: { ...s.pendingTool, status: "done", result },
+      };
     }),
 
   // Data Panel

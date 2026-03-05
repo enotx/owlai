@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Owl - AI Data Analyst",
+  title: "Owl.AI - An AI Data Analyst",
   description: "AI-driven data analysis tool powered by Pandas",
 };
 

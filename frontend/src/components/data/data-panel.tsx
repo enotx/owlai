@@ -47,7 +47,7 @@ export default function DataPanel() {
         /* 已选 Task 但未预览数据 */
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
           <MousePointerClick className="h-10 w-10 opacity-30" />
-          <p className="text-sm">Click a CSV file in Knowledge Zone to preview</p>
+          <p className="text-sm">Click a file in Knowledge or Execution Section to preview</p>
         </div>
       ) : (
         /* 展示真实预览表格 */

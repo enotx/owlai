@@ -45,17 +45,27 @@ class ChatRequest(BaseModel):
     task_id: str
     message: str = Field(..., min_length=1)
 
-
 class StepResponse(BaseModel):
     id: str
     task_id: str
     role: str
+    step_type: str
     content: str
     code: str | None
     code_output: str | None
     created_at: datetime
-
     model_config = {"from_attributes": True}
+
+    
+# ===== Code Execution =====
+class ExecuteRequest(BaseModel):
+    task_id: str
+    code: str = Field(..., min_length=1)
+class ExecuteResponse(BaseModel):
+    success: bool
+    output: str | None = None
+    error: str | None = None
+    execution_time: float = 0.0
 
 
 # ===== Code Execution =====

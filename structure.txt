@@ -13,7 +13,10 @@
 │   │   │   ├── execute.py
 │   │   │   ├── knowledge.py
 │   │   │   └── tasks.py
-│   │   └── schemas.py
+│   │   ├── schemas.py
+│   │   └── services
+│   │       ├── __init__.py
+│   │       └── data_processor.py
 │   └── requirements.txt
 ├── frontend
 │   ├── components.json
@@ -29,7 +32,6 @@
 │   │   ├── next.svg
 │   │   ├── vercel.svg
 │   │   └── window.svg
-│   ├── README.md
 │   ├── src
 │   │   ├── app
 │   │   │   ├── api
@@ -70,4 +72,4 @@
 ├── README.md
 └── structure.txt
 
-18 directories, 53 files
+19 directories, 54 files

@@ -73,8 +73,8 @@ export default function HomePage() {
       {/* 顶部状态条 */}
       <header className="flex h-10 shrink-0 items-center justify-between border-b px-4">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-bold tracking-tight">🦉 Owl</span>
-          <span className="text-xs text-muted-foreground">AI Data Analyst</span>
+          <span className="text-sm font-bold tracking-tight">🦉 Owl.AI</span>
+          <span className="text-xs text-muted-foreground">An AI Data Analyst</span>
         </div>
         <Badge
           variant={backendStatus === "connected" ? "default" : "destructive"}

@@ -49,6 +49,11 @@ class Step(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     task_id: Mapped[str] = mapped_column(String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False)  # 'user' or 'assistant'
+    # 在 role 字段之后添加
+    step_type: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="assistant_message"
+    )  # 'user_message' | 'tool_use' | 'assistant_message'
+
     content: Mapped[str] = mapped_column(Text, nullable=False)
     code: Mapped[str | None] = mapped_column(Text, nullable=True)
     code_output: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON 格式
