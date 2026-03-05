@@ -13,7 +13,7 @@ import { uploadKnowledge } from "@/lib/api";
 import { Plus, X, FileSpreadsheet, FileText } from "lucide-react";
 
 export default function KnowledgeZone() {
-  const { currentTaskId, knowledgeList, addKnowledge, removeKnowledge } = useTaskStore();
+  const { currentTaskId, knowledgeList, addKnowledge, removeKnowledge, setPreviewData } = useTaskStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /* 上传文件 */
@@ -41,6 +41,19 @@ export default function KnowledgeZone() {
     }
   };
 
+  /* 点击 Knowledge 触发数据预览 */
+  const handlePreview = async (k: (typeof knowledgeList)[0]) => {
+    if (k.type !== "csv") return; // 仅 CSV 支持表格预览
+    try {
+      const { previewKnowledge } = await import("@/lib/api");
+      const res = await previewKnowledge(k.id);
+      const { columns, rows } = res.data;
+      setPreviewData(rows, columns);
+    } catch (err) {
+      console.error("Preview failed:", err);
+    }
+  };
+
   if (!currentTaskId) return null;
 
   return (
@@ -49,26 +62,31 @@ export default function KnowledgeZone() {
         Knowledge Zone
       </h3>
       <div className="flex flex-wrap items-center gap-2">
-        {knowledgeList.map((k) => (
-          <Badge
-            key={k.id}
-            variant="secondary"
-            className="gap-1.5 pl-2 pr-1 py-1.5 text-xs font-normal"
+      {knowledgeList.map((k) => (
+        <Badge
+          key={k.id}
+          variant="secondary"
+          className="gap-1.5 pl-2 pr-1 py-1.5 text-xs font-normal cursor-pointer hover:bg-secondary/80 transition-colors"
+          onClick={() => handlePreview(k)}
+        >
+          {k.type === "csv" ? (
+            <FileSpreadsheet className="h-3 w-3" />
+          ) : (
+            <FileText className="h-3 w-3" />
+          )}
+          {k.name}
+          <button
+            className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20 transition-colors"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleRemove(k.id);
+            }}
           >
-            {k.type === "csv" ? (
-              <FileSpreadsheet className="h-3 w-3" />
-            ) : (
-              <FileText className="h-3 w-3" />
-            )}
-            {k.name}
-            <button
-              className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20 transition-colors"
-              onClick={() => handleRemove(k.id)}
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </Badge>
-        ))}
+            <X className="h-3 w-3" />
+          </button>
+        </Badge>
+      ))}
+
         {/* 上传按钮 */}
         <Button
           variant="outline"

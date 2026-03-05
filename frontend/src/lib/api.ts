@@ -39,6 +39,11 @@ export const uploadKnowledge = (taskId: string, file: File) => {
 export const deleteKnowledge = (knowledgeId: string) =>
   api.delete(`/knowledge/${knowledgeId}`);
 
+// Knowledge Preview
+export const previewKnowledge = (knowledgeId: string, n: number = 50) =>
+  api.get(`/knowledge/${knowledgeId}/preview`, { params: { n } });
+
+
 // ===== Chat =====
 export const sendMessage = (taskId: string, message: string) =>
   api.post("/chat", { task_id: taskId, message });
