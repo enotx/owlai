@@ -4,7 +4,6 @@
 ```text
 .
 ├── .gitignore
-├── .python-version
 ├── backend
 │   ├── app
 │   │   ├── __init__.py
@@ -24,7 +23,11 @@
 │   │       ├── code_security.py
 │   │       ├── data_processor.py
 │   │       └── sandbox.py
-│   └── requirements.txt
+│   ├── main.py
+│   ├── pyproject.toml
+│   ├── README.md
+│   ├── requirements.txt
+│   └── uv.lock
 ├── frontend
 │   ├── components.json
 │   ├── eslint.config.mjs
@@ -76,10 +79,11 @@
 │   │   └── stores
 │   │       └── use-task-store.ts
 │   └── tsconfig.json
-├── README.md
-└── structure.txt
+├── llm_scan.py
+├── project_context.md
+└── README.md
 
-19 directories, 57 files
+19 directories, 61 files
 ```
 
 ## 2. 前端组件依赖
@@ -108,8 +112,14 @@ end
 subgraph 17["data"]
 18["data-panel.tsx"]
 end
-subgraph 19["sidebar"]
-1A["task-sidebar.tsx"]
+subgraph 19["settings"]
+1A["settings-dialog.tsx"]
+1B["providers-view.tsx"]
+1C["provider-form.tsx"]
+1E["providers-list.tsx"]
+end
+subgraph 1F["sidebar"]
+1G["task-sidebar.tsx"]
 end
 end
 subgraph R["lib"]
@@ -118,6 +128,7 @@ S["api.ts"]
 end
 subgraph V["stores"]
 W["use-task-store.ts"]
+1D["use-settings-store.ts"]
 end
 end
 subgraph 8["node_modules"]
@@ -166,6 +177,7 @@ end
 G-->P
 G-->18
 G-->1A
+G-->1G
 G-->S
 G-->K
 G-->M
@@ -194,57 +206,83 @@ W-->Z
 18-->11
 18-->W
 18-->K
+1A-->1B
 1A-->S
 1A-->11
-1A-->W
+1A-->1D
 1A-->K
 1A-->M
+1B-->1C
+1B-->1E
+1B-->1D
+1C-->S
+1C-->1D
+1C-->K
+1C-->M
+1D-->Z
+1E-->S
+1E-->1D
+1E-->K
+1G-->S
+1G-->11
+1G-->1D
+1G-->W
+1G-->K
+1G-->M
 ```
 
 ## 3. 后端 Service/Router 调用链
 ```mermaid
 graph TD
-  chat --depends on--> schemas
-  chat --depends on--> agent
-  chat --depends on--> models
-  knowledge --calls--> db.delete
-  chat --depends on--> database
-  agent --depends on--> models
-  agent --calls--> write_db.commit
-  agent --depends on--> data_processor
-  knowledge --depends on--> models
-  tasks --depends on--> database
-  knowledge --calls--> db.commit
-  knowledge --depends on--> schemas
-  sandbox --depends on--> code_security
-  tasks --calls--> db.add
-  main --depends on--> database
-  chat --calls--> db.execute
-  knowledge --calls--> db.add
-  knowledge --calls--> db.execute
-  agent --calls--> db.execute
   tasks --depends on--> schemas
-  tasks --calls--> db.refresh
-  tasks --calls--> db.get
-  knowledge --calls--> db.get
+  llm --depends on--> models
+  llm --calls--> db.execute
+  knowledge --depends on--> models
   agent --depends on--> sandbox
-  execute --depends on--> sandbox
-  execute --depends on--> models
-  knowledge --depends on--> database
-  tasks --calls--> db.commit
-  execute --depends on--> schemas
-  agent --depends on--> database
-  main --depends on--> schemas
-  execute --depends on--> database
-  agent --calls--> write_db.add
-  execute --calls--> db.execute
   knowledge --calls--> db.refresh
+  execute --depends on--> sandbox
+  knowledge --calls--> db.commit
+  chat --depends on--> database
+  knowledge --calls--> db.add
+  tasks --calls--> db.execute
+  llm --depends on--> database
+  execute --depends on--> models
+  tasks --calls--> db.refresh
+  llm --calls--> db.commit
+  agent --depends on--> models
+  tasks --depends on--> database
+  agent --calls--> write_db.commit
+  knowledge --depends on--> schemas
+  chat --depends on--> agent
+  tasks --calls--> db.get
+  chat --depends on--> models
   execute --depends on--> data_processor
   models --depends on--> database
-  main --depends on--> routers
+  llm --depends on--> schemas
   agent --calls--> write_db.refresh
+  knowledge --calls--> db.get
+  main --depends on--> database
+  knowledge --depends on--> database
   knowledge --depends on--> data_processor
+  chat --depends on--> schemas
+  knowledge --calls--> db.execute
+  execute --depends on--> database
+  main --depends on--> routers
+  agent --calls--> write_db.add
+  sandbox --depends on--> code_security
+  main --depends on--> schemas
+  agent --depends on--> data_processor
+  execute --depends on--> schemas
+  llm --calls--> db.refresh
+  agent --depends on--> database
+  chat --calls--> db.execute
+  execute --calls--> db.execute
+  llm --calls--> db.add
+  tasks --calls--> db.commit
+  knowledge --calls--> db.delete
+  tasks --calls--> db.delete
+  agent --calls--> db.execute
   tasks --depends on--> models
-  tasks --calls--> db.execute
-  tasks --calls--> db.delete```
+  llm --calls--> db.delete
+  tasks --calls--> db.add```
 

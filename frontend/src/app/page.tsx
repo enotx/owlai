@@ -13,6 +13,7 @@ import ChatArea from "@/components/chat/chat-area";
 import DataPanel from "@/components/data/data-panel";
 import { checkHealth } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
+import SettingsDialog from "@/components/settings/settings-dialog";
 import { CircleCheck, CircleX, Loader2 } from "lucide-react";
 
 /** 布局常量 */
@@ -125,6 +126,8 @@ export default function HomePage() {
         </aside>
 
       </div>
+      {/* 设置对话框 */}
+      <SettingsDialog />
     </div>
   );
 }

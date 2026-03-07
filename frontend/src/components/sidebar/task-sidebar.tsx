@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useTaskStore } from "@/stores/use-task-store";
+import { useSettingsStore } from "@/stores/use-settings-store";
 import {
   fetchTasks,
   createTask,
@@ -78,6 +79,9 @@ export default function TaskSidebar() {
     }
   };
 
+  // 设置入口
+  const { setSettingsOpen } = useSettingsStore();
+
   return (
     <div className="flex h-full w-full flex-col border-r bg-muted/30">
       {/* 头部 */}
@@ -127,7 +131,11 @@ export default function TaskSidebar() {
           New Task
         </Button>
         <Separator />
-        <Button variant="ghost" className="w-full justify-start gap-2 text-muted-foreground">
+        <Button 
+          variant="ghost" 
+          className="w-full justify-start gap-2 text-muted-foreground"
+          onClick={() => setSettingsOpen(true)}
+        >
           <Settings className="h-4 w-4" />
           Settings
         </Button>

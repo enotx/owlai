@@ -192,6 +192,30 @@ export async function streamChat(
   }
 }
 
+// ===== LLM Providers =====
+export const fetchProviders = () => api.get("/llm/providers");
+
+export const createProvider = (data: {
+  display_name: string;
+  base_url: string;
+  api_key?: string;
+  models: Array<{ id: string; name: string }>;
+}) => api.post("/llm/providers", data);
+
+export const updateProvider = (
+  id: string,
+  data: {
+    display_name?: string;
+    base_url?: string;
+    api_key?: string;
+    models?: Array<{ id: string; name: string }>;
+  }
+) => api.patch(`/llm/providers/${id}`, data);
+
+export const deleteProvider = (id: string) => api.delete(`/llm/providers/${id}`);
+
+export const testConnection = (data: { base_url: string; api_key?: string }) =>
+  api.post("/llm/providers/test-connection", data);
 
 
 export default api;

@@ -74,3 +74,46 @@ class ExecuteResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     message: str
+
+# ===== LLM Provider =====
+class LLMModelItem(BaseModel):
+    """单个模型配置"""
+    id: str = Field(..., min_length=1)  # 模型 ID，如 "gpt-4"
+    name: str = Field(..., min_length=1)  # 显示名称，如 "GPT-4"
+
+
+class LLMProviderCreate(BaseModel):
+    display_name: str = Field(..., min_length=1, max_length=255)
+    base_url: str = Field(..., min_length=1, max_length=500)
+    api_key: str | None = None
+    models: list[LLMModelItem] = Field(default_factory=list)
+
+
+class LLMProviderUpdate(BaseModel):
+    display_name: str | None = Field(None, min_length=1, max_length=255)
+    base_url: str | None = Field(None, min_length=1, max_length=500)
+    api_key: str | None = None
+    models: list[LLMModelItem] | None = None
+
+
+class LLMProviderResponse(BaseModel):
+    id: str
+    display_name: str
+    base_url: str
+    api_key: str | None
+    models: list[LLMModelItem]
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class LLMTestConnectionRequest(BaseModel):
+    base_url: str = Field(..., min_length=1)
+    api_key: str | None = None
+
+
+class LLMTestConnectionResponse(BaseModel):
+    success: bool
+    message: str
+    available_models: list[str] = Field(default_factory=list)

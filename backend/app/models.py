@@ -60,3 +60,15 @@ class Step(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     task: Mapped["Task"] = relationship(back_populates="steps")
+
+class LLMProvider(Base):
+    """LLM Provider 配置表"""
+    __tablename__ = "llm_providers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    api_key: Mapped[str | None] = mapped_column(String(500), nullable=True)  # 可选，支持通过 header 管理
+    models_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")  # JSON 数组：[{"id": "gpt-4", "name": "GPT-4"}]
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
