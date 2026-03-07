@@ -17,9 +17,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { TableProperties, DatabaseZap, MousePointerClick } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export default function DataPanel() {
-  const { currentTaskId, previewData, previewColumns } = useTaskStore();
+  const { currentTaskId, previewData, previewColumns, previewSource } = useTaskStore();
 
   const hasData = previewColumns.length > 0 && previewData && previewData.length > 0;
 
@@ -29,6 +30,20 @@ export default function DataPanel() {
       <div className="flex items-center gap-2 border-b px-4 py-3">
         <TableProperties className="h-5 w-5 text-primary" />
         <h2 className="text-sm font-semibold tracking-tight">Data View</h2>
+        {hasData && previewSource && (
+          <span
+            className={cn(
+              "rounded-full px-2 py-0.5 text-[10px] font-medium",
+              previewSource.type === "step"
+                ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300"
+                : "bg-muted text-muted-foreground"
+            )}
+          >
+            {previewSource.type === "step"
+              ? `⚡ ${previewSource.dfName}`
+              : `📁 ${previewSource.name}`}
+          </span>
+        )}
         {hasData && (
           <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
             {previewData!.length} rows

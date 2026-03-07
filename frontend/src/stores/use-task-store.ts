@@ -51,6 +51,14 @@ export interface StreamingMessage {
 /**
  * 正在执行的代码块（tool_start → tool_result 之间的状态）
  */
+/** 捕获的 DataFrame 元信息 */
+export interface CapturedDataFrame {
+  name: string;
+  row_count: number;
+  preview_count: number;
+  columns: string[];
+  capture_id: string;
+}
 export interface PendingToolExecution {
   code: string;
   purpose: string;
@@ -60,6 +68,7 @@ export interface PendingToolExecution {
     output: string | null;
     error: string | null;
     time: number;
+    dataframes?: CapturedDataFrame[];
   };
 }
 
@@ -97,7 +106,11 @@ interface TaskStore {
   // 数据面板展示
   previewData: Record<string, unknown>[] | null;
   previewColumns: string[];
-  setPreviewData: (data: Record<string, unknown>[] | null, columns?: string[]) => void;
+  /** 当前预览来源标识，用于 DataPanel 标题展示 */
+  previewSource: { type: "knowledge"; name: string } | { type: "step"; stepId: string; dfName: string } | null;
+  setPreviewData: (data: Record<string, unknown>[] | null, columns?: string[], source?: TaskStore["previewSource"]) => void;
+  /** 加载某个 Step 中捕获的 DataFrame 到数据面板 */
+  loadStepDataframe: (stepId: string, dfName: string) => Promise<void>;
 
   // 加载状态
   isSending: boolean;
@@ -109,10 +122,10 @@ export const useTaskStore = create<TaskStore>((set) => ({
   tasks: [],
   currentTaskId: null,
   setTasks: (tasks) => set({ tasks }),
+  // 切换 Task 时重置相关状态，避免数据混乱
   setCurrentTaskId: (id) =>
     set({
       currentTaskId: id,
-      // 切换 Task 时重置聊天相关状态
       steps: [],
       streamingMessage: null,
       pendingTool: null,
@@ -120,6 +133,7 @@ export const useTaskStore = create<TaskStore>((set) => ({
       knowledgeList: [],
       previewData: null,
       previewColumns: [],
+      previewSource: null,
     }),
 
   addTask: (task) => set((s) => ({ tasks: [task, ...s.tasks] })),
@@ -177,7 +191,23 @@ export const useTaskStore = create<TaskStore>((set) => ({
   // Data Panel
   previewData: null,
   previewColumns: [],
-  setPreviewData: (data, columns = []) => set({ previewData: data, previewColumns: columns }),
+  previewSource: null,
+  setPreviewData: (data, columns = [], source = null) =>
+    set({ previewData: data, previewColumns: columns, previewSource: source }),
+  loadStepDataframe: async (stepId, dfName) => {
+    try {
+      const { fetchStepDataframe } = await import("@/lib/api");
+      const res = await fetchStepDataframe(stepId, dfName);
+      const { columns, rows } = res.data;
+      set({
+        previewData: rows,
+        previewColumns: columns,
+        previewSource: { type: "step", stepId, dfName },
+      });
+    } catch (err) {
+      console.error("Failed to load step dataframe:", err);
+    }
+  },
 
   // Loading
   isSending: false,

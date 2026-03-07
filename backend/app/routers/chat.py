@@ -60,3 +60,51 @@ async def get_history(task_id: str, db: AsyncSession = Depends(get_db)):
         select(Step).where(Step.task_id == task_id).order_by(Step.created_at.asc())
     )
     return result.scalars().all()
+
+
+# ── 获取 Step 中捕获的 DataFrame 预览数据 ──────────────────
+@router.get("/steps/{step_id}/dataframe/{df_name}")
+async def get_step_dataframe(
+    step_id: str,
+    df_name: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """返回某个 tool_use Step 中捕获的 DataFrame 数据（columns + rows）"""
+    import os, json as _json
+    # 查找 Step
+    result = await db.execute(select(Step).where(Step.id == step_id))
+    step = result.scalar_one_or_none()
+    if not step:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Step not found")
+    if step.step_type != "tool_use" or not step.code_output:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Step has no code execution data")
+    # 从 code_output 解析 dataframes 元数据，找到 capture_id
+    try:
+        output_data = _json.loads(step.code_output)
+    except _json.JSONDecodeError:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail="Invalid code_output format")
+    dataframes_meta = output_data.get("dataframes", [])
+    target = None
+    for df_meta in dataframes_meta:
+        if df_meta.get("name") == df_name:
+            target = df_meta
+            break
+    if not target:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"DataFrame '{df_name}' not found in this step")
+    capture_id = target.get("capture_id", "")
+    capture_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "data", "uploads", step.task_id, "captures",
+    )
+    file_path = os.path.join(capture_dir, f"{capture_id}_{df_name}.json")
+    if not os.path.exists(file_path):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Captured data file not found")
+    # 读取并返回
+    with open(file_path, "r", encoding="utf-8") as f:
+        data = _json.load(f)
+    return data  # {"columns": [...], "rows": [...]}

@@ -20,8 +20,12 @@ import {
   XCircle,
   Loader2,
   Clock,
+  Database,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { CapturedDataFrame } from "@/stores/use-task-store";
+
+
 
 // ── 单条用户消息 ──────────────────────────────────────────────
 function UserBubble({ step }: { step: Step }) {
@@ -61,6 +65,7 @@ function ToolUseBlock({ step }: { step: Step }) {
         output: string | null;
         error: string | null;
         execution_time: number;
+        dataframes?: CapturedDataFrame[];
       };
     } catch {
       return null;
@@ -119,6 +124,10 @@ function ToolUseBlock({ step }: { step: Step }) {
                 {parsed.error}
               </pre>
             )}
+            {/* 捕获的 DataFrame 预览链接 */}
+            {parsed.dataframes && parsed.dataframes.length > 0 && (
+              <DataFrameLinks dataframes={parsed.dataframes} stepId={step.id} />
+            )}
           </div>
         )}
       </div>
@@ -142,6 +151,48 @@ function StreamingBubble({ message }: { message: StreamingMessage }) {
     </div>
   );
 }
+
+// ── DataFrame 预览链接列表 ────────────────────────────────
+function DataFrameLinks({
+  dataframes,
+  stepId,
+}: {
+  dataframes: CapturedDataFrame[];
+  stepId?: string;
+}) {
+  const { loadStepDataframe } = useTaskStore();
+  if (!dataframes || dataframes.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-2 mt-2">
+      {dataframes.map((df) => (
+        <button
+          key={`${df.capture_id}-${df.name}`}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5",
+            "text-xs font-medium transition-colors",
+            "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100",
+            "dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300 dark:hover:bg-blue-900",
+            "cursor-pointer"
+          )}
+          onClick={() => {
+            if (stepId) {
+              loadStepDataframe(stepId, df.name);
+            }
+          }}
+        >
+          <Database className="h-3 w-3" />
+          <span>
+            {df.name}
+          </span>
+          <span className="text-blue-500 dark:text-blue-400">
+            ({df.row_count.toLocaleString()} rows × {df.columns.length} cols)
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 
 // ── 代码执行中占位（pending tool） ────────────────────────────
 function PendingToolBlock({ tool }: { tool: PendingToolExecution }) {
@@ -199,6 +250,29 @@ function PendingToolBlock({ tool }: { tool: PendingToolExecution }) {
               <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-words text-red-600 dark:text-red-400">
                 {tool.result.error}
               </pre>
+            )}
+            {/* 捕获的 DataFrame 预览链接（pending 状态下无 stepId，暂不可点） */}
+            {tool.result.dataframes && tool.result.dataframes.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-2">
+                {tool.result.dataframes.map((df) => (
+                  <div
+                    key={`${df.capture_id}-${df.name}`}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5",
+                      "text-xs font-medium",
+                      "border-blue-200 bg-blue-50 text-blue-700",
+                      "dark:border-blue-800 dark:bg-blue-950 dark:text-blue-300",
+                      "opacity-60"
+                    )}
+                  >
+                    <Database className="h-3 w-3" />
+                    <span>{df.name}</span>
+                    <span className="text-blue-500 dark:text-blue-400">
+                      ({df.row_count.toLocaleString()} rows × {df.columns.length} cols)
+                    </span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         )}

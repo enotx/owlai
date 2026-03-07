@@ -55,6 +55,13 @@ export const fetchChatHistory = (taskId: string) =>
 export const executeCode = (taskId: string, code: string) =>
   api.post("/execute", { task_id: taskId, code });
 
+// ===== Step DataFrame Preview =====
+export const fetchStepDataframe = (stepId: string, dfName: string) =>
+  api.get<{ columns: string[]; rows: Record<string, unknown>[] }>(
+    `/chat/steps/${stepId}/dataframe/${dfName}`
+  );
+
+
 // ===== Streaming Chat (SSE) =====
 /**
  * 流式对话：通过 SSE 逐 token 接收 AI 回复
@@ -79,11 +86,19 @@ export interface SSEEvent {
   output?: string | null;
   error?: string | null;
   time?: number;
+  dataframes?: Array<{
+    name: string;
+    row_count: number;
+    preview_count: number;
+    columns: string[];
+    capture_id: string;
+  }>;
   // step_saved
   step?: Record<string, unknown>;
   // done
   steps?: Record<string, unknown>[];
 }
+
 /**
  * 流式对话：通过 SSE 接收 Agent 的 ReAct 分析过程。
  * 使用回调分发不同事件类型。

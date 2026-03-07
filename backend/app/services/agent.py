@@ -25,6 +25,7 @@ from app.services.data_processor import (
     get_csv_sample_rows,
     read_text_content,
 )
+import uuid
 from app.services.sandbox import execute_code_in_sandbox
 
 # ── 配置 ──────────────────────────────────────────────────────
@@ -96,6 +97,24 @@ You MUST work step-by-step:
 - Answer in the **same language** the user uses.
 - When presenting results, be concise but include key numbers.
 - If the user hasn't uploaded data yet, tell them to upload first.
+
+## DataFrame Naming Convention (IMPORTANT)
+When your code produces **key result DataFrames** that would be valuable for the user to preview, \
+you MUST name them using one of these prefixes so the system can auto-capture them:
+- `result` / `result_xxx` — final or intermediate analysis results (e.g. `result`, `result_top10`, `result_by_region`)
+- `output` / `output_xxx` — processed/transformed data ready for review (e.g. `output`, `output_cleaned`, `output_pivot`)
+- `summary` / `summary_xxx` — aggregated summaries or statistics (e.g. `summary`, `summary_stats`, `summary_monthly`)
+Examples:
+```python
+# ✅ Good — will be captured for user preview
+result_top10 = df.nlargest(10, 'revenue')
+summary_by_city = df.groupby('city').agg({{'revenue': 'sum'}}).reset_index()
+output = df[df['status'] == 'active']
+# ❌ Bad — generic names won't be prioritized
+temp = df.nlargest(10, 'revenue')
+x = df.groupby('city').agg({{'revenue': 'sum'}})
+
+
 
 ## Available Datasets
 {dataset_context}
@@ -449,11 +468,19 @@ async def run_agent_stream(
                             "purpose": purpose,
                         })
 
+                        # 创建 DataFrame 捕获目录
+                        capture_id = uuid.uuid4().hex[:12]
+                        capture_dir = os.path.join(
+                            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                            "data", "uploads", task_id, "captures",
+                        )
+                        os.makedirs(capture_dir, exist_ok=True)
                         # 沙箱执行
                         try:
                             exec_result = await execute_code_in_sandbox(
                                 code=code,
                                 csv_var_map=csv_var_map,
+                                capture_dir=capture_dir,
                             )
                         except Exception as sandbox_err:
                             exec_result = {
@@ -464,13 +491,27 @@ async def run_agent_stream(
                             }
 
 
-                        # 通知前端：执行结果
+                        # 重命名捕获的 DataFrame 文件，注入 capture_id
+                        captured_dfs = exec_result.get("dataframes", [])
+                        for df_meta in captured_dfs:
+                            df_meta["capture_id"] = capture_id
+                            old_path = os.path.join(capture_dir, f"{df_meta['name']}.json")
+                            new_name = f"{capture_id}_{df_meta['name']}.json"
+                            new_path = os.path.join(capture_dir, new_name)
+                            if os.path.exists(old_path):
+                                try:
+                                    os.rename(old_path, new_path)
+                                except OSError:
+                                    pass
+
+                        # 通知前端：执行结果（含 dataframes 元数据）
                         yield _sse({
                             "type": "tool_result",
                             "success": exec_result["success"],
                             "output": exec_result.get("output"),
                             "error": exec_result.get("error"),
                             "time": exec_result.get("execution_time", 0),
+                            "dataframes": captured_dfs,
                         })
 
                         # 组装 tool result 文本
@@ -505,6 +546,7 @@ async def run_agent_stream(
                                     "output": exec_result.get("output"),
                                     "error": exec_result.get("error"),
                                     "execution_time": exec_result.get("execution_time", 0),
+                                    "dataframes": captured_dfs,
                                 }, ensure_ascii=False),
                             )
                             write_db.add(tool_step)

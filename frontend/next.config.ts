@@ -1,3 +1,6 @@
+// frontend/next.config.ts
+// Next.js 配置文件
+
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {

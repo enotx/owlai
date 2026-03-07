@@ -48,7 +48,7 @@ export default function KnowledgeZone() {
       const { previewKnowledge } = await import("@/lib/api");
       const res = await previewKnowledge(k.id);
       const { columns, rows } = res.data;
-      setPreviewData(rows, columns);
+      setPreviewData(rows, columns, { type: "knowledge", name: k.name });
     } catch (err) {
       console.error("Preview failed:", err);
     }

@@ -27,28 +27,32 @@ MAX_OUTPUT_LENGTH = 50_000  # 最大输出字符数
 def _build_sandbox_script(
     code: str,
     csv_var_map: dict[str, str],
+    capture_dir: str | None = None,
 ) -> str:
     """
     构建在子进程中执行的 Python 脚本。
     csv_var_map: {variable_name: absolute_file_path}
+    capture_dir: 若提供，执行后扫描命名空间中的 DataFrame 并序列化到此目录
     """
-    # CSV 加载语句 —— 每行带 4 空格缩进，与 textwrap.dedent 模板对齐
+    # CSV 加载语句
     loader_lines = []
     for var_name, fpath in csv_var_map.items():
-        # 转义路径中的反斜杠（Windows 兼容）
         escaped_path = fpath.replace("\\", "\\\\")
-        # 注意：4空格前缀与 textwrap.dedent 模板缩进一致
         loader_lines.append(f'    {var_name} = __pd.read_csv("{escaped_path}")')
     loader_code = "\n".join(loader_lines)
-
-    # namespace 注入语句 —— 同样带 4 空格缩进
+    # namespace 注入语句
     namespace_inject = chr(10).join(
         f"    _namespace['{var}'] = {var}" for var in csv_var_map.keys()
     )
-
+    # 已有 CSV 变量名集合（排除这些，只捕获用户代码新生成的 DF）
+    preloaded_var_names = set(csv_var_map.keys())
+    preloaded_repr = repr(preloaded_var_names)
+    # capture_dir 路径（转义）
+    capture_dir_escaped = (capture_dir or "").replace("\\", "\\\\")
     script = textwrap.dedent(f"""\
     import sys
     import json
+    import os as _os
     from io import StringIO
     # ── 白名单 import 机制 ──────────────────────────────────
     _ALLOWED_MODULES = {{
@@ -145,7 +149,6 @@ def _build_sandbox_script(
     _safe_builtins['UnicodeError'] = UnicodeError
     _safe_builtins['UnicodeDecodeError'] = UnicodeDecodeError
     _safe_builtins['UnicodeEncodeError'] = UnicodeEncodeError
-
     # ── 预加载数据分析库 ────────────────────────────────────
     import pandas as __pd
     import numpy as __np
@@ -183,10 +186,69 @@ def _build_sandbox_script(
     _MAX = {MAX_OUTPUT_LENGTH}
     if len(_output) > _MAX:
         _output = _output[:_MAX] + "\\n\\n[Output truncated at {{_MAX}} chars]"
+    # ── 捕获命名空间中的 DataFrame ─────────────────────────
+    _captured_dfs = []
+    _capture_dir = "{capture_dir_escaped}"
+    _PRELOADED = {preloaded_repr}
+    _PRIORITY_PREFIXES = ['result', 'output', 'summary']
+    _MAX_CAPTURE = 5  # 最多捕获的DataFrame个数
+    _MAX_ROWS = 500
+    _SKIP_KEYS = {{'__builtins__', 'pd', 'np', 'pandas', 'numpy'}}
+    if _capture_dir:
+        # 收集所有新生成的 DataFrame（排除预加载的 CSV 变量）
+        _all_dfs = {{}}
+        for _k, _v in _namespace.items():
+            if _k.startswith('_') or _k in _SKIP_KEYS or _k in _PRELOADED:
+                continue
+            if isinstance(_v, __pd.DataFrame):
+                _all_dfs[_k] = _v
+        # 排序：前缀模糊匹配优先，精确命中最优先
+        _ordered = []
+        _priority_set = set()
+        # 第一轮：精确匹配（result / output / summary）
+        for _prefix in _PRIORITY_PREFIXES:
+            if _prefix in _all_dfs and _prefix not in _priority_set:
+                _ordered.append(_prefix)
+                _priority_set.add(_prefix)
+        # 第二轮：前缀匹配（result_xxx / output_xxx / summary_xxx）
+        for _prefix in _PRIORITY_PREFIXES:
+            for _k in sorted(_all_dfs.keys()):
+                if _k not in _priority_set and (_k.startswith(_prefix + '_') or _k.startswith(_prefix + '-')):
+                    _ordered.append(_k)
+                    _priority_set.add(_k)
+        # 第三轮：其余 DataFrame 按原始顺序
+        for _k in _all_dfs:
+            if _k not in _priority_set:
+                _ordered.append(_k)
+        _ordered = _ordered[:_MAX_CAPTURE]
+        if _ordered:
+            _os.makedirs(_capture_dir, exist_ok=True)
+            for _dfname in _ordered:
+                try:
+                    _df = _all_dfs[_dfname]
+                    _preview = _df.head(_MAX_ROWS)
+                    _cols = [str(c) for c in _preview.columns.tolist()]
+                    # 处理 NaN/Infinity → None，日期等 → str
+                    _clean = _preview.where(__pd.notnull(_preview), None)
+                    _rows = json.loads(_clean.to_json(orient='records', default_handler=str))
+                    _meta = {{
+                        "name": _dfname,
+                        "row_count": len(_df),
+                        "preview_count": len(_preview),
+                        "columns": _cols,
+                    }}
+                    _fpath = _os.path.join(_capture_dir, _dfname + ".json")
+                    with open(_fpath, 'w', encoding='utf-8') as _f:
+                        json.dump({{"columns": _cols, "rows": _rows}}, _f, ensure_ascii=False, default=str)
+                    _captured_dfs.append(_meta)
+                except Exception as _cap_err:
+                    # 捕获失败不影响主结果
+                    pass
     result = {{
         "success": _error is None,
         "output": _output if _output else None,
         "error": _error,
+        "dataframes": _captured_dfs,
     }}
     print(json.dumps(result, ensure_ascii=False))
     """)
@@ -196,15 +258,18 @@ async def execute_code_in_sandbox(
     code: str,
     csv_var_map: dict[str, str],
     timeout: int = SANDBOX_TIMEOUT,
+    capture_dir: str | None = None,
 ) -> dict[str, Any]:
     """
     在子进程中安全执行代码。
     Args:
         code: 要执行的 Python 代码
-        csv_var_map: {{变量名: CSV文件绝对路径}}
+        csv_var_map: {变量名: CSV文件绝对路径}
         timeout: 超时秒数
+        capture_dir: 若提供，沙箱执行后将捕获的 DataFrame 以 JSON 写入此目录
     Returns:
-        {"success": bool, "output": str|None, "error": str|None, "execution_time": float}
+        {"success": bool, "output": str|None, "error": str|None,
+         "execution_time": float, "dataframes": list[dict]}
     """
 
     # ── AST 静态安全检查（在子进程之前拦截） ──────────────
@@ -218,11 +283,13 @@ async def execute_code_in_sandbox(
                 + "\n".join(f"  • {v}" for v in security_result.violations)
             ),
             "execution_time": 0.0,
+            "dataframes": [],
         }
 
 
     # 写入临时脚本文件
-    script_content = _build_sandbox_script(code, csv_var_map)
+    script_content = _build_sandbox_script(code, csv_var_map, capture_dir)
+
     tmp_file = None
     start_time = time.monotonic()
     try:
@@ -255,6 +322,7 @@ async def execute_code_in_sandbox(
                 "output": None,
                 "error": f"⏱️ Code execution timed out after {timeout}s",
                 "execution_time": elapsed,
+                "dataframes": [],
             }
 
         elapsed = time.monotonic() - start_time
@@ -271,6 +339,7 @@ async def execute_code_in_sandbox(
                     try:
                         result = json.loads(line)
                         result["execution_time"] = elapsed
+                        result.setdefault("dataframes", [])
                         # 如果沙箱脚本自身 print 的内容在 JSON 之前，也要拼上
                         prefix_lines = []
                         for l in lines:
@@ -291,6 +360,7 @@ async def execute_code_in_sandbox(
             "output": stdout_text or None,
             "error": stderr_text or "Unknown execution error (no JSON output)",
             "execution_time": elapsed,
+            "dataframes": [],
         }
 
     except Exception as e:
@@ -300,6 +370,7 @@ async def execute_code_in_sandbox(
             "output": None,
             "error": f"Sandbox setup error: {str(e)}",
             "execution_time": elapsed,
+            "dataframes": [],
         }
     finally:
         # 清理临时文件

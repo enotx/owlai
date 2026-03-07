@@ -83,12 +83,13 @@ export default function MessageInput() {
             break;
 
           case "tool_result":
-            // 代码执行完成
+            // 代码执行完成（含捕获的 DataFrame 元数据）
             updatePendingToolResult({
               success: event.success ?? false,
               output: event.output ?? null,
               error: event.error ?? null,
               time: event.time ?? 0,
+              dataframes: event.dataframes,
             });
             break;
 
