@@ -12,6 +12,11 @@ frontend/out/
 backend/data/*.db
 backend/data/uploads/
 *.log
+
 # OS
 .DS_Store
+
+# Misc
 .VSCodeCounter/
+.aider*
+structure.txt
