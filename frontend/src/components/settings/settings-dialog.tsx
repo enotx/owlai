@@ -14,6 +14,7 @@ import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import ProvidersView from "./providers-view";
+import AgentsView from "./agents-view";
 
 type MenuItem = {
   id: string;
@@ -54,12 +55,16 @@ export default function SettingsDialog() {
     if (selectedItem === "providers") {
       return <ProvidersView />;
     }
+    if (selectedItem === "agents") {
+      return <AgentsView />; 
+    }
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         Coming Soon
       </div>
     );
   };
+
 
   // 按 category 分组菜单项
   const groupedItems = menuItems.reduce((acc, item) => {
@@ -77,19 +82,19 @@ export default function SettingsDialog() {
       >
         {/* 隐藏的标题，仅供屏幕阅读器使用 */}
         <DialogTitle className="sr-only">Settings</DialogTitle>
-        <div className="flex h-full">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute right-4 top-4 z-10 h-7 w-7 rounded-full"
+            onClick={handleClose}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+          <div className="flex h-full">
           {/* 左侧导航 */}
           <aside className="w-56 border-r bg-muted/30 flex flex-col">
-            <div className="p-4 flex items-center justify-between">
+            <div className="p-4">
               <h2 className="text-lg font-semibold">Settings</h2>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6"
-                onClick={handleClose}
-              >
-                <X className="h-4 w-4" />
-              </Button>
             </div>
             <Separator />
             <div className="flex-1 overflow-y-auto p-2">

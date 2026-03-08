@@ -9,19 +9,22 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import LLMProvider
+
+from app.models import LLMProvider, AgentConfig
 from app.schemas import (
     LLMProviderCreate,
     LLMProviderUpdate,
     LLMProviderResponse,
     LLMTestConnectionRequest,
     LLMTestConnectionResponse,
+    AgentConfigUpdate,
+    AgentConfigResponse,
 )
 
-router = APIRouter(prefix="/api/llm/providers", tags=["LLM"])
+router = APIRouter(prefix="/api/llm", tags=["LLM"])
 
 
-@router.get("", response_model=list[LLMProviderResponse])
+@router.get("/providers", response_model=list[LLMProviderResponse])
 async def list_providers(db: AsyncSession = Depends(get_db)):
     """获取所有 LLM Provider 配置"""
     result = await db.execute(select(LLMProvider).order_by(LLMProvider.created_at.desc()))
@@ -42,7 +45,7 @@ async def list_providers(db: AsyncSession = Depends(get_db)):
     ]
 
 
-@router.post("", response_model=LLMProviderResponse, status_code=201)
+@router.post("/providers", response_model=LLMProviderResponse, status_code=201)
 async def create_provider(
     data: LLMProviderCreate,
     db: AsyncSession = Depends(get_db),
@@ -69,7 +72,7 @@ async def create_provider(
     )
 
 
-@router.get("/{provider_id}", response_model=LLMProviderResponse)
+@router.get("/providers/{provider_id}", response_model=LLMProviderResponse)
 async def get_provider(provider_id: str, db: AsyncSession = Depends(get_db)):
     """获取单个 Provider 详情"""
     result = await db.execute(select(LLMProvider).where(LLMProvider.id == provider_id))
@@ -89,7 +92,7 @@ async def get_provider(provider_id: str, db: AsyncSession = Depends(get_db)):
     )
 
 
-@router.patch("/{provider_id}", response_model=LLMProviderResponse)
+@router.patch("/providers/{provider_id}", response_model=LLMProviderResponse)
 async def update_provider(
     provider_id: str,
     data: LLMProviderUpdate,
@@ -126,7 +129,7 @@ async def update_provider(
     )
 
 
-@router.delete("/{provider_id}", status_code=204)
+@router.delete("/providers/{provider_id}", status_code=204)
 async def delete_provider(provider_id: str, db: AsyncSession = Depends(get_db)):
     """删除 Provider"""
     result = await db.execute(select(LLMProvider).where(LLMProvider.id == provider_id))
@@ -139,7 +142,7 @@ async def delete_provider(provider_id: str, db: AsyncSession = Depends(get_db)):
     await db.commit()
 
 
-@router.post("/test-connection", response_model=LLMTestConnectionResponse)
+@router.post("/providers/test-connection", response_model=LLMTestConnectionResponse)
 async def test_connection(data: LLMTestConnectionRequest):
     """测试 LLM Provider 连通性"""
     try:
@@ -148,9 +151,10 @@ async def test_connection(data: LLMTestConnectionRequest):
             headers["Authorization"] = f"Bearer {data.api_key}"
         
         # 尝试调用 /v1/models 端点（OpenAI 兼容接口标准）
+        # 但实际代码中去掉/v1，因为有些服务可能不遵守此规则，比如Meituan的Friday，无语……
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                f"{data.base_url.rstrip('/')}/v1/models",
+                f"{data.base_url.rstrip('/')}/models",
                 headers=headers,
             )
             
@@ -182,3 +186,50 @@ async def test_connection(data: LLMTestConnectionRequest):
             success=False,
             message=f"Connection failed: {str(e)}",
         )
+    
+
+# ===== Agent Config Routes =====
+@router.get("/agents", response_model=list[AgentConfigResponse])
+async def get_agent_configs(db: AsyncSession = Depends(get_db)):
+    """获取所有 Agent 配置 (异步实现)"""
+    result = await db.execute(select(AgentConfig))
+    configs = result.scalars().all()
+    
+    # 如果数据库为空，初始化默认配置
+    if not configs:
+        default_types = ["default", "plan", "analyst", "misc"]
+        for agent_type in default_types:
+            config = AgentConfig(agent_type=agent_type)
+            db.add(config)
+        await db.commit()
+        
+        # 重新查询
+        result = await db.execute(select(AgentConfig))
+        configs = result.scalars().all()
+    
+    return configs
+@router.patch("/agents/{agent_type}", response_model=AgentConfigResponse)
+async def update_agent_config(
+    agent_type: str,
+    data: AgentConfigUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    """更新指定 Agent 的配置 (异步实现)"""
+    result = await db.execute(
+        select(AgentConfig).where(AgentConfig.agent_type == agent_type)
+    )
+    config = result.scalar_one_or_none()
+    
+    if not config:
+        config = AgentConfig(agent_type=agent_type)
+        db.add(config)
+    
+    if data.provider_id is not None:
+        config.provider_id = data.provider_id
+    if data.model_id is not None:
+        config.model_id = data.model_id
+    
+    await db.commit()
+    await db.refresh(config)
+    
+    return config

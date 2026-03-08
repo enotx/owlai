@@ -117,3 +117,21 @@ class LLMTestConnectionResponse(BaseModel):
     success: bool
     message: str
     available_models: list[str] = Field(default_factory=list)
+
+# ===== Agent Config =====
+class AgentConfigUpdate(BaseModel):
+    """更新 Agent 配置"""
+    provider_id: str | None = None
+    model_id: str | None = None
+
+
+class AgentConfigResponse(BaseModel):
+    """Agent 配置响应"""
+    id: str
+    agent_type: str
+    provider_id: str | None
+    model_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}

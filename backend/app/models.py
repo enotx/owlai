@@ -53,12 +53,11 @@ class Step(Base):
     step_type: Mapped[str] = mapped_column(
         String(30), nullable=False, default="assistant_message"
     )  # 'user_message' | 'tool_use' | 'assistant_message'
-
     content: Mapped[str] = mapped_column(Text, nullable=False)
     code: Mapped[str | None] = mapped_column(Text, nullable=True)
     code_output: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON 格式
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
+    
     task: Mapped["Task"] = relationship(back_populates="steps")
 
 class LLMProvider(Base):
@@ -72,3 +71,16 @@ class LLMProvider(Base):
     models_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")  # JSON 数组：[{"id": "gpt-4", "name": "GPT-4"}]
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+class AgentConfig(Base):
+    """Agent 模型配置表"""
+    __tablename__ = "agent_configs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    agent_type: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)  # 'default', 'plan', 'analyst', 'misc'
+    provider_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("llm_providers.id", ondelete="SET NULL"), nullable=True)
+    model_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # 模型的 id，如 "gpt-4"
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    
+    provider: Mapped["LLMProvider | None"] = relationship()

@@ -217,5 +217,11 @@ export const deleteProvider = (id: string) => api.delete(`/llm/providers/${id}`)
 export const testConnection = (data: { base_url: string; api_key?: string }) =>
   api.post("/llm/providers/test-connection", data);
 
+// ===== Agent Configs =====
+export const fetchAgentConfigs = () => api.get("/llm/agents");
+export const updateAgentConfig = (
+  agentType: string,
+  data: { provider_id?: string; model_id?: string }
+) => api.patch(`/llm/agents/${agentType}`, data);
 
 export default api;

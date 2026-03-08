@@ -20,6 +20,15 @@ export interface LLMProvider {
   updated_at: string;
 }
 
+export interface AgentConfig {
+  id: string;
+  agent_type: string;
+  provider_id: string | null;
+  model_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface SettingsStore {
   // Providers 列表
   providers: LLMProvider[];
@@ -27,6 +36,12 @@ interface SettingsStore {
   addProvider: (provider: LLMProvider) => void;
   updateProvider: (id: string, provider: LLMProvider) => void;
   removeProvider: (id: string) => void;
+
+  // Agent 配置
+  agentConfigs: AgentConfig[];
+  setAgentConfigs: (configs: AgentConfig[]) => void;
+  updateLocalAgentConfig: (agentType: string, config: AgentConfig) => void;
+
 
   // 当前编辑的 Provider（null 表示新建）
   editingProvider: LLMProvider | null;
@@ -39,6 +54,7 @@ interface SettingsStore {
   currentView: "list" | "edit";
   setCurrentView: (view: "list" | "edit") => void;
 }
+
 
 export const useSettingsStore = create<SettingsStore>((set) => ({
   providers: [],
@@ -54,6 +70,15 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
 
   editingProvider: null,
   setEditingProvider: (provider) => set({ editingProvider: provider }),
+
+  agentConfigs: [],
+  setAgentConfigs: (configs) => set({ agentConfigs: configs }),
+  updateLocalAgentConfig: (agentType, config) =>
+    set((s) => ({
+      agentConfigs: s.agentConfigs.map((c) =>
+        c.agent_type === agentType ? config : c
+      ),
+    })),
 
   isSettingsOpen: false,
   setSettingsOpen: (open) => set({ isSettingsOpen: open }),
