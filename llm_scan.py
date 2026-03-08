@@ -36,7 +36,7 @@ class BackendDeepAnalyzer(ast.NodeVisitor):
         self.generic_visit(node)
 
 def analyze_backend_deep():
-    print("正在进行后端深度 AST 建模...")
+    print("正在进行后端探查（基于AST）")
     mermaid_lines = []
     
     for root, _, files in os.walk(BACKEND_DIR):
@@ -75,7 +75,7 @@ def main():
                               shell=True, capture_output=True, text=True).stdout
     
     # 执行前端分析 (需要进入 frontend 目录)
-    print("正在分析前端...")
+    print("正在进行前端探查（基于dependency-cruiser）")
     fe_mermaid = subprocess.run("npx --yes dependency-cruiser src --exclude '^src/components/ui/' --output-type mermaid",
                                  shell=True, capture_output=True, text=True, cwd=os.path.join(BASE_DIR, "frontend")).stdout
 
@@ -88,7 +88,7 @@ def main():
         f.write("## 2. 前端组件依赖\n```mermaid\n" + fe_mermaid + "```\n\n")
         f.write("## 3. 后端 Service/Router 调用链\n```mermaid\n" + be_mermaid + "```\n\n")
 
-    print(f"✅ 深度分析完成：{OUTPUT_FILE}")
+    print(f"✅ 分析完成，结果已保存至：{OUTPUT_FILE}")
 
 if __name__ == "__main__":
     main()

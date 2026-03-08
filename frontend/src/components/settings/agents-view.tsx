@@ -8,9 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 const AGENT_LABELS: Record<string, { label: string; p_title?: string }> = {
   default: { label: "Default Agent" },
-  plan: { label: "Plan Mode", p_title: "(Plato)" },
-  analyst: { label: "Analyst Mode", p_title: "(Kant)" },
-  misc: { label: "Misc Agent", p_title: "(for history summary)" },
+  plan: { label: "Plan Mode", p_title: "Code <Plato>, coming soon" },
+  analyst: { label: "Analyst Mode", p_title: "Code <Kant>, coming soon" },
+  misc: { label: "Misc Agent", p_title: "Code <Russell>, for history summary" },
 };
 
 export default function AgentsView() {
@@ -55,27 +55,32 @@ export default function AgentsView() {
   };
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="p-6 space-y-6">
-        <div>
-          <h2 className="text-2xl font-semibold">Agents</h2>
-          <p className="text-sm text-muted-foreground mt-1">Configure which model each agent uses</p>
-        </div>
+    <div className="flex flex-col h-full">
+      {/* 头部 */}
+      <div className="px-6 py-4 border-b">
+        <h3 className="text-lg font-semibold">Agents Configuration</h3>
+        <p className="text-sm text-muted-foreground mt-1">Configure which model each agent uses</p>
+      </div>
 
-        <div className="space-y-4 max-w-2xl">
+      {/* 列表 */}
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="space-y-3">
           {Object.entries(AGENT_LABELS).map(([type, { label, p_title }]) => (
-            <div key={type} className="flex items-center justify-between py-4 border-b last:border-b-0">
+            <div
+              key={type}
+              className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors"
+            >
               <div className="flex-1">
-                <div className="font-medium text-base">{label}</div>
+                <div className="font-medium">{label}</div>
                 {p_title && <div className="text-sm text-muted-foreground mt-0.5">{p_title}</div>}
               </div>
-              <div className="w-[300px]">
+              <div className="min-w-[240px] max-w-[400px] ml-auto">
                 <Select
                   value={getSelectedValue(type) || ""}
                   onValueChange={(value) => handleModelChange(type, value)}
                   disabled={loading || availableModels.length === 0}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select a Model" />
                   </SelectTrigger>
                   <SelectContent>

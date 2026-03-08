@@ -36,16 +36,39 @@ MAX_HISTORY_STEPS = 30  # 加载的最大历史步骤数
 _client: AsyncOpenAI | None = None
 
 
-def _get_client() -> AsyncOpenAI:
-    global _client
-    if _client is None:
-        from dotenv import load_dotenv
-        load_dotenv()
-        _client = AsyncOpenAI(
-            api_key=os.getenv("OPENAI_API_KEY", ""),
-            base_url=os.getenv("OPENAI_BASE_URL"),
-        )
-    return _client
+# ── OpenAI 客户端（从数据库配置创建） ──────────────────────────────────
+async def _get_client_from_db(db: AsyncSession) -> tuple[AsyncOpenAI, str] | None:
+    """
+    从数据库读取 Default Agent 的配置，返回 (client, model_id)。
+    如果配置不完整，返回 None。
+    """
+    from app.models import AgentConfig, LLMProvider
+    
+    # 查询 default agent 配置
+    result = await db.execute(
+        select(AgentConfig).where(AgentConfig.agent_type == "default")
+    )
+    agent_config = result.scalar_one_or_none()
+    
+    if not agent_config or not agent_config.provider_id or not agent_config.model_id:
+        return None
+    
+    # 查询关联的 Provider
+    result = await db.execute(
+        select(LLMProvider).where(LLMProvider.id == agent_config.provider_id)
+    )
+    provider = result.scalar_one_or_none()
+    
+    if not provider or not provider.base_url:
+        return None
+    
+    # 创建客户端
+    client = AsyncOpenAI(
+        api_key=provider.api_key or "",
+        base_url=provider.base_url,
+    )
+    
+    return client, agent_config.model_id
 
 
 # ── Tool 定义（OpenAI Function Calling 格式） ────────────────
@@ -269,14 +292,8 @@ async def run_agent_stream(
 ) -> AsyncGenerator[str, None]:
     """
     Agent 主循环（生成器），产出 SSE 格式字符串。
-
-    Args:
-        task_id: 任务 ID
-        user_message: 用户输入
-        db: 数据库会话（仅用于读取上下文/历史，写入由独立会话完成）
     """
     from app.database import async_session
-
     # ── 保存用户消息 ──────────────────────────────────────
     async with async_session() as write_db:
         user_step = Step(
@@ -289,7 +306,34 @@ async def run_agent_stream(
         await write_db.commit()
         await write_db.refresh(user_step)
         yield _sse({"type": "step_saved", "step": _step_to_dict(user_step)})
-
+    # ── 检查 LLM 配置 ──────────────────────────────────────
+    client_result = await _get_client_from_db(db)
+    if client_result is None:
+        error_msg = (
+            "⚠️ LLM configuration required\n\n"
+            "Please configure your LLM provider and model first:\n"
+            "1. Go to **Settings → Providers** to add an API provider\n"
+            "2. Then go to **Settings → Agents** to assign a model to the Default Agent"
+        )
+        yield _sse({"type": "text", "content": error_msg})
+        
+        # 保存错误消息为 Step
+        async with async_session() as write_db:
+            error_step = Step(
+                task_id=task_id,
+                role="assistant",
+                step_type="assistant_message",
+                content=error_msg,
+            )
+            write_db.add(error_step)
+            await write_db.commit()
+            await write_db.refresh(error_step)
+            yield _sse({"type": "step_saved", "step": _step_to_dict(error_step)})
+        
+        yield _sse({"type": "done", "steps": [_step_to_dict(error_step)]})
+        return
+    
+    client, model = client_result
     try:
         # ── 构建上下文 ────────────────────────────────────────
         dataset_ctx, text_ctx, var_ref, csv_var_map = await _build_knowledge_context(task_id, db)
@@ -320,9 +364,7 @@ async def run_agent_stream(
         )
         if not already_included:
             messages.append({"role": "user", "content": user_message})
-
-        client = _get_client()
-        model = os.getenv("OPENAI_MODEL", "gpt-4o")
+            
         saved_steps: list[dict] = []
 
         # ── ReAct 循环 ────────────────────────────────────────
