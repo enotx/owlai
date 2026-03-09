@@ -247,55 +247,59 @@ W-->Z
 ## 3. 后端 Service/Router 调用链
 ```mermaid
 graph TD
-  agent --depends on--> database
-  knowledge --calls--> db.refresh
-  execute --depends on--> sandbox
-  tasks --calls--> db.execute
-  llm --calls--> db.add
-  sandbox --depends on--> code_security
-  tasks --depends on--> models
-  llm --calls--> db.refresh
-  tasks --depends on--> schemas
-  knowledge --depends on--> models
-  llm --calls--> db.delete
-  agent --calls--> write_db.refresh
-  tasks --calls--> db.delete
-  knowledge --calls--> db.delete
-  execute --depends on--> data_processor
-  tasks --calls--> db.add
-  knowledge --calls--> db.commit
-  main --depends on--> schemas
-  chat --depends on--> database
-  chat --depends on--> schemas
-  tasks --calls--> db.commit
-  llm --depends on--> models
-  knowledge --calls--> db.add
-  tasks --calls--> db.refresh
-  chat --calls--> db.execute
-  knowledge --calls--> db.execute
-  main --depends on--> database
-  main --depends on--> routers
-  agent --depends on--> models
-  agent --depends on--> data_processor
-  execute --depends on--> schemas
-  llm --calls--> db.execute
-  agent --calls--> db.execute
   execute --calls--> db.execute
-  tasks --calls--> db.get
-  knowledge --calls--> db.get
-  knowledge --depends on--> data_processor
-  execute --depends on--> database
-  llm --depends on--> database
-  chat --depends on--> agent
-  knowledge --depends on--> database
-  agent --depends on--> sandbox
-  llm --depends on--> schemas
+  chat --depends on--> schemas
+  execute --depends on--> data_processor
+  execute --depends on--> schemas
+  main --depends on--> config
   agent --calls--> write_db.commit
+  database --depends on--> config
+  tasks --calls--> db.commit
+  main --depends on--> routers
+  llm --calls--> db.execute
+  knowledge --calls--> db.add
+  knowledge --calls--> db.get
+  agent --depends on--> data_processor
+  main --depends on--> database
+  tasks --calls--> db.execute
+  llm --depends on--> models
   tasks --depends on--> database
-  agent --calls--> write_db.add
-  chat --depends on--> models
-  llm --calls--> db.commit
+  execute --depends on--> database
+  llm --depends on--> schemas
+  knowledge --calls--> db.execute
   execute --depends on--> models
+  knowledge --calls--> db.commit
+  agent --depends on--> database
+  knowledge --depends on--> data_processor
+  llm --calls--> db.commit
+  chat --depends on--> models
+  chat --depends on--> database
+  agent --depends on--> sandbox
+  execute --depends on--> sandbox
+  agent --depends on--> models
+  tasks --calls--> db.get
+  chat --calls--> db.execute
+  main --depends on--> schemas
+  tasks --depends on--> models
+  llm --calls--> db.add
+  tasks --calls--> db.delete
+  sandbox --depends on--> code_security
+  knowledge --depends on--> models
   models --depends on--> database
-  knowledge --depends on--> schemas```
+  llm --depends on--> database
+  agent --depends on--> config
+  llm --calls--> db.refresh
+  agent --calls--> write_db.refresh
+  tasks --calls--> db.refresh
+  knowledge --calls--> db.delete
+  knowledge --depends on--> database
+  knowledge --depends on--> config
+  knowledge --depends on--> schemas
+  knowledge --calls--> db.refresh
+  agent --calls--> write_db.add
+  tasks --depends on--> schemas
+  llm --calls--> db.delete
+  agent --calls--> db.execute
+  chat --depends on--> agent
+  tasks --calls--> db.add```
 

@@ -8,15 +8,16 @@ from fastapi import FastAPI
 from app.database import init_db
 from app.schemas import HealthResponse
 from app.routers import tasks, knowledge, chat, execute, llm
+from app.config import UPLOADS_DIR 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化数据库和上传目录"""
-    os.makedirs("data/uploads", exist_ok=True)
+    # 移除：os.makedirs("data/uploads", exist_ok=True)
+    # 改为：UPLOADS_DIR 在 config.py 中已经自动创建
     await init_db()
-    print("✅ Owl Backend is ready.")
+    print(f"✅ Owl Backend is ready. Data directory: {UPLOADS_DIR.parent}")
     yield
-
 
 app = FastAPI(title="Owl API", version="0.1.0", lifespan=lifespan)
 

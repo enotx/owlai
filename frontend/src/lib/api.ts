@@ -6,8 +6,17 @@
  */
 import axios from "axios";
 
+export const getBaseUrl = () => {
+  if (typeof window !== "undefined" && (window as any).__TAURI__) {
+    // 假设未来 Tauri 拉起后端的默认本地端口为 127.0.0.1:61102
+    return "http://127.0.0.1:61102/api";
+  }
+  return process.env.NEXT_PUBLIC_API_URL || "/api";
+};
+
+
 const api = axios.create({
-  baseURL: "/api",
+  baseURL: getBaseUrl(),
   timeout: 30000,
   headers: { "Content-Type": "application/json" },
 });
@@ -112,7 +121,9 @@ export async function streamChat(
   const controller = new AbortController();
   const globalTimeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
   try {
-    const res = await fetch("/api/chat/stream", {
+    const streamUrl = `${getBaseUrl()}/chat/stream`;
+    // const res = await fetch("/api/chat/stream", {
+    const res = await fetch(streamUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ task_id: taskId, message }),

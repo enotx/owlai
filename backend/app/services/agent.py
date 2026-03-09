@@ -28,6 +28,9 @@ from app.services.data_processor import (
 import uuid
 from app.services.sandbox import execute_code_in_sandbox
 
+from app.config import UPLOADS_DIR
+
+
 # ── 配置 ──────────────────────────────────────────────────────
 MAX_TOOL_ROUNDS = 10  # 最大工具调用轮次（防止无限循环）
 MAX_HISTORY_STEPS = 30  # 加载的最大历史步骤数
@@ -512,10 +515,11 @@ async def run_agent_stream(
 
                         # 创建 DataFrame 捕获目录
                         capture_id = uuid.uuid4().hex[:12]
-                        capture_dir = os.path.join(
-                            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                            "data", "uploads", task_id, "captures",
-                        )
+                        capture_dir = os.path.join(UPLOADS_DIR, task_id, "captures")
+                        # capture_dir = os.path.join(
+                        #     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                        #     "data", "uploads", task_id, "captures",
+                        # )
                         os.makedirs(capture_dir, exist_ok=True)
                         # 沙箱执行
                         try:

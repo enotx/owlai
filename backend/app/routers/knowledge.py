@@ -13,9 +13,7 @@ from app.database import get_db
 from app.models import Knowledge
 from app.schemas import KnowledgeResponse
 from app.services.data_processor import parse_csv_metadata, get_csv_preview
-
-# 上传根目录（相对于后端工作目录）
-UPLOAD_ROOT = os.path.join("data", "uploads")
+from app.config import UPLOADS_DIR  # 新增：导入动态路径
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
@@ -30,31 +28,32 @@ async def upload_knowledge(
     filename = file.filename or "unknown"
     file_type = "csv" if filename.lower().endswith(".csv") else "text"
 
-    # 1-1：按 task_{id} 隔离创建目录
-    task_dir = os.path.join(UPLOAD_ROOT, f"task_{task_id}")
-    os.makedirs(task_dir, exist_ok=True)
+    # 修改：使用动态路径，统一目录命名（去掉 task_ 前缀）
+    task_dir = UPLOADS_DIR / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1-2：文件落盘
-    file_path = os.path.join(task_dir, filename)
+    # 文件落盘
+    file_path = task_dir / filename
     content = await file.read()
     async with aiofiles.open(file_path, "wb") as f:
         await f.write(content)
 
-    # 1-3：CSV 元数据解析
+    # CSV 元数据解析
     metadata_json = None
     if file_type == "csv":
         try:
-            metadata_json = parse_csv_metadata(file_path)
+            # parse_csv_metadata 接受字符串路径
+            metadata_json = parse_csv_metadata(str(file_path))
         except Exception as e:
             # 解析失败不阻塞上传，记录错误信息到 metadata
             metadata_json = f'{{"parse_error": "{str(e)}"}}'
 
-    # 写入数据库
+    # 写入数据库（存储绝对路径字符串）
     knowledge = Knowledge(
         task_id=task_id,
         type=file_type,
         name=filename,
-        file_path=file_path,
+        file_path=str(file_path),  # 转为字符串存储
         metadata_json=metadata_json,
     )
     db.add(knowledge)
@@ -88,7 +87,7 @@ async def delete_knowledge(knowledge_id: str, db: AsyncSession = Depends(get_db)
     if not item:
         raise HTTPException(status_code=404, detail="Knowledge not found")
 
-    # 1-4：级联清理磁盘文件
+    # 级联清理磁盘文件
     if item.file_path and os.path.exists(item.file_path):
         os.remove(item.file_path)
 
