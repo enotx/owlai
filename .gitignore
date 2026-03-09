@@ -13,10 +13,17 @@ backend/data/*.db
 backend/data/uploads/
 *.log
 
+# Rust & Sidecar
+/target/
+/gen/schemas
+/python_env/
+
 # OS
 .DS_Store
 
 # Misc
 .VSCodeCounter/
+.vscode/
 .aider*
 structure.txt
+*.bak

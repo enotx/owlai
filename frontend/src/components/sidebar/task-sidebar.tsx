@@ -11,6 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useTaskStore } from "@/stores/use-task-store";
 import { useSettingsStore } from "@/stores/use-settings-store";
+import { useBackend } from "@/contexts/backend-context";
 import {
   fetchTasks,
   createTask,
@@ -18,7 +19,7 @@ import {
   fetchKnowledge,
   fetchChatHistory,
 } from "@/lib/api";
-import { Plus, Trash2, Settings, FolderOpen } from "lucide-react";
+import { Plus, Trash2, Settings, FolderOpen, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function TaskSidebar() {
@@ -34,10 +35,26 @@ export default function TaskSidebar() {
     setPreviewData,
   } = useTaskStore();
 
-  /* 初始化加载 Task 列表 */
+  // 获取后端就绪状态
+  const { isReady: backendReady } = useBackend();
+
+  /* 只有在后端就绪后才加载 Task 列表 */
   useEffect(() => {
-    fetchTasks().then((res) => setTasks(res.data));
-  }, [setTasks]);
+    if (!backendReady) {
+      console.log("⏳ Waiting for backend to be ready before loading tasks...");
+      return;
+    }
+
+    console.log("📋 Backend ready, loading tasks...");
+    fetchTasks()
+      .then((res) => {
+        setTasks(res.data);
+        console.log(`✅ Loaded ${res.data.length} tasks`);
+      })
+      .catch((err) => {
+        console.error("❌ Failed to load tasks:", err);
+      });
+  }, [backendReady, setTasks]);
 
   /* 切换 Task —— 同时加载 Knowledge 和 Chat 历史 */
   const handleSelect = useCallback(
@@ -93,40 +110,53 @@ export default function TaskSidebar() {
 
       {/* Task 列表 */}
       <ScrollArea className="flex-1 px-2 py-2">
-        <div className="flex flex-col gap-1">
-          {tasks.map((task) => (
-            <div
-              key={task.id}
-              onClick={() => handleSelect(task.id)}
-              className={cn(
-                "group flex cursor-pointer items-center justify-between rounded-md px-3 py-2 text-sm transition-colors",
-                currentTaskId === task.id
-                  ? "bg-primary text-primary-foreground"
-                  : "hover:bg-accent hover:text-accent-foreground"
-              )}
-            >
-              <span className="truncate">{task.title}</span>
-              <Button
-                variant="ghost"
-                size="icon"
+        {/* 🔥 后端未就绪时显示加载提示 */}
+        {!backendReady ? (
+          <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Loading tasks...
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {tasks.map((task) => (
+              <div
+                key={task.id}
+                onClick={() => handleSelect(task.id)}
                 className={cn(
-                  "h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100",
+                  "group flex cursor-pointer items-center justify-between rounded-md px-3 py-2 text-sm transition-colors",
                   currentTaskId === task.id
-                    ? "hover:bg-primary-foreground/20 text-primary-foreground"
-                    : "hover:bg-destructive/10 text-muted-foreground"
+                    ? "bg-primary text-primary-foreground"
+                    : "hover:bg-accent hover:text-accent-foreground"
                 )}
-                onClick={(e) => handleDelete(e, task.id)}
               >
+                <span className="truncate">{task.title}</span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    "h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100",
+                    currentTaskId === task.id
+                      ? "hover:bg-primary-foreground/20 text-primary-foreground"
+                      : "hover:bg-destructive/10 text-muted-foreground"
+                  )}
+                  onClick={(e) => handleDelete(e, task.id)}
+                >
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
             </div>
           ))}
         </div>
+      )}
       </ScrollArea>
 
       {/* 底部操作区 */}
       <div className="px-3 pb-3 pt-1 flex flex-col gap-2">
-        <Button variant="outline" className="w-full justify-start gap-2" onClick={handleCreate}>
+        <Button
+          variant="outline"
+          className="w-full justify-start gap-2"
+          onClick={handleCreate}
+          disabled={!backendReady} // 后端未就绪时禁用
+        >
           <Plus className="h-4 w-4" />
           New Task
         </Button>

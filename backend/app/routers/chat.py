@@ -13,6 +13,9 @@ from app.schemas import ChatRequest, StepResponse
 from app.services.agent import run_agent_stream
 import asyncio
 
+from app.config import UPLOADS_DIR
+
+
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
@@ -55,6 +58,7 @@ async def stream_message(body: ChatRequest, db: AsyncSession = Depends(get_db)):
 # ── 历史记录 ───────────────────────────────────────────────────
 @router.get("/history", response_model=list[StepResponse])
 async def get_history(task_id: str, db: AsyncSession = Depends(get_db)):
+    print("""API called: get_history, task_id={}""".format(task_id))
     """获取指定 Task 的对话历史"""
     result = await db.execute(
         select(Step).where(Step.task_id == task_id).order_by(Step.created_at.asc())
@@ -69,6 +73,7 @@ async def get_step_dataframe(
     df_name: str,
     db: AsyncSession = Depends(get_db),
 ):
+    print("""API called: get_step_dataframe, step_id={}, df_name={}""".format(step_id, df_name))
     """返回某个 tool_use Step 中捕获的 DataFrame 数据（columns + rows）"""
     import os, json as _json
     # 查找 Step
@@ -96,10 +101,7 @@ async def get_step_dataframe(
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"DataFrame '{df_name}' not found in this step")
     capture_id = target.get("capture_id", "")
-    capture_dir = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        "data", "uploads", step.task_id, "captures",
-    )
+    capture_dir = os.path.join(UPLOADS_DIR, step.task_id, "captures")
     file_path = os.path.join(capture_dir, f"{capture_id}_{df_name}.json")
     if not os.path.exists(file_path):
         from fastapi import HTTPException

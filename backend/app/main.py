@@ -35,7 +35,7 @@ if APP_MODE in ("desktop", "dev"):
         allow_headers=["*"],
     )
     print("🌐 CORS enabled for desktop/dev mode")
-elif APP_MODE == "cloud":
+elif APP_MODE == "docker":
     # 云端模式：严格限制来源（生产环境）
     allowed_origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
     if allowed_origins and allowed_origins[0]:

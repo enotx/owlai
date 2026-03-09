@@ -30,6 +30,7 @@
 │   ├── README.md
 │   ├── requirements.txt
 │   ├── run.py
+│   ├── sidecar_main.py
 │   └── uv.lock
 ├── frontend
 │   ├── components.json
@@ -88,12 +89,38 @@
 │   │   └── stores
 │   │       ├── use-settings-store.ts
 │   │       └── use-task-store.ts
+│   ├── src-tauri
+│   │   ├── build.rs
+│   │   ├── capabilities
+│   │   │   └── default.json
+│   │   ├── Cargo.toml
+│   │   ├── icons
+│   │   │   ├── 128x128.png
+│   │   │   ├── 128x128@2x.png
+│   │   │   ├── 32x32.png
+│   │   │   ├── icon.icns
+│   │   │   ├── icon.ico
+│   │   │   ├── icon.png
+│   │   │   ├── Square107x107Logo.png
+│   │   │   ├── Square142x142Logo.png
+│   │   │   ├── Square150x150Logo.png
+│   │   │   ├── Square284x284Logo.png
+│   │   │   ├── Square30x30Logo.png
+│   │   │   ├── Square310x310Logo.png
+│   │   │   ├── Square44x44Logo.png
+│   │   │   ├── Square71x71Logo.png
+│   │   │   ├── Square89x89Logo.png
+│   │   │   └── StoreLogo.png
+│   │   ├── src
+│   │   │   ├── lib.rs
+│   │   │   └── main.rs
+│   │   └── tauri.conf.json
 │   └── tsconfig.json
 ├── llm_scan.py
 ├── project_context.md
 └── README.md
 
-20 directories, 70 files
+24 directories, 93 files
 ```
 
 ## 2. 前端组件依赖
@@ -117,29 +144,29 @@ subgraph N["components"]
 subgraph O["chat"]
 P["chat-area.tsx"]
 Q["knowledge-zone.tsx"]
-10["message-input.tsx"]
+13["message-input.tsx"]
 end
-subgraph 17["data"]
-18["data-panel.tsx"]
+subgraph 1A["data"]
+1B["data-panel.tsx"]
 end
-subgraph 19["settings"]
-1A["settings-dialog.tsx"]
-1B["agents-view.tsx"]
-1D["providers-view.tsx"]
-1E["provider-form.tsx"]
-1F["providers-list.tsx"]
+subgraph 1C["settings"]
+1D["settings-dialog.tsx"]
+1E["agents-view.tsx"]
+1G["providers-view.tsx"]
+1H["provider-form.tsx"]
+1I["providers-list.tsx"]
 end
-subgraph 1G["sidebar"]
-1H["task-sidebar.tsx"]
+subgraph 1J["sidebar"]
+1K["task-sidebar.tsx"]
 end
 end
 subgraph R["lib"]
 S["api.ts"]
-11["utils.ts"]
+14["utils.ts"]
 end
-subgraph V["stores"]
-W["use-task-store.ts"]
-1C["use-settings-store.ts"]
+subgraph Y["stores"]
+Z["use-task-store.ts"]
+1F["use-settings-store.ts"]
 end
 end
 subgraph 8["node_modules"]
@@ -165,20 +192,25 @@ end
 subgraph L["react"]
 M["index.js"]
 end
-subgraph T["axios"]
-U["index.d.cts"]
-end
-subgraph X["zustand"]
-subgraph Y["esm"]
-Z["index.d.mts"]
+subgraph T["@tauri-apps"]
+subgraph U["api"]
+V["core.js"]
 end
 end
-subgraph 12["clsx"]
-13["clsx.d.mts"]
+subgraph W["axios"]
+X["index.d.cts"]
 end
-subgraph 14["tailwind-merge"]
-subgraph 15["dist"]
-16["types.d.ts"]
+subgraph 10["zustand"]
+subgraph 11["esm"]
+12["index.d.mts"]
+end
+end
+subgraph 15["clsx"]
+16["clsx.d.mts"]
+end
+subgraph 17["tailwind-merge"]
+subgraph 18["dist"]
+19["types.d.ts"]
 end
 end
 end
@@ -186,122 +218,124 @@ end
 6-->C
 6-->F
 G-->P
-G-->18
-G-->1A
-G-->1H
+G-->1B
+G-->1D
+G-->1K
 G-->S
 G-->K
 G-->M
 P-->Q
-P-->10
-P-->11
-P-->W
-P-->W
+P-->13
+P-->14
+P-->Z
+P-->Z
 P-->K
 P-->M
 Q-->S
-Q-->W
+Q-->Z
 Q-->K
 Q-->M
-S-->U
-W-->S
-W-->Z
-10-->S
-10-->S
-10-->W
-10-->W
-10-->K
-10-->M
-11-->13
-11-->16
-18-->11
-18-->W
-18-->K
-1A-->1B
-1A-->1D
-1A-->S
-1A-->11
-1A-->1C
-1A-->K
-1A-->M
-1B-->S
-1B-->1C
-1B-->M
-1C-->Z
+S-->V
+S-->X
+Z-->S
+Z-->12
+13-->S
+13-->S
+13-->Z
+13-->Z
+13-->K
+13-->M
+14-->16
+14-->19
+1B-->14
+1B-->Z
+1B-->K
 1D-->1E
+1D-->1G
+1D-->S
+1D-->14
 1D-->1F
-1D-->1C
+1D-->K
+1D-->M
 1E-->S
-1E-->1C
-1E-->K
+1E-->1F
 1E-->M
-1F-->S
-1F-->1C
-1F-->K
+1F-->12
+1G-->1H
+1G-->1I
+1G-->1F
 1H-->S
-1H-->11
-1H-->1C
-1H-->W
+1H-->1F
 1H-->K
 1H-->M
+1I-->S
+1I-->1F
+1I-->K
+1K-->S
+1K-->14
+1K-->1F
+1K-->Z
+1K-->K
+1K-->M
 ```
 
 ## 3. 后端 Service/Router 调用链
 ```mermaid
 graph TD
-  sandbox --depends on--> code_security
-  main --depends on--> routers
-  llm --depends on--> database
-  agent --depends on--> sandbox
-  agent --depends on--> data_processor
-  execute --depends on--> sandbox
-  knowledge --depends on--> data_processor
-  chat --depends on--> database
-  knowledge --depends on--> database
-  agent --calls--> write_db.commit
-  tasks --depends on--> database
-  tasks --calls--> db.refresh
-  chat --calls--> db.execute
-  tasks --depends on--> schemas
-  knowledge --depends on--> config
-  agent --calls--> write_db.add
   execute --depends on--> schemas
-  main --depends on--> schemas
-  llm --calls--> db.delete
-  knowledge --calls--> db.execute
-  agent --depends on--> models
-  execute --depends on--> models
-  models --depends on--> database
-  llm --calls--> db.add
-  main --depends on--> config
-  llm --depends on--> schemas
-  tasks --calls--> db.add
-  knowledge --calls--> db.add
-  knowledge --depends on--> schemas
-  execute --depends on--> data_processor
-  tasks --depends on--> models
-  chat --depends on--> schemas
-  database --depends on--> config
-  chat --depends on--> models
-  agent --depends on--> config
-  knowledge --depends on--> models
-  knowledge --calls--> db.refresh
-  agent --calls--> db.execute
-  llm --calls--> db.refresh
-  agent --calls--> write_db.refresh
-  execute --depends on--> database
-  knowledge --calls--> db.delete
-  llm --depends on--> models
-  tasks --calls--> db.delete
-  tasks --calls--> db.get
   execute --calls--> db.execute
+  tasks --depends on--> models
+  knowledge --calls--> db.execute
+  tasks --depends on--> database
+  main --depends on--> schemas
+  chat --depends on--> agent
+  agent --depends on--> database
   llm --calls--> db.execute
   main --depends on--> database
-  knowledge --calls--> db.commit
-  agent --depends on--> database
-  knowledge --calls--> db.get
-  tasks --calls--> db.execute
+  llm --depends on--> models
+  execute --depends on--> models
+  agent --calls--> write_db.add
+  llm --depends on--> schemas
   llm --calls--> db.commit
+  tasks --depends on--> schemas
+  tasks --calls--> db.delete
+  tasks --calls--> db.refresh
+  main --depends on--> routers
+  execute --depends on--> data_processor
+  database --depends on--> config
+  sandbox --depends on--> code_security
+  llm --calls--> db.add
+  chat --depends on--> schemas
+  execute --depends on--> sandbox
+  agent --calls--> write_db.refresh
+  chat --depends on--> models
+  main --depends on--> config
+  knowledge --calls--> db.get
+  agent --depends on--> sandbox
+  llm --depends on--> database
+  agent --depends on--> models
+  knowledge --depends on--> config
+  knowledge --calls--> db.delete
+  agent --calls--> db.execute
+  knowledge --depends on--> schemas
+  agent --depends on--> config
+  tasks --calls--> db.get
+  knowledge --depends on--> database
+  sandbox --depends on--> config
+  knowledge --calls--> db.refresh
+  chat --calls--> db.execute
+  knowledge --depends on--> data_processor
+  chat --depends on--> database
+  llm --calls--> db.delete
+  knowledge --depends on--> models
+  models --depends on--> database
   tasks --calls--> db.commit
-  chat --depends on--> agent```
+  knowledge --calls--> db.add
+  agent --calls--> write_db.commit
+  tasks --calls--> db.add
+  llm --calls--> db.refresh
+  knowledge --calls--> db.commit
+  execute --depends on--> database
+  agent --depends on--> data_processor
+  tasks --calls--> db.execute```
 

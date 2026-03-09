@@ -6,7 +6,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "build-sidecar": "cd .. && ./scripts/build-sidecar.sh",
+    "cleanup": "cd .. && ./scripts/cleanup-dev.sh",
+    "tauri:clean-dev": "npm run cleanup && npm run tauri:dev",
+    "setup": "npm run build-sidecar && npm run cleanup"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",

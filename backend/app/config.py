@@ -20,7 +20,7 @@ def get_data_dir() -> Path:
         # 开发模式：使用项目根目录下的 data 目录，方便调试和查看数据
         project_backend = Path(__file__).parent.parent
         base_dir = project_backend / "data"
-    elif APP_MODE == "cloud":
+    elif APP_MODE == "docker":
         # 云端模式：使用 /app/data 目录，适合容器化部署
         base_dir = Path("/app/data")
     elif APP_MODE == "desktop": 

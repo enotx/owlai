@@ -8,7 +8,7 @@ from app.config import DATA_DIR
 import os
 
 # 使用动态路径（桌面模式 → AppData，云端模式 → /app/data）
-db_path = os.path.join(DATA_DIR, "owl.db")
+db_path = DATA_DIR / "owl.db"
 DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
 
 # DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR / 'owl.db'}"

@@ -27,6 +27,8 @@ def main():
     
     # 将端口写入临时文件（Tauri 会读取）
     port_file = Path.home() / ".owl_backend_port"
+    if port_file.exists():
+        port_file.unlink()
     port_file.write_text(str(port))
     
     print(f"🦉 Owl Backend starting on http://127.0.0.1:{port}")

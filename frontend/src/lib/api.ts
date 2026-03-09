@@ -1,75 +1,111 @@
 // frontend/src/lib/api.ts
-
 /**
  * 统一 API 请求工具
- * 所有请求走 /api/* ，由 Next.js rewrites 转发到后端，无 CORS 问题
+ * - Web 开发模式：直连本地 FastAPI
+ * - Tauri 桌面模式：通过 invoke 获取 sidecar 实际端口
  */
-import axios from "axios";
+import axios, { type AxiosInstance } from "axios";
 
-export const getBaseUrl = () => {
-  if (typeof window !== "undefined" && (window as any).__TAURI__) {
-    // 假设未来 Tauri 拉起后端的默认本地端口为 127.0.0.1:61102
-    return "http://127.0.0.1:61102/api";
+declare global {
+  interface Window {
+    __TAURI__?: unknown;
   }
-  return process.env.NEXT_PUBLIC_API_URL || "/api";
-};
+}
 
+let cachedBaseUrl: string | null = null;
+let cachedApi: AxiosInstance | null = null;
 
-const api = axios.create({
-  baseURL: getBaseUrl(),
-  timeout: 30000,
-  headers: { "Content-Type": "application/json" },
-});
+/** 是否处于 Tauri 桌面环境 */
+function isTauriDesktop(): boolean {
+  return typeof window !== "undefined" && !!window.__TAURI__;
+}
+
+/** 获取后端 API Base URL */
+export async function getBaseUrl(): Promise<string> {
+  if (cachedBaseUrl) {
+    return cachedBaseUrl;
+  }
+
+  // 桌面模式：从 Tauri 后端获取实际端口
+  if (isTauriDesktop()) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const port = await invoke<number>("get_backend_port");
+    cachedBaseUrl = `http://127.0.0.1:${port}/api`;
+    return cachedBaseUrl;
+  }
+
+  // 浏览器 / 云端模式
+  cachedBaseUrl =
+    process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api";
+  return cachedBaseUrl;
+}
+
+/** 获取 Axios 实例（懒初始化） */
+async function getApi(): Promise<AxiosInstance> {
+  if (cachedApi) {
+    return cachedApi;
+  }
+
+  const baseURL = await getBaseUrl();
+  cachedApi = axios.create({
+    baseURL,
+    timeout: 30000,
+    headers: { "Content-Type": "application/json" },
+  });
+
+  return cachedApi;
+}
 
 // ===== Health =====
-export const checkHealth = () => api.get("/health");
+export const checkHealth = async () => (await getApi()).get("/health");
 
 // ===== Task =====
-export const createTask = (title: string, description?: string) =>
-  api.post("/tasks", { title, description });
+export const createTask = async (title: string, description?: string) =>
+  (await getApi()).post("/tasks", { title, description });
 
-export const fetchTasks = () => api.get("/tasks");
+export const fetchTasks = async () => (await getApi()).get("/tasks");
 
-export const deleteTask = (taskId: string) => api.delete(`/tasks/${taskId}`);
+export const deleteTask = async (taskId: string) =>
+  (await getApi()).delete(`/tasks/${taskId}`);
 
 // ===== Knowledge =====
-export const fetchKnowledge = (taskId: string) =>
-  api.get("/knowledge", { params: { task_id: taskId } });
+export const fetchKnowledge = async (taskId: string) =>
+  (await getApi()).get("/knowledge", { params: { task_id: taskId } });
 
-export const uploadKnowledge = (taskId: string, file: File) => {
+export const uploadKnowledge = async (taskId: string, file: File) => {
   const formData = new FormData();
   formData.append("task_id", taskId);
   formData.append("file", file);
-  return api.post("/knowledge", formData, {
+
+  return (await getApi()).post("/knowledge", formData, {
     headers: { "Content-Type": "multipart/form-data" },
   });
 };
 
-export const deleteKnowledge = (knowledgeId: string) =>
-  api.delete(`/knowledge/${knowledgeId}`);
+export const deleteKnowledge = async (knowledgeId: string) =>
+  (await getApi()).delete(`/knowledge/${knowledgeId}`);
 
-// Knowledge Preview
-export const previewKnowledge = (knowledgeId: string, n: number = 50) =>
-  api.get(`/knowledge/${knowledgeId}/preview`, { params: { n } });
-
+export const previewKnowledge = async (knowledgeId: string, n = 50) =>
+  (await getApi()).get(`/knowledge/${knowledgeId}/preview`, {
+    params: { n },
+  });
 
 // ===== Chat =====
-export const sendMessage = (taskId: string, message: string) =>
-  api.post("/chat", { task_id: taskId, message });
+export const sendMessage = async (taskId: string, message: string) =>
+  (await getApi()).post("/chat", { task_id: taskId, message });
 
-export const fetchChatHistory = (taskId: string) =>
-  api.get("/chat/history", { params: { task_id: taskId } });
+export const fetchChatHistory = async (taskId: string) =>
+  (await getApi()).get("/chat/history", { params: { task_id: taskId } });
 
 // ===== Execute =====
-export const executeCode = (taskId: string, code: string) =>
-  api.post("/execute", { task_id: taskId, code });
+export const executeCode = async (taskId: string, code: string) =>
+  (await getApi()).post("/execute", { task_id: taskId, code });
 
 // ===== Step DataFrame Preview =====
-export const fetchStepDataframe = (stepId: string, dfName: string) =>
-  api.get<{ columns: string[]; rows: Record<string, unknown>[] }>(
+export const fetchStepDataframe = async (stepId: string, dfName: string) =>
+  (await getApi()).get<{ columns: string[]; rows: Record<string, unknown>[] }>(
     `/chat/steps/${stepId}/dataframe/${dfName}`
   );
-
 
 // ===== Streaming Chat (SSE) =====
 /**
@@ -78,19 +114,10 @@ export const fetchStepDataframe = (stepId: string, dfName: string) =>
  */
 // ===== Streaming Chat (SSE) — ReAct Agent =====
 export interface SSEEvent {
-  type:
-    | "text"
-    | "tool_start"
-    | "tool_result"
-    | "step_saved"
-    | "done"
-    | "error";
-  // text
+  type: "text" | "tool_start" | "tool_result" | "step_saved" | "done" | "error";
   content?: string;
-  // tool_start
   code?: string;
   purpose?: string;
-  // tool_result
   success?: boolean;
   output?: string | null;
   error?: string | null;
@@ -102,9 +129,7 @@ export interface SSEEvent {
     columns: string[];
     capture_id: string;
   }>;
-  // step_saved
   step?: Record<string, unknown>;
-  // done
   steps?: Record<string, unknown>[];
 }
 
@@ -117,18 +142,20 @@ export async function streamChat(
   message: string,
   onEvent: (event: SSEEvent) => void,
 ) {
-  // 整体超时控制：5 分钟（覆盖多轮 tool 调用场景）
   const controller = new AbortController();
   const globalTimeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+
   try {
-    const streamUrl = `${getBaseUrl()}/chat/stream`;
-    // const res = await fetch("/api/chat/stream", {
+    const baseUrl = await getBaseUrl();
+    const streamUrl = `${baseUrl}/chat/stream`;
+
     const res = await fetch(streamUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ task_id: taskId, message }),
       signal: controller.signal,
     });
+
     if (!res.ok || !res.body) {
       onEvent({
         type: "error",
@@ -136,11 +163,13 @@ export async function streamChat(
       });
       return;
     }
+
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     // 单 chunk 间隔超时：90 秒无数据视为异常
     let chunkTimer: ReturnType<typeof setTimeout> | null = null;
+
     const resetChunkTimer = () => {
       if (chunkTimer) clearTimeout(chunkTimer);
       chunkTimer = setTimeout(() => {
@@ -152,15 +181,19 @@ export async function streamChat(
         onEvent({ type: "done", steps: [] });
       }, 90_000);
     };
+
     resetChunkTimer();
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+
       resetChunkTimer();
       buffer += decoder.decode(value, { stream: true });
       // SSE 协议：事件以 \n\n 分隔
       const parts = buffer.split("\n\n");
       buffer = parts.pop() || "";
+
       for (const part of parts) {
         for (const line of part.split("\n")) {
           if (line.startsWith("data: ")) {
@@ -168,12 +201,13 @@ export async function streamChat(
               const data: SSEEvent = JSON.parse(line.slice(6));
               onEvent(data);
             } catch {
-              // JSON 解析失败忽略
+              // ignore
             }
           }
         }
       }
     }
+
     if (chunkTimer) clearTimeout(chunkTimer);
     // 处理 buffer 中可能残留的最后一个事件
     if (buffer.trim()) {
@@ -204,16 +238,16 @@ export async function streamChat(
 }
 
 // ===== LLM Providers =====
-export const fetchProviders = () => api.get("/llm/providers");
+export const fetchProviders = async () => (await getApi()).get("/llm/providers");
 
-export const createProvider = (data: {
+export const createProvider = async (data: {
   display_name: string;
   base_url: string;
   api_key?: string;
   models: Array<{ id: string; name: string }>;
-}) => api.post("/llm/providers", data);
+}) => (await getApi()).post("/llm/providers", data);
 
-export const updateProvider = (
+export const updateProvider = async (
   id: string,
   data: {
     display_name?: string;
@@ -221,18 +255,20 @@ export const updateProvider = (
     api_key?: string;
     models?: Array<{ id: string; name: string }>;
   }
-) => api.patch(`/llm/providers/${id}`, data);
+) => (await getApi()).patch(`/llm/providers/${id}`, data);
 
-export const deleteProvider = (id: string) => api.delete(`/llm/providers/${id}`);
+export const deleteProvider = async (id: string) =>
+  (await getApi()).delete(`/llm/providers/${id}`);
 
-export const testConnection = (data: { base_url: string; api_key?: string }) =>
-  api.post("/llm/providers/test-connection", data);
+export const testConnection = async (data: {
+  base_url: string;
+  api_key?: string;
+}) => (await getApi()).post("/llm/providers/test-connection", data);
 
 // ===== Agent Configs =====
-export const fetchAgentConfigs = () => api.get("/llm/agents");
-export const updateAgentConfig = (
+export const fetchAgentConfigs = async () => (await getApi()).get("/llm/agents");
+
+export const updateAgentConfig = async (
   agentType: string,
   data: { provider_id?: string; model_id?: string }
-) => api.patch(`/llm/agents/${agentType}`, data);
-
-export default api;
+) => (await getApi()).patch(`/llm/agents/${agentType}`, data);

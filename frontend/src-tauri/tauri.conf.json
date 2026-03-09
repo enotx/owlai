@@ -22,21 +22,7 @@
       }
     ],
     "security": {
-      "csp": null,
-      "capabilities": [
-        {
-          "identifier": "main-capability",
-          "description": "Main app capabilities",
-          "windows": ["main"],
-          "permissions": [
-            "core:default",
-            "shell:allow-execute",
-            "shell:allow-open",
-            "fs:allow-read-file",
-            "fs:allow-read-dir"
-          ]
-        }
-      ]
+      "csp": null
     },
     "withGlobalTauri": true
   },
@@ -50,12 +36,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": [
-      "binaries/python-backend"
-    ],
-    "resources": [
-      "binaries/*"
-    ],
+    "resources": {
+      "../../python_env": "./"
+    },
     "macOS": {
       "minimumSystemVersion": "11.0"
     }

@@ -15,6 +15,7 @@ import { checkHealth } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import SettingsDialog from "@/components/settings/settings-dialog";
 import { CircleCheck, CircleX, Loader2 } from "lucide-react";
+import { useBackend } from "@/contexts/backend-context";
 
 /** 布局常量 */
 const LEFT_WIDTH = 200;       // 左侧固定宽度 px
@@ -41,33 +42,22 @@ function calcPanelWidths(totalWidth: number): { mid: number; right: number } {
 }
 
 export default function HomePage() {
-  const [backendStatus, setBackendStatus] = useState<
-    "checking" | "connected" | "disconnected"
-  >("checking");
+  // 🔥 使用 useBackend hook 替代本地状态
+  const { status: backendStatus } = useBackend();
 
-  // 初始值始终使用固定值，确保 SSR 与客户端 hydration 一致
   const [panelWidths, setPanelWidths] = useState<{ mid: number; right: number }>(
     () => calcPanelWidths(1280)
   );
 
-  /** 监听窗口尺寸变化，重新计算布局 */
   const handleResize = useCallback(() => {
     setPanelWidths(calcPanelWidths(window.innerWidth));
   }, []);
 
   useEffect(() => {
-    // 挂载后立即修正一次（消除 SSR 默认值偏差）
     handleResize();
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, [handleResize]);
-
-  /* 启动时检测后端连通性 */
-  useEffect(() => {
-    checkHealth()
-      .then(() => setBackendStatus("connected"))
-      .catch(() => setBackendStatus("disconnected"));
-  }, []);
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
