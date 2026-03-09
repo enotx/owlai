@@ -1,27 +1,31 @@
 # backend/run.py
+"""
+开发/云端环境启动脚本
+用法：
+  python backend/run.py --port 61102
+"""
 import uvicorn
 import argparse
 import sys
 import os
 
-# 将 backend 目录加入环境变量以防找不到包
+# 将 backend 目录加入环境变量
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from app.main import app
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=61102) # 使用一个冷门端口
+    parser = argparse.ArgumentParser(description="Start Owl Backend")
+    parser.add_argument("--port", type=int, default=61102, help="Port to listen on")
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind")
     args = parser.parse_args()
     
-    # 针对跨域问题：单机下前端(tauri://localhost)与后端(127.0.0.1)算跨域，需放行
-    from fastapi.middleware.cors import CORSMiddleware
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    print(f"🦉 Starting Owl Backend on {args.host}:{args.port}")
     
-    uvicorn.run(app, host="127.0.0.1", port=args.port)
+    # CORS 配置已移至 app/main.py，根据 APP_MODE 自动处理
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        log_level="info",
+    )

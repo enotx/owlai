@@ -17,7 +17,7 @@ import textwrap
 import time
 from typing import Any
 from app.services.code_security import check_code_security
-
+from app.config import PYTHON_EXECUTABLE, DATA_DIR
 
 
 # 沙箱参数
@@ -302,11 +302,11 @@ async def execute_code_in_sandbox(
         tmp_file.close()
         # 在子进程中执行
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, tmp_file.name,
+            PYTHON_EXECUTABLE, tmp_file.name,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            # 设置工作目录为项目根，确保相对路径能找到 data/uploads
-            cwd=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            # 设置工作目录为DATA目录，确保相对路径能找到 data/uploads
+            cwd=DATA_DIR, # 其实UPLOADS_DIR更准确，以后再说
         )
 
         try:

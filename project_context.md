@@ -7,6 +7,7 @@
 ├── backend
 │   ├── app
 │   │   ├── __init__.py
+│   │   ├── config.py
 │   │   ├── database.py
 │   │   ├── main.py
 │   │   ├── models.py
@@ -28,6 +29,7 @@
 │   ├── pyproject.toml
 │   ├── README.md
 │   ├── requirements.txt
+│   ├── run.py
 │   └── uv.lock
 ├── frontend
 │   ├── components.json
@@ -91,7 +93,7 @@
 ├── project_context.md
 └── README.md
 
-20 directories, 68 files
+20 directories, 70 files
 ```
 
 ## 2. 前端组件依赖
@@ -247,59 +249,59 @@ W-->Z
 ## 3. 后端 Service/Router 调用链
 ```mermaid
 graph TD
-  execute --calls--> db.execute
-  chat --depends on--> schemas
-  execute --depends on--> data_processor
-  execute --depends on--> schemas
-  main --depends on--> config
-  agent --calls--> write_db.commit
-  database --depends on--> config
-  tasks --calls--> db.commit
-  main --depends on--> routers
-  llm --calls--> db.execute
-  knowledge --calls--> db.add
-  knowledge --calls--> db.get
-  agent --depends on--> data_processor
-  main --depends on--> database
-  tasks --calls--> db.execute
-  llm --depends on--> models
-  tasks --depends on--> database
-  execute --depends on--> database
-  llm --depends on--> schemas
-  knowledge --calls--> db.execute
-  execute --depends on--> models
-  knowledge --calls--> db.commit
-  agent --depends on--> database
-  knowledge --depends on--> data_processor
-  llm --calls--> db.commit
-  chat --depends on--> models
-  chat --depends on--> database
-  agent --depends on--> sandbox
-  execute --depends on--> sandbox
-  agent --depends on--> models
-  tasks --calls--> db.get
-  chat --calls--> db.execute
-  main --depends on--> schemas
-  tasks --depends on--> models
-  llm --calls--> db.add
-  tasks --calls--> db.delete
   sandbox --depends on--> code_security
-  knowledge --depends on--> models
-  models --depends on--> database
+  main --depends on--> routers
   llm --depends on--> database
+  agent --depends on--> sandbox
+  agent --depends on--> data_processor
+  execute --depends on--> sandbox
+  knowledge --depends on--> data_processor
+  chat --depends on--> database
+  knowledge --depends on--> database
+  agent --calls--> write_db.commit
+  tasks --depends on--> database
+  tasks --calls--> db.refresh
+  chat --calls--> db.execute
+  tasks --depends on--> schemas
+  knowledge --depends on--> config
+  agent --calls--> write_db.add
+  execute --depends on--> schemas
+  main --depends on--> schemas
+  llm --calls--> db.delete
+  knowledge --calls--> db.execute
+  agent --depends on--> models
+  execute --depends on--> models
+  models --depends on--> database
+  llm --calls--> db.add
+  main --depends on--> config
+  llm --depends on--> schemas
+  tasks --calls--> db.add
+  knowledge --calls--> db.add
+  knowledge --depends on--> schemas
+  execute --depends on--> data_processor
+  tasks --depends on--> models
+  chat --depends on--> schemas
+  database --depends on--> config
+  chat --depends on--> models
   agent --depends on--> config
+  knowledge --depends on--> models
+  knowledge --calls--> db.refresh
+  agent --calls--> db.execute
   llm --calls--> db.refresh
   agent --calls--> write_db.refresh
-  tasks --calls--> db.refresh
+  execute --depends on--> database
   knowledge --calls--> db.delete
-  knowledge --depends on--> database
-  knowledge --depends on--> config
-  knowledge --depends on--> schemas
-  knowledge --calls--> db.refresh
-  agent --calls--> write_db.add
-  tasks --depends on--> schemas
-  llm --calls--> db.delete
-  agent --calls--> db.execute
-  chat --depends on--> agent
-  tasks --calls--> db.add```
+  llm --depends on--> models
+  tasks --calls--> db.delete
+  tasks --calls--> db.get
+  execute --calls--> db.execute
+  llm --calls--> db.execute
+  main --depends on--> database
+  knowledge --calls--> db.commit
+  agent --depends on--> database
+  knowledge --calls--> db.get
+  tasks --calls--> db.execute
+  llm --calls--> db.commit
+  tasks --calls--> db.commit
+  chat --depends on--> agent```
 

@@ -5,10 +5,11 @@
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from app.database import init_db
 from app.schemas import HealthResponse
 from app.routers import tasks, knowledge, chat, execute, llm
-from app.config import UPLOADS_DIR 
+from app.config import UPLOADS_DIR, APP_MODE
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -17,9 +18,36 @@ async def lifespan(app: FastAPI):
     # 改为：UPLOADS_DIR 在 config.py 中已经自动创建
     await init_db()
     print(f"✅ Owl Backend is ready. Data directory: {UPLOADS_DIR.parent}")
+    print(f"🔧 Running in {APP_MODE} mode")
     yield
 
 app = FastAPI(title="Owl API", version="0.1.0", lifespan=lifespan)
+
+# ── CORS 配置（根据 APP_MODE 动态调整）──────────────────────
+if APP_MODE in ("desktop", "dev"):
+    # 桌面模式：允许 tauri://localhost 跨域
+    # 开发模式：允许 localhost:3000 跨域
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # 桌面/开发环境允许所有来源
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    print("🌐 CORS enabled for desktop/dev mode")
+elif APP_MODE == "cloud":
+    # 云端模式：严格限制来源（生产环境）
+    allowed_origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
+    if allowed_origins and allowed_origins[0]:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=allowed_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+        print(f"🌐 CORS enabled for origins: {allowed_origins}")
+
 
 # 注册路由
 app.include_router(tasks.router)
