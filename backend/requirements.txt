@@ -33,3 +33,8 @@ typing-extensions==4.15.0
 typing-inspection==0.4.2
 uvicorn==0.41.0
 xlrd==2.0.2
+
+
+--index-url http://pypi.sankuai.com/simple
+--trusted-host pypi.sankuai.com
+pytalos==0.1.6

@@ -14,10 +14,20 @@ dependencies = [
     "platformdirs>=4.4.0",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.11.0",
+    "pytalos>=0.1.6",
     "python-dotenv>=1.2.1",
     "python-multipart>=0.0.20",
     "sqlalchemy>=2.0.48",
     "tabulate>=0.9.0",
     "uvicorn>=0.39.0",
     "xlrd>=2.0.2",
+    "pytalos>=0.1.6"
 ]
+
+
+[[tool.uv.index]]
+name = "sankuai"
+url = "http://pypi.sankuai.com/simple"
+explicit = true  # 只有明确指定的包才从这个源安装
+[tool.uv.sources]
+pytalos = { index = "sankuai" }  # 指定 pytalos 使用 sankuai 源

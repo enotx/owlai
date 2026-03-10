@@ -11,11 +11,12 @@ import { useEffect, useState, useCallback } from "react";
 import TaskSidebar from "@/components/sidebar/task-sidebar";
 import ChatArea from "@/components/chat/chat-area";
 import DataPanel from "@/components/data/data-panel";
-import { checkHealth } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import SettingsDialog from "@/components/settings/settings-dialog";
 import { CircleCheck, CircleX, Loader2 } from "lucide-react";
 import { useBackend } from "@/contexts/backend-context";
+import OnboardingDialog from "@/components/onboarding/onboarding-dialog";
+import { useOnboarding } from "@/contexts/onboarding-context";
 
 /** 布局常量 */
 const LEFT_WIDTH = 200;       // 左侧固定宽度 px
@@ -42,8 +43,10 @@ function calcPanelWidths(totalWidth: number): { mid: number; right: number } {
 }
 
 export default function HomePage() {
-  // 🔥 使用 useBackend hook 替代本地状态
+  // 使用 useBackend hook 替代本地状态
   const { status: backendStatus } = useBackend();
+  const { shouldShowOnboarding, completeOnboarding } = useOnboarding();
+
 
   const [panelWidths, setPanelWidths] = useState<{ mid: number; right: number }>(
     () => calcPanelWidths(1280)
@@ -118,6 +121,10 @@ export default function HomePage() {
       </div>
       {/* 设置对话框 */}
       <SettingsDialog />
+      <OnboardingDialog 
+        open={shouldShowOnboarding} 
+        onClose={completeOnboarding} 
+      />
     </div>
   );
 }

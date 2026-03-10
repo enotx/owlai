@@ -272,3 +272,71 @@ export const updateAgentConfig = async (
   agentType: string,
   data: { provider_id?: string; model_id?: string }
 ) => (await getApi()).patch(`/llm/agents/${agentType}`, data);
+
+// ===== License Server APIs =====
+const LICENSE_SERVER_URL = process.env.NEXT_PUBLIC_LICENSE_SERVER_URL || "https://owl-server.enotx.com/api";
+export interface ActivationCodeRequest {
+  code: string;
+}
+export interface LLMModelConfig {
+  id: string;
+  name: string;
+}
+export interface LLMProviderConfig {
+  display_name: string;
+  base_url: string;
+  api_key?: string;
+  models: LLMModelConfig[];
+}
+export interface AgentConfigData {
+  agent_type: string;
+  provider_id?: string;
+  model_id?: string;
+}
+export interface DefaultConfig {
+  providers: LLMProviderConfig[];
+  agents: AgentConfigData[];
+}
+export interface ActivationCodeResponse {
+  valid: boolean;
+  message: string;
+  config?: DefaultConfig;
+}
+export const verifyActivationCode = async (code: string): Promise<ActivationCodeResponse> => {
+  const response = await axios.post<ActivationCodeResponse>(
+    `${LICENSE_SERVER_URL}/activation/verify`,
+    { code }
+  );
+  return response.data;
+};
+/**
+ * 批量应用激活码配置到本地
+ */
+export const applyActivationConfig = async (config: DefaultConfig) => {
+  const api = await getApi();
+  
+  // 1. 创建所有 Providers
+  const providerIdMap = new Map<string, string>(); // display_name -> id
+  
+  for (const provider of config.providers) {
+    const response = await api.post("/llm/providers", provider);
+    providerIdMap.set(provider.display_name, response.data.id);
+  }
+  
+  // 2. 更新 Agent 配置
+  for (const agent of config.agents) {
+    // 如果 agent 配置中有 provider_id，需要映射到实际创建的 provider id
+    let actualProviderId = agent.provider_id;
+    
+    // 这里假设激活码配置中的 provider_id 是 display_name
+    // 如果是实际 ID，则不需要映射
+    if (actualProviderId && providerIdMap.has(actualProviderId)) {
+      actualProviderId = providerIdMap.get(actualProviderId)!;
+    }
+    
+    await api.patch(`/llm/agents/${agent.agent_type}`, {
+      provider_id: actualProviderId,
+      model_id: agent.model_id,
+    });
+  }
+};
