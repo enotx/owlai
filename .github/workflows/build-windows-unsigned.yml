@@ -1,0 +1,84 @@
+name: Build Windows (Unsigned)
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+      
+      - name: Cache Python Standalone
+        uses: actions/cache@v4
+        with:
+          path: .cache/python-standalone
+          key: python-standalone-${{ runner.os }}-${{ hashFiles('scripts/build-sidecar.ps1') }}
+      
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      
+      - name: Build Python sidecar
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
+          .\scripts\build-sidecar.ps1
+      
+      - name: Build Tauri app (unsigned)
+        working-directory: frontend
+        shell: pwsh
+        run: npm run tauri:build
+      
+      - name: Create installation instructions
+        shell: pwsh
+        run: |
+          @"
+          ⚠️  UNSIGNED BUILD - FOR TESTING ONLY
+          
+          Installation Instructions:
+          
+          1. Download the .msi file
+          2. Right-click the file → Properties
+          3. Check "Unblock" if present → Apply
+          4. Double-click to install
+          5. If Windows SmartScreen appears:
+             - Click "More info"
+             - Click "Run anyway"
+          
+          Note: This build is not code-signed. Windows will show security warnings.
+          For production use, please use the signed version.
+          "@ | Out-File -FilePath "INSTALL_INSTRUCTIONS.txt" -Encoding UTF8
+      
+      - name: Upload unsigned MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: Owl-Windows-Unsigned-x64-${{ github.sha }}
+          path: |
+            frontend/src-tauri/target/release/bundle/msi/*.msi
+            INSTALL_INSTRUCTIONS.txt
+          retention-days: 7
