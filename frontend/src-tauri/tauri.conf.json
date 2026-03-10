@@ -37,7 +37,7 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../../python_env": "./"
+      "../../python_env": "./python_env"
     },
     "macOS": {
       "minimumSystemVersion": "11.0"

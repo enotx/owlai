@@ -17,6 +17,7 @@ backend/data/uploads/
 /target/
 /gen/schemas
 /python_env/
+.cache/
 
 # OS
 .DS_Store

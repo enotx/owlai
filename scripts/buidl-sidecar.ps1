@@ -70,6 +70,17 @@ Write-Host "📋 Copying backend code..." -ForegroundColor Yellow
 Copy-Item -Recurse -Force backend/app (Join-Path $DestDir "app")
 Copy-Item -Force backend/sidecar_main.py (Join-Path $DestDir "sidecar_main.py")
 
+Write-Host "📝 Creating runtime manifest..." -ForegroundColor Yellow
+$RuntimePython = "python\python.exe"
+$ManifestContent = @{
+    runtime_python = $RuntimePython
+    platform = $Platform
+    python_version = $PythonVersion
+    build_date = $BuildDate
+} | ConvertTo-Json -Depth 10
+$ManifestPath = Join-Path $DestDir "runtime_manifest.json"
+$ManifestContent | Out-File -FilePath $ManifestPath -Encoding UTF8
+
 Write-Host "🧹 Cleaning up..." -ForegroundColor Yellow
 Get-ChildItem -Path $DestDir -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
 Get-ChildItem -Path $DestDir -Recurse -File -Filter "*.pyc" | Remove-Item -Force
