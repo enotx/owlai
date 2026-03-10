@@ -26,8 +26,10 @@ python_env/
 .DS_Store
 
 # Misc
+scripts/activation_code_demo.txt
 .VSCodeCounter/
 .vscode/
 .aider*
 structure.txt
+project_context.md
 *.bak

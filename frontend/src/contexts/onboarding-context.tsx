@@ -4,7 +4,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { useBackend } from "./backend-context";
 import { fetchProviders } from "@/lib/api";
-import { useOnboardingStore } from "@/stores/use-onboarding-store";
 
 interface OnboardingContextValue {
   /** 是否应该显示新手引导 */
@@ -15,8 +14,8 @@ interface OnboardingContextValue {
   configCheckStatus: "idle" | "checking" | "checked";
   /** 重新检测配置 */
   recheckConfiguration: () => void;
-  /** 标记新手引导已完成 */
-  completeOnboarding: () => void;
+  /** 临时跳过新手引导（仅当前会话有效） */
+  skipOnboarding: () => void;
 }
 
 const OnboardingContext = createContext<OnboardingContextValue | undefined>(undefined);
@@ -27,10 +26,10 @@ interface OnboardingProviderProps {
 
 export function OnboardingProvider({ children }: OnboardingProviderProps) {
   const { isReady } = useBackend();
-  const { hasCompletedOnboarding, completeOnboarding: markCompleted } = useOnboardingStore();
   
   const [hasConfiguration, setHasConfiguration] = useState(false);
   const [configCheckStatus, setConfigCheckStatus] = useState<"idle" | "checking" | "checked">("idle");
+  const [hasSkipped, setHasSkipped] = useState(false); // 临时跳过状态，不持久化
 
   const checkConfiguration = async () => {
     if (!isReady) return;
@@ -38,7 +37,8 @@ export function OnboardingProvider({ children }: OnboardingProviderProps) {
     setConfigCheckStatus("checking");
     try {
       const response = await fetchProviders();
-      setHasConfiguration(response.data.length > 0);
+      const hasConfig = response.data.length > 0;
+      setHasConfiguration(hasConfig);
       console.log(`📋 Configuration check: ${response.data.length} provider(s) found`);
     } catch (error) {
       console.error("Failed to check configuration:", error);
@@ -55,19 +55,19 @@ export function OnboardingProvider({ children }: OnboardingProviderProps) {
     }
   }, [isReady]);
 
-  // 计算是否应该显示新手引导
+  // 计算是否应该显示新手引导：后端就绪 + 检测完成 + 无配置 + 未跳过
   const shouldShowOnboarding =
     isReady &&
     configCheckStatus === "checked" &&
     !hasConfiguration &&
-    !hasCompletedOnboarding;
+    !hasSkipped;
 
   const value: OnboardingContextValue = {
     shouldShowOnboarding,
     hasConfiguration,
     configCheckStatus,
     recheckConfiguration: checkConfiguration,
-    completeOnboarding: markCompleted,
+    skipOnboarding: () => setHasSkipped(true),
   };
 
   return (

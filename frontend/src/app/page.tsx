@@ -13,9 +13,9 @@ import ChatArea from "@/components/chat/chat-area";
 import DataPanel from "@/components/data/data-panel";
 import { Badge } from "@/components/ui/badge";
 import SettingsDialog from "@/components/settings/settings-dialog";
+import OnboardingDialog from "@/components/onboarding/onboarding-dialog";
 import { CircleCheck, CircleX, Loader2 } from "lucide-react";
 import { useBackend } from "@/contexts/backend-context";
-import OnboardingDialog from "@/components/onboarding/onboarding-dialog";
 import { useOnboarding } from "@/contexts/onboarding-context";
 
 /** 布局常量 */
@@ -45,7 +45,7 @@ function calcPanelWidths(totalWidth: number): { mid: number; right: number } {
 export default function HomePage() {
   // 使用 useBackend hook 替代本地状态
   const { status: backendStatus } = useBackend();
-  const { shouldShowOnboarding, completeOnboarding } = useOnboarding();
+  const { shouldShowOnboarding, skipOnboarding, recheckConfiguration } = useOnboarding();
 
 
   const [panelWidths, setPanelWidths] = useState<{ mid: number; right: number }>(
@@ -61,6 +61,13 @@ export default function HomePage() {
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, [handleResize]);
+
+  const handleOnboardingClose = () => {
+    // 重新检测配置（如果用户通过激活码或手动配置完成）
+    recheckConfiguration();
+    // 标记为已跳过（临时状态，刷新页面后失效）
+    skipOnboarding();
+  };
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
@@ -123,7 +130,7 @@ export default function HomePage() {
       <SettingsDialog />
       <OnboardingDialog 
         open={shouldShowOnboarding} 
-        onClose={completeOnboarding} 
+        onClose={handleOnboardingClose} 
       />
     </div>
   );
