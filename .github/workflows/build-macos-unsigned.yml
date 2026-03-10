@@ -1,4 +1,4 @@
-name: Build macOS (Unsigned)
+name: Build macOS Multi-Arch (Unsigned)
 
 on:
   push:
@@ -9,7 +9,15 @@ on:
 
 jobs:
   build-macos:
-    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - runner: macos-latest      # M1/M2 (arm64)
+            arch_name: Apple-Silicon
+          - runner: macos-13           # Intel (x86_64)
+            arch_name: Intel
+    
+    runs-on: ${{ matrix.runner }}
     
     steps:
       - name: Checkout repository
@@ -24,8 +32,6 @@ jobs:
       
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
       
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -36,7 +42,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache/python-standalone
-          key: python-standalone-${{ runner.os }}-${{ hashFiles('scripts/build-sidecar.sh') }}
+          key: python-standalone-${{ matrix.runner }}-${{ hashFiles('scripts/build-sidecar.sh') }}
       
       - name: Install frontend dependencies
         working-directory: frontend
@@ -46,6 +52,7 @@ jobs:
         run: |
           chmod +x scripts/build-sidecar.sh
           ./scripts/build-sidecar.sh
+          # 你的 detect_platform() 会自动检测当前 runner 的架构
       
       - name: Build Tauri app (unsigned)
         working-directory: frontend
@@ -56,12 +63,13 @@ jobs:
           APP_PATH="frontend/src-tauri/target/release/bundle/macos/Owl Data Analyzer.app"
           
           if [ -d "$APP_PATH" ]; then
-            hdiutil create -volname "Owl Data Analyzer (Unsigned)" \
+            hdiutil create -volname "Owl Data Analyzer (${{ matrix.arch_name }})" \
               -srcfolder "$APP_PATH" \
               -ov -format UDZO \
-              "Owl-Installer-Unsigned.dmg"
+              "Owl-Installer-${{ matrix.arch_name }}-Unsigned.dmg"
             
-            echo "⚠️  This is an UNSIGNED build for testing only" > INSTALL_INSTRUCTIONS.txt
+            echo "⚠️  This is an UNSIGNED build for ${{ matrix.arch_name }} Macs" > INSTALL_INSTRUCTIONS.txt
+            echo "" >> INSTALL_INSTRUCTIONS.txt
             echo "To install on macOS:" >> INSTALL_INSTRUCTIONS.txt
             echo "1. Mount the DMG" >> INSTALL_INSTRUCTIONS.txt
             echo "2. Drag app to Applications" >> INSTALL_INSTRUCTIONS.txt
@@ -75,8 +83,8 @@ jobs:
       - name: Upload unsigned DMG
         uses: actions/upload-artifact@v4
         with:
-          name: Owl-macOS-Unsigned-${{ github.sha }}
+          name: Owl-macOS-${{ matrix.arch_name }}-Unsigned-${{ github.sha }}
           path: |
-            Owl-Installer-Unsigned.dmg
+            Owl-Installer-${{ matrix.arch_name }}-Unsigned.dmg
             INSTALL_INSTRUCTIONS.txt
           retention-days: 7
