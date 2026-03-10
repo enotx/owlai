@@ -5,10 +5,16 @@ Tauri Sidecar 启动入口：
 - 将端口写入临时文件供 Tauri 读取
 - 启动 FastAPI 服务
 """
+import sys
+import io
 import os
 import socket
 import uvicorn
 from pathlib import Path
+
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 def find_free_port() -> int:
     """查找可用端口"""

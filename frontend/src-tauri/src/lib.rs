@@ -269,8 +269,10 @@ pub fn run() {
             
             let child = Command::new(&python_exe)
                 .current_dir(&python_env_dir)
-                .arg("-u") // 强制 Python 输出不缓冲，实时写入日志
+                .arg("-u") // 强制 Python 输出不缓冲,实时写入日志
                 .arg(&sidecar_script)
+                .env("PYTHONUTF8", "1")      // 强制 UTF-8 模式（解决 Windows GBK 编码问题）
+                .env("APP_MODE", "desktop")  // 设置应用模式
                 .stdout(Stdio::from(stdout_file))
                 .stderr(Stdio::from(stderr_file))
                 .spawn()
