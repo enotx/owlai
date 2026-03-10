@@ -1,0 +1,83 @@
+name: Build macOS (Unsigned)
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+      
+      - name: Cache Python Standalone
+        uses: actions/cache@v4
+        with:
+          path: .cache/python-standalone
+          key: python-standalone-${{ runner.os }}-${{ hashFiles('scripts/build-sidecar.sh') }}
+      
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      
+      - name: Build Python sidecar
+        run: |
+          chmod +x scripts/build-sidecar.sh
+          ./scripts/build-sidecar.sh
+      
+      - name: Build Tauri app (unsigned)
+        working-directory: frontend
+        run: npm run tauri:build
+      
+      - name: Create DMG (unsigned)
+        run: |
+          APP_PATH="frontend/src-tauri/target/release/bundle/macos/Owl Data Analyzer.app"
+          
+          if [ -d "$APP_PATH" ]; then
+            hdiutil create -volname "Owl Data Analyzer (Unsigned)" \
+              -srcfolder "$APP_PATH" \
+              -ov -format UDZO \
+              "Owl-Installer-Unsigned.dmg"
+            
+            echo "⚠️  This is an UNSIGNED build for testing only" > INSTALL_INSTRUCTIONS.txt
+            echo "To install on macOS:" >> INSTALL_INSTRUCTIONS.txt
+            echo "1. Mount the DMG" >> INSTALL_INSTRUCTIONS.txt
+            echo "2. Drag app to Applications" >> INSTALL_INSTRUCTIONS.txt
+            echo "3. Run: xattr -cr '/Applications/Owl Data Analyzer.app'" >> INSTALL_INSTRUCTIONS.txt
+            echo "4. Launch the app" >> INSTALL_INSTRUCTIONS.txt
+          else
+            echo "❌ App bundle not found at $APP_PATH"
+            exit 1
+          fi
+      
+      - name: Upload unsigned DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Owl-macOS-Unsigned-${{ github.sha }}
+          path: |
+            Owl-Installer-Unsigned.dmg
+            INSTALL_INSTRUCTIONS.txt
+          retention-days: 7

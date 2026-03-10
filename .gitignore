@@ -14,9 +14,12 @@ backend/data/uploads/
 *.log
 
 # Rust & Sidecar
+frontend/src-tauri/target/
 /target/
 /gen/schemas
-/python_env/
+
+# Python Environment & Cache
+python_env/
 .cache/
 
 # OS

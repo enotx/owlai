@@ -26,7 +26,6 @@ async def stream_message(body: ChatRequest, db: AsyncSession = Depends(get_db)):
     通过 SSE 逐步推送 Agent 的分析过程。
     事件类型：text / tool_start / tool_result / step_saved / done / error
     """
-
     async def event_generator():
         try:
             async for sse_line in run_agent_stream(
@@ -58,7 +57,6 @@ async def stream_message(body: ChatRequest, db: AsyncSession = Depends(get_db)):
 # ── 历史记录 ───────────────────────────────────────────────────
 @router.get("/history", response_model=list[StepResponse])
 async def get_history(task_id: str, db: AsyncSession = Depends(get_db)):
-    print("""API called: get_history, task_id={}""".format(task_id))
     """获取指定 Task 的对话历史"""
     result = await db.execute(
         select(Step).where(Step.task_id == task_id).order_by(Step.created_at.asc())
@@ -73,7 +71,6 @@ async def get_step_dataframe(
     df_name: str,
     db: AsyncSession = Depends(get_db),
 ):
-    print("""API called: get_step_dataframe, step_id={}, df_name={}""".format(step_id, df_name))
     """返回某个 tool_use Step 中捕获的 DataFrame 数据（columns + rows）"""
     import os, json as _json
     # 查找 Step
