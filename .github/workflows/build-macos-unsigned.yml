@@ -2,9 +2,8 @@ name: Build macOS (Unsigned)
 
 on:
   push:
-    branches:
-      - main
-      - develop
+    tags:
+      - 'v*'
   pull_request:
   workflow_dispatch:
 
