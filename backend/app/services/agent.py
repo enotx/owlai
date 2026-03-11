@@ -302,8 +302,8 @@ async def run_agent_stream(
     task_id: str,
     user_message: str,
     db: AsyncSession,
-    mode: str | None = None,  # 新增：可选的模式参数
-    model_override: tuple[str, str] | None = None, # 新增：用户显式指定的模型 (provider_id, model_id)
+    mode: str | None = None,
+    model_override: tuple[str, str] | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Agent 主入口（生成器），产出 SSE 格式字符串。
@@ -313,6 +313,7 @@ async def run_agent_stream(
         user_message: 用户消息
         db: 数据库会话
         mode: 可选的执行模式 ('auto'|'plan'|'analyst')，如果为None则从Task读取
+        model_override: 用户显式指定的模型 (provider_id, model_id)
     """
     from app.database import async_session
     from app.models import Task, Step
@@ -386,11 +387,15 @@ async def run_agent_stream(
     orchestrator = AgentOrchestrator(
         task_id=task_id,
         db=db,
-        model_override=model_override,  # 传递用户指定的模型
+        model_override=model_override,
     )
-
     
     saved_steps: list[dict] = []
+    
+    # 维护状态
+    accumulated_text = ""  # 累积的文本内容
+    current_tool_code = ""  # 当前工具的代码
+    current_tool_purpose = ""  # 当前工具的目的
     
     try:
         async for event_line in orchestrator.run(
@@ -398,26 +403,47 @@ async def run_agent_stream(
             user_message=user_message,
             context={"history_messages": history_messages},
         ):
-            # Orchestrator产出的事件直接转发
-            # 但需要拦截某些事件类型来保存Step
-            
             # 解析事件
             if event_line.startswith("data: "):
                 try:
                     event_data = json.loads(event_line[6:])
                     event_type = event_data.get("type")
                     
-                    # 保存tool_use类型的Step
-                    if event_type == "tool_result":
+                    # 累积文本内容
+                    if event_type == "text":
+                        accumulated_text += event_data.get("content", "")
+                    
+                    # 记录工具信息
+                    elif event_type == "tool_start":
+                        # 如果有累积的文本，先保存为 assistant_message
+                        if accumulated_text.strip():
+                            async with async_session() as write_db:
+                                text_step = Step(
+                                    task_id=task_id,
+                                    role="assistant",
+                                    step_type="assistant_message",
+                                    content=accumulated_text.strip(),
+                                )
+                                write_db.add(text_step)
+                                await write_db.commit()
+                                await write_db.refresh(text_step)
+                                saved_steps.append(_step_to_dict(text_step))
+                                yield _sse({"type": "step_saved", "step": _step_to_dict(text_step)})
+                            accumulated_text = ""  # 清空
+                        
+                        # 记录当前工具信息
+                        current_tool_code = event_data.get("code", "")
+                        current_tool_purpose = event_data.get("purpose", "")
+                    
+                    # 保存 tool_use Step
+                    elif event_type == "tool_result":
                         async with async_session() as write_db:
-                            # 查找对应的tool_start事件中的code和purpose
-                            # 简化：从event_data中获取（需要Orchestrator传递）
                             tool_step = Step(
                                 task_id=task_id,
                                 role="assistant",
                                 step_type="tool_use",
-                                content=event_data.get("purpose", "Code execution"),
-                                code=event_data.get("code", ""),
+                                content=current_tool_purpose or "Code execution",
+                                code=current_tool_code,
                                 code_output=json.dumps({
                                     "success": event_data.get("success"),
                                     "output": event_data.get("output"),
@@ -431,9 +457,30 @@ async def run_agent_stream(
                             await write_db.refresh(tool_step)
                             saved_steps.append(_step_to_dict(tool_step))
                             yield _sse({"type": "step_saved", "step": _step_to_dict(tool_step)})
+                        
+                        # 清空工具信息
+                        current_tool_code = ""
+                        current_tool_purpose = ""
                     
-                    # 保存plan_generated事件
+                    # plan_generated 事件
                     elif event_type == "plan_generated":
+                        # 先保存累积的文本
+                        if accumulated_text.strip():
+                            async with async_session() as write_db:
+                                text_step = Step(
+                                    task_id=task_id,
+                                    role="assistant",
+                                    step_type="assistant_message",
+                                    content=accumulated_text.strip(),
+                                )
+                                write_db.add(text_step)
+                                await write_db.commit()
+                                await write_db.refresh(text_step)
+                                saved_steps.append(_step_to_dict(text_step))
+                                yield _sse({"type": "step_saved", "step": _step_to_dict(text_step)})
+                            accumulated_text = ""
+                        
+                        # 保存 plan
                         plan_data = event_data.get("plan", {})
                         async with async_session() as write_db:
                             plan_step = Step(
@@ -454,6 +501,21 @@ async def run_agent_stream(
             
             # 转发原始事件
             yield event_line
+        
+        # 流结束时，如果还有累积的文本，保存它
+        if accumulated_text.strip():
+            async with async_session() as write_db:
+                final_text_step = Step(
+                    task_id=task_id,
+                    role="assistant",
+                    step_type="assistant_message",
+                    content=accumulated_text.strip(),
+                )
+                write_db.add(final_text_step)
+                await write_db.commit()
+                await write_db.refresh(final_text_step)
+                saved_steps.append(_step_to_dict(final_text_step))
+                yield _sse({"type": "step_saved", "step": _step_to_dict(final_text_step)})
         
         # 发送完成信号
         yield _sse({"type": "done", "steps": saved_steps})
@@ -478,6 +540,7 @@ async def run_agent_stream(
         
         yield _sse({"type": "done", "steps": []})
 
+        
 # ── 工具函数 ──────────────────────────────────────────────────
 
 def _sse(data: dict) -> str:

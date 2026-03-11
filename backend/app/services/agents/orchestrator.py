@@ -174,10 +174,11 @@ class AgentOrchestrator:
         )
         knowledge_count = result.scalar() or 0
         
+        # TODO: 现在的keyword匹配也太蠢了，可以考虑引入一个小模型来评估复杂度
         complex_keywords = [
             "多个", "multiple", "关联", "join", "merge", "combine",
             "对比", "compare", "趋势", "trend", "预测", "predict",
-            "分类", "classify", "聚类", "cluster",
+            "分类", "classify", "聚类", "cluster", "思路", "brainstorm" , "give me some ideas"
         ]
         
         has_complex_keyword = any(kw in user_message.lower() for kw in complex_keywords)

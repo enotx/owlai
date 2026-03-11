@@ -6,7 +6,7 @@
  * 中栏：Knowledge Zone + 对话消息列表 + 输入框
  * 支持渲染 user_message / assistant_message / tool_use + 流式消息 + pending tool
  */
-import { useEffect, useRef, useMemo, useCallback } from "react";
+import { useEffect, useRef, useMemo, useCallback, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useTaskStore } from "@/stores/use-task-store";
 import type { Step, PendingToolExecution, StreamingMessage } from "@/stores/use-task-store";
@@ -24,6 +24,8 @@ import {
   Loader2,
   Clock,
   Database,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CapturedDataFrame } from "@/stores/use-task-store";
@@ -58,8 +60,11 @@ function AssistantBubble({ content }: { content: string }) {
   );
 }
 
-// ── 代码执行块（tool_use Step） ───────────────────────────────
+// ── 代码执行块（tool_use Step）- 支持折叠/展开 ───────────────
 function ToolUseBlock({ step }: { step: Step }) {
+  // 默认折叠代码块
+  const [isCodeExpanded, setIsCodeExpanded] = useState(false);
+
   const parsed = useMemo(() => {
     if (!step.code_output) return null;
     try {
@@ -87,13 +92,30 @@ function ToolUseBlock({ step }: { step: Step }) {
             📌 {step.content}
           </p>
         )}
-        {/* 代码块 */}
+        
+        {/* 代码块 - 可折叠 */}
         {step.code && (
-          <pre className="overflow-x-auto rounded-md bg-zinc-900 p-3 text-xs text-green-400 leading-relaxed">
-            <code>{step.code}</code>
-          </pre>
+          <div className="space-y-1">
+            <button
+              onClick={() => setIsCodeExpanded(!isCodeExpanded)}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {isCodeExpanded ? (
+                <ChevronDown className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5" />
+              )}
+              <span>{isCodeExpanded ? "Hide code" : "Show code"}</span>
+            </button>
+            {isCodeExpanded && (
+              <pre className="overflow-x-auto rounded-md bg-zinc-900 p-3 text-xs text-green-400 leading-relaxed">
+                <code>{step.code}</code>
+              </pre>
+            )}
+          </div>
         )}
-        {/* 执行结果 */}
+
+        {/* 执行结果 - 永远展示 */}
         {parsed && (
           <div
             className={cn(
@@ -137,6 +159,7 @@ function ToolUseBlock({ step }: { step: Step }) {
     </div>
   );
 }
+
 
 // ── 流式消息（正在打字） ──────────────────────────────────────
 function StreamingBubble({ message }: { message: StreamingMessage }) {

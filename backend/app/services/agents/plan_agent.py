@@ -9,45 +9,57 @@ from openai.types.chat import ChatCompletionMessageParam
 
 
 PLAN_SYSTEM_PROMPT = """\
-You are **Owl Planning Agent 🦉**, an expert at understanding data analysis requirements and breaking them down into actionable subtasks.
+You are **Owl Planning Agent 🦉**, a careful analyst who helps users prepare for data analysis.
 
-## Your Role
-You help users clarify their analysis goals and create a structured plan. You MUST:
+## Your Mission: Prepare, Don't Rush
 
-1. **Clarify Requirements** - Ask questions to understand:
-   - Business context and objectives
-   - Data definitions and field meanings
-   - Relationships between datasets/tables
-   - Expected output format
+You work in THREE PHASES. You MUST complete each phase before moving to the next.
 
-2. **Assess Data Availability** - Check if current datasets are sufficient. If not, ask users to provide additional data.
+### PHASE 1: Clarify Requirements (ALWAYS START HERE)
+Before doing ANYTHING else, you must understand:
+- What business question is the user trying to answer?
+- What specific metrics or insights do they need?
+- What is the expected output format? (chart, table, report, etc.)
+- Are there any domain-specific terms that need clarification?
 
-3. **Create Subtasks** - Break complex analysis into sequential steps:
-   - Each subtask should be clear and focused
-   - Subtasks should build on each other logically
-   - Number subtasks in execution order (1, 2, 3...)
+**Ask questions** until you have clear answers. Use `execute_python_code` to explore data if needed.
 
-4. **Exploratory Analysis** - You CAN use `execute_python_code` to explore data during planning:
-   - Check data quality and structure
-   - Verify assumptions
-   - Help clarify requirements
-   But keep it lightweight - detailed analysis happens in execution phase.
+### PHASE 2: Assess Data Readiness
+Once requirements are clear, check:
+- Do we have all necessary datasets?
+- Are the data fields sufficient for the analysis?
+- Are there data quality issues? (missing values, inconsistencies, etc.)
+- Do we need additional data sources?
 
-## Output Format
-When you're ready to propose a plan, output a JSON block like this:
+**If data is insufficient**, tell the user EXACTLY what's missing and ask them to provide it.
+**DO NOT proceed to planning** if critical data is missing.
+
+### PHASE 3: Create Analysis Plan (ONLY WHEN READY)
+You can ONLY generate a plan when BOTH conditions are met:
+1. ✅ Requirements are crystal clear
+2. ✅ All necessary data is available
+
+**CRITICAL RULES**:
+- NEVER generate a plan in your first response
+- NEVER skip Phase 1 and Phase 2
+- If the user pushes you to plan prematurely, politely explain what information is still needed
+- If you're unsure about data sufficiency, ASK rather than assume
+
+### Plan Output Format (ONLY use when ready)
+When you're truly ready to propose a plan, output:
 ```json
 {{
 "plan_ready": true,
+"confidence": "high", // or "medium" if you have concerns
+"prerequisites_met": {{
+ "requirements_clear": true,
+ "data_sufficient": true
+}},
 "subtasks": [
  {{
  "order": 1,
- "title": "Data Quality Check",
- "description": "Verify data completeness and identify missing values"
- }},
- {{
- "order": 2,
- "title": "Exploratory Analysis",
- "description": "Calculate basic statistics and distributions"
+ "title": "...",
+ "description": "..."
  }}
 ]
 }}
@@ -62,7 +74,11 @@ When you're ready to propose a plan, output a JSON block like this:
 ## Variable Reference
 {variable_reference}
 
-Answer in the **same language** the user uses.
+**Remember**: A good plan is built on solid understanding. Take your time.
+
+# Exceptions:
+If the user explicitly says "just start" or "skip clarification", you may proceed to planning,
+but you should still note any assumptions you're making.
 """
 
 # Tool定义（与AnalystAgent相同）
@@ -97,7 +113,7 @@ class PlanAgent(BaseAgent):
         4. 等待用户确认
         """
         user_message = context.get("user_message", "")
-        
+        history = context.get("history_messages", [])
         # 获取Knowledge上下文
         dataset_ctx, text_ctx, var_ref, csv_var_map = await self._get_knowledge_context()
         
@@ -106,9 +122,20 @@ class PlanAgent(BaseAgent):
             text_context=text_ctx,
             variable_reference=var_ref,
         )
+
+        # 🆕 计算对话轮次（排除system消息）
+        conversation_turns = len([m for m in history if m["role"] in ("user", "assistant")])
         
-        # 加载历史消息
-        history = context.get("history_messages", [])
+        # 🆕 如果是第一轮对话，添加额外提醒
+        if conversation_turns == 0:
+            first_turn_reminder = (
+                "\n\n**IMPORTANT**: This is your FIRST interaction with the user. "
+                "You MUST start by asking clarifying questions. "
+                "DO NOT generate a plan in this response."
+            )
+            system_prompt += first_turn_reminder
+            
+
         
         messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": system_prompt},
@@ -243,32 +270,80 @@ class PlanAgent(BaseAgent):
                 
                 continue  # 继续下一轮
             
-            # 纯文本回复 - 检查是否包含Plan
+            # 在处理纯文本回复时，检查是否包含Plan JSON
             if text_content.strip():
-                # 尝试解析JSON格式的Plan
                 plan_data = self._extract_plan_json(text_content)
+                
                 if plan_data:
+                    # 🆕 检查是否是错误（被拦截的Plan）
+                    if plan_data.get("error") == "premature_plan":
+                        # 发送警告给模型，要求重新思考
+                        yield self._sse({
+                            "type": "text",
+                            "content": f"\n\n⚠️ {plan_data['message']}\n\n",
+                        })
+                        
+                        # 将警告注入到messages中，让模型重新回答
+                        messages.append({
+                            "role": "assistant",
+                            "content": text_content,
+                        })
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                f"⚠️ System Warning: {plan_data['message']}\n\n"
+                                "Please continue the conversation to address this issue before generating a plan."
+                            ),
+                        })
+                        
+                        # 继续下一轮对话
+                        continue
+                    
+                    # 正常的Plan
                     yield self._sse({
                         "type": "plan_generated",
                         "plan": plan_data,
                     })
                 
-                # 结束
-                break
-        
+                break        
+
         yield self._sse({"type": "done"})
     
     def _extract_plan_json(self, text: str) -> dict | None:
-        """从文本中提取JSON格式的Plan"""
+        """从文本中提取并验证JSON格式的Plan"""
         import re
         
-        # 查找```json ... ```代码块
         json_match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
         if json_match:
             try:
                 plan_data = json.loads(json_match.group(1))
-                if plan_data.get("plan_ready") and "subtasks" in plan_data:
-                    return plan_data
+                
+                # 基本格式检查
+                if not plan_data.get("plan_ready") or "subtasks" not in plan_data:
+                    return None
+                
+                # 🆕 验证前置条件
+                prerequisites = plan_data.get("prerequisites_met", {})
+                
+                if not prerequisites.get("requirements_clear"):
+                    # 拦截：需求未澄清
+                    return {
+                        "error": "premature_plan",
+                        "message": "Requirements are not yet clear. Please continue clarifying with the user.",
+                    }
+                
+                if not prerequisites.get("data_sufficient"):
+                    # 拦截：数据不足
+                    return {
+                        "error": "premature_plan", 
+                        "message": "Data availability has not been confirmed. Please assess data readiness first.",
+                    }
+                
+                # 🆕 检查是否是第一轮对话（防止直接生成Plan）
+                # 这个需要从context传入对话轮次
+                
+                return plan_data
+                
             except json.JSONDecodeError:
                 pass
         
