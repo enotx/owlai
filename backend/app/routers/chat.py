@@ -21,24 +21,35 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 # ── SSE 流式对话（ReAct Agent） ────────────────────────────────
 @router.post("/stream")
+@router.post("/stream")
 async def stream_message(body: ChatRequest, db: AsyncSession = Depends(get_db)):
     """
     通过 SSE 逐步推送 Agent 的分析过程。
-    事件类型：text / tool_start / tool_result / step_saved / done / error
+    支持mode参数切换执行模式，支持model_override显式指定模型。
     """
+    mode = getattr(body, 'mode', None)
+    
+    # 解析用户显式指定的模型
+    model_override = None
+    if hasattr(body, 'model_override') and body.model_override:
+        model_override = (
+            body.model_override.provider_id,
+            body.model_override.model_id,
+        )
+    
     async def event_generator():
         try:
             async for sse_line in run_agent_stream(
                 task_id=body.task_id,
                 user_message=body.message,
                 db=db,
+                mode=mode,
+                model_override=model_override,  # 传递用户指定
             ):
                 yield sse_line
         except asyncio.CancelledError:
-            # 客户端断开连接，静默退出
             return
         except Exception as e:
-            # 未预期错误，发送错误事件后关闭
             import json
             yield f"data: {json.dumps({'type': 'error', 'content': f'Stream error: {str(e)}'}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'steps': []}, ensure_ascii=False)}\n\n"

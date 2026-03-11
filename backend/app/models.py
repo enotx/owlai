@@ -5,7 +5,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, Text, DateTime, ForeignKey, func
+from sqlalchemy import String, Text, DateTime, ForeignKey, func, Integer, Float, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -21,12 +21,38 @@ class Task(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # 新增：多Agent协作字段
+    mode: Mapped[str] = mapped_column(String(20), nullable=False, default="analyst")  # 'auto', 'plan', 'analyst'
+    plan_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # Plan是否已确认
+    current_subtask_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # 当前执行的SubTask ID
+    
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     # 关联关系，级联删除
     knowledge_items: Mapped[list["Knowledge"]] = relationship(back_populates="task", cascade="all, delete-orphan")
     steps: Mapped[list["Step"]] = relationship(back_populates="task", cascade="all, delete-orphan")
+    subtasks: Mapped[list["SubTask"]] = relationship(back_populates="task", cascade="all, delete-orphan", order_by="SubTask.order")
+
+
+class SubTask(Base):
+    """子任务模型，用于Plan模式的任务分拆"""
+    __tablename__ = "subtasks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    task_id: Mapped[str] = mapped_column(String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    order: Mapped[int] = mapped_column(Integer, nullable=False)  # 执行顺序，从1开始
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # 'pending', 'running', 'completed', 'failed'
+    result: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON格式存储执行结果
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    # 关联关系
+    task: Mapped["Task"] = relationship(back_populates="subtasks")
+    steps: Mapped[list["Step"]] = relationship(back_populates="subtask", cascade="all, delete-orphan")
 
 
 class Knowledge(Base):
@@ -48,8 +74,11 @@ class Step(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     task_id: Mapped[str] = mapped_column(String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
+    
+    # 新增：关联SubTask（可选，向后兼容）
+    subtask_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("subtasks.id", ondelete="CASCADE"), nullable=True)
+    
     role: Mapped[str] = mapped_column(String(20), nullable=False)  # 'user' or 'assistant'
-    # 在 role 字段之后添加
     step_type: Mapped[str] = mapped_column(
         String(30), nullable=False, default="assistant_message"
     )  # 'user_message' | 'tool_use' | 'assistant_message'
@@ -59,6 +88,8 @@ class Step(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     
     task: Mapped["Task"] = relationship(back_populates="steps")
+    subtask: Mapped["SubTask | None"] = relationship(back_populates="steps")
+
 
 class LLMProvider(Base):
     """LLM Provider 配置表"""
@@ -72,14 +103,16 @@ class LLMProvider(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
+
 class AgentConfig(Base):
     """Agent 模型配置表"""
     __tablename__ = "agent_configs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
-    agent_type: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)  # 'default', 'plan', 'analyst', 'misc'
+    agent_type: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)  # 'default', 'plan', 'analyst', 'task_manager'
     provider_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("llm_providers.id", ondelete="SET NULL"), nullable=True)
     model_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # 模型的 id，如 "gpt-4"
+    
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
     

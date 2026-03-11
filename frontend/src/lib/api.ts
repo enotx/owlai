@@ -340,3 +340,23 @@ export const applyActivationConfig = async (config: DefaultConfig) => {
     });
   }
 };
+
+// ===== Database Management =====
+export interface DBCompatibilityResponse {
+  compatible: boolean;
+  exists: boolean;
+  issues: string[];
+  db_path: string;
+}
+export interface DBRecreateResponse {
+  success: boolean;
+  message: string;
+}
+export const checkDatabaseCompatibility = async (): Promise<DBCompatibilityResponse> => {
+  const response = await (await getApi()).get<DBCompatibilityResponse>("/database/compatibility");
+  return response.data;
+};
+export const recreateDatabase = async (): Promise<DBRecreateResponse> => {
+  const response = await (await getApi()).post<DBRecreateResponse>("/database/recreate");
+  return response.data;
+};

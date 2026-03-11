@@ -105,6 +105,7 @@ requires-dist = [
     { name = "platformdirs", specifier = ">=4.4.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pydantic-settings", specifier = ">=2.11.0" },
+    { name = "pytalos", specifier = "==0.2.3", index = "http://pypi.sankuai.com/simple" },
     { name = "pytalos", specifier = ">=0.1.6", index = "http://pypi.sankuai.com/simple" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "python-multipart", specifier = ">=0.0.20" },
@@ -1099,9 +1100,9 @@ wheels = [
 
 [[package]]
 name = "pytalos"
-version = "0.1.6"
+version = "0.2.3"
 source = { registry = "http://pypi.sankuai.com/simple" }
-sdist = { url = "http://pypi.sankuai.com/packages/pytalos-0.1.6.tar.gz" }
+sdist = { url = "http://pypi.sankuai.com/packages/pytalos-0.2.3.tar.gz" }
 
 [[package]]
 name = "python-dateutil"

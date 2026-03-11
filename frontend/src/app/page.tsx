@@ -13,9 +13,11 @@ import ChatArea from "@/components/chat/chat-area";
 import DataPanel from "@/components/data/data-panel";
 import { Badge } from "@/components/ui/badge";
 import SettingsDialog from "@/components/settings/settings-dialog";
+import DatabaseWarningDialog from "@/components/database/database-warning-dialog";
 import OnboardingDialog from "@/components/onboarding/onboarding-dialog";
 import { CircleCheck, CircleX, Loader2 } from "lucide-react";
 import { useBackend } from "@/contexts/backend-context";
+import { useDatabase } from "@/contexts/database-context";
 import { useOnboarding } from "@/contexts/onboarding-context";
 
 /** 布局常量 */
@@ -45,6 +47,7 @@ function calcPanelWidths(totalWidth: number): { mid: number; right: number } {
 export default function HomePage() {
   // 使用 useBackend hook 替代本地状态
   const { status: backendStatus } = useBackend();
+  const { shouldShowWarning: showDatabaseWarning, dismissWarning: dismissDatabaseWarning } = useDatabase();
   const { shouldShowOnboarding, skipOnboarding, recheckConfiguration } = useOnboarding();
 
 
@@ -68,6 +71,14 @@ export default function HomePage() {
     // 标记为已跳过（临时状态，刷新页面后失效）
     skipOnboarding();
   };
+  const handleDatabaseWarningClose = () => {
+    dismissDatabaseWarning();
+  };
+  // 优先级控制：只有在数据库兼容且后端连接正常时才显示 Onboarding
+  const shouldShowOnboardingDialog = 
+    !showDatabaseWarning && 
+    backendStatus === "connected" && 
+    shouldShowOnboarding;
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
@@ -128,8 +139,13 @@ export default function HomePage() {
       </div>
       {/* 设置对话框 */}
       <SettingsDialog />
+      <DatabaseWarningDialog 
+        open={showDatabaseWarning} 
+        onClose={handleDatabaseWarningClose} 
+      />
+
       <OnboardingDialog 
-        open={shouldShowOnboarding} 
+        open={shouldShowOnboardingDialog} 
         onClose={handleOnboardingClose} 
       />
     </div>

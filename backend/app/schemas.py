@@ -21,6 +21,9 @@ class TaskResponse(BaseModel):
     id: str
     title: str
     description: str | None
+    mode: str  # 'auto', 'plan', 'analyst'
+    plan_confirmed: bool
+    current_subtask_id: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -41,13 +44,21 @@ class KnowledgeResponse(BaseModel):
 
 
 # ===== Step / Chat =====
+class ModelOverride(BaseModel):
+    """用户显式指定的模型配置"""
+    provider_id: str
+    model_id: str
+
 class ChatRequest(BaseModel):
     task_id: str
     message: str = Field(..., min_length=1)
+    mode: str | None = Field(None, pattern="^(auto|plan|analyst)$")  # 可选的模式
+    model_override: ModelOverride | None = None  # 用户显式指定的模型
 
 class StepResponse(BaseModel):
     id: str
     task_id: str
+    subtask_id: str | None  # 新增：关联的SubTask ID
     role: str
     step_type: str
     content: str
@@ -55,7 +66,6 @@ class StepResponse(BaseModel):
     code_output: str | None
     created_at: datetime
     model_config = {"from_attributes": True}
-
 
 # ===== Code Execution =====
 class ExecuteRequest(BaseModel):
@@ -124,7 +134,6 @@ class AgentConfigUpdate(BaseModel):
     provider_id: str | None = None
     model_id: str | None = None
 
-
 class AgentConfigResponse(BaseModel):
     """Agent 配置响应"""
     id: str
@@ -133,5 +142,71 @@ class AgentConfigResponse(BaseModel):
     model_id: str | None
     created_at: datetime
     updated_at: datetime
+    model_config = {"from_attributes": True}
+
+# ===== SubTask =====
+class SubTaskBase(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    description: str | None = None
+    order: int = Field(..., ge=1)
+
+
+class SubTaskCreate(SubTaskBase):
+    task_id: str
+
+
+class SubTaskUpdate(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=255)
+    description: str | None = None
+    status: str | None = Field(None, pattern="^(pending|running|completed|failed)$")
+    result: str | None = None
+
+
+class SubTaskResponse(SubTaskBase):
+    id: str
+    task_id: str
+    status: str  # 'pending', 'running', 'completed', 'failed'
+    result: str | None
+    created_at: datetime
+    updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ===== Task Mode & Plan =====
+class TaskModeUpdate(BaseModel):
+    """切换Task的执行模式"""
+    mode: str = Field(..., pattern="^(auto|plan|analyst)$")
+
+
+class SubTaskListResponse(BaseModel):
+    """SubTask列表响应（用于Plan展示）"""
+    subtasks: list[SubTaskResponse]
+    total: int
+
+class PlanConfirmation(BaseModel):
+    """Plan确认请求(带SubTask数据)"""
+    confirmed: bool
+    subtasks: list[SubTaskCreate] | None = None  # 用户确认时必须提供
+    modifications: str | None = None  # 用户拒绝时提供修改建议
+
+
+# ===== Chat with Mode =====
+class ChatRequestWithMode(BaseModel):
+    """带模式选择的聊天请求"""
+    task_id: str
+    message: str = Field(..., min_length=1)
+    mode: str | None = Field(None, pattern="^(auto|plan|analyst)$")  # 可选，用于切换模式
+    agent_config_id: str | None = None  # 可选，指定使用的AgentConfig
+
+# ===== Database Management =====
+class DBCompatibilityResponse(BaseModel):
+    """数据库兼容性检查响应"""
+    compatible: bool
+    exists: bool
+    issues: list[str]
+    db_path: str
+class DBRecreateResponse(BaseModel):
+    """数据库重建响应"""
+    success: bool
+    message: str

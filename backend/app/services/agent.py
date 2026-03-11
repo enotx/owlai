@@ -25,7 +25,8 @@ from app.services.data_processor import (
     get_csv_sample_rows,
     read_text_content,
 )
-import uuid
+from app.services.agents.orchestrator import AgentOrchestrator
+
 from app.services.sandbox import execute_code_in_sandbox
 
 from app.config import UPLOADS_DIR
@@ -40,20 +41,29 @@ _client: AsyncOpenAI | None = None
 
 
 # ── OpenAI 客户端（从数据库配置创建） ──────────────────────────────────
-async def _get_client_from_db(db: AsyncSession) -> tuple[AsyncOpenAI, str] | None:
+async def _get_client_from_db(
+    db: AsyncSession,
+    agent_type: str = "default"
+) -> tuple[AsyncOpenAI, str] | None:
     """
-    从数据库读取 Default Agent 的配置，返回 (client, model_id)。
-    如果配置不完整，返回 None。
+    从数据库读取指定Agent的配置，返回 (client, model_id)。
+    
+    Args:
+        db: 数据库会话
+        agent_type: Agent类型 ('default'|'plan'|'analyst'|'task_manager')
     """
     from app.models import AgentConfig, LLMProvider
     
-    # 查询 default agent 配置
+    # 查询指定agent配置
     result = await db.execute(
-        select(AgentConfig).where(AgentConfig.agent_type == "default")
+        select(AgentConfig).where(AgentConfig.agent_type == agent_type)
     )
     agent_config = result.scalar_one_or_none()
     
     if not agent_config or not agent_config.provider_id or not agent_config.model_id:
+        # 如果指定agent没有配置，回退到default
+        if agent_type != "default":
+            return await _get_client_from_db(db, "default")
         return None
     
     # 查询关联的 Provider
@@ -292,11 +302,22 @@ async def run_agent_stream(
     task_id: str,
     user_message: str,
     db: AsyncSession,
+    mode: str | None = None,  # 新增：可选的模式参数
+    model_override: tuple[str, str] | None = None, # 新增：用户显式指定的模型 (provider_id, model_id)
 ) -> AsyncGenerator[str, None]:
     """
-    Agent 主循环（生成器），产出 SSE 格式字符串。
+    Agent 主入口（生成器），产出 SSE 格式字符串。
+    
+    Args:
+        task_id: 任务ID
+        user_message: 用户消息
+        db: 数据库会话
+        mode: 可选的执行模式 ('auto'|'plan'|'analyst')，如果为None则从Task读取
     """
     from app.database import async_session
+    from app.models import Task, Step
+    from sqlalchemy import select
+    
     # ── 保存用户消息 ──────────────────────────────────────
     async with async_session() as write_db:
         user_step = Step(
@@ -309,6 +330,27 @@ async def run_agent_stream(
         await write_db.commit()
         await write_db.refresh(user_step)
         yield _sse({"type": "step_saved", "step": _step_to_dict(user_step)})
+    
+    # ── 获取Task信息 ──────────────────────────────────────
+    result = await db.execute(select(Task).where(Task.id == task_id))
+    task = result.scalar_one_or_none()
+    if not task:
+        yield _sse({"type": "error", "content": "Task not found"})
+        yield _sse({"type": "done", "steps": []})
+        return
+    
+    # 确定执行模式
+    execution_mode = mode or task.mode
+    
+    # 如果用户切换了模式，更新Task
+    if mode and mode != task.mode:
+        async with async_session() as write_db:
+            result = await write_db.execute(select(Task).where(Task.id == task_id))
+            task_to_update = result.scalar_one_or_none()
+            if task_to_update:
+                task_to_update.mode = mode
+                await write_db.commit()
+    
     # ── 检查 LLM 配置 ──────────────────────────────────────
     client_result = await _get_client_from_db(db)
     if client_result is None:
@@ -320,7 +362,6 @@ async def run_agent_stream(
         )
         yield _sse({"type": "text", "content": error_msg})
         
-        # 保存错误消息为 Step
         async with async_session() as write_db:
             error_step = Step(
                 task_id=task_id,
@@ -337,262 +378,52 @@ async def run_agent_stream(
         return
     
     client, model = client_result
+    
+    # ── 加载历史消息 ──────────────────────────────────────
+    history_messages = await _load_history_messages(task_id, db)
+    
+    # ── 使用 Orchestrator 调度 ────────────────────────────
+    orchestrator = AgentOrchestrator(
+        task_id=task_id,
+        db=db,
+        model_override=model_override,  # 传递用户指定的模型
+    )
+
+    
+    saved_steps: list[dict] = []
+    
     try:
-        # ── 构建上下文 ────────────────────────────────────────
-        dataset_ctx, text_ctx, var_ref, csv_var_map = await _build_knowledge_context(task_id, db)
-
-        system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
-            dataset_context=dataset_ctx,
-            text_context=text_ctx,
-            variable_reference=var_ref,
-        )
-
-        # ── 加载历史 ──────────────────────────────────────────
-        history_messages = await _load_history_messages(task_id, db)
-
-        # 组装完整 messages
-        messages: list[ChatCompletionMessageParam] = [
-            {"role": "system", "content": system_prompt},
-            *history_messages,
-        ]
-
-        # 如果最后一条不是刚才的 user_message（历史可能已包含），确保用户消息在末尾
-        # 因为 user_step 刚保存，history 加载时不含它（时序问题），所以显式追加
-        # 去重：检查 history 末尾是否已包含刚保存的 user_message
-        # （write_db commit 后，db 新查询可能已读到该条记录）
-        already_included = (
-            len(history_messages) > 0
-            and history_messages[-1].get("role") == "user"
-            and history_messages[-1].get("content") == user_message
-        )
-        if not already_included:
-            messages.append({"role": "user", "content": user_message})
+        async for event_line in orchestrator.run(
+            mode=execution_mode,
+            user_message=user_message,
+            context={"history_messages": history_messages},
+        ):
+            # Orchestrator产出的事件直接转发
+            # 但需要拦截某些事件类型来保存Step
             
-        saved_steps: list[dict] = []
-
-        # ── ReAct 循环 ────────────────────────────────────────
-        for round_idx in range(MAX_TOOL_ROUNDS):
-            try:
-                stream = await client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    tools=TOOLS,  # type: ignore
-                    tool_choice="auto",
-                    stream=True,
-                    temperature=0.4,
-                    max_tokens=4096,
-                )
-            except Exception as e:
-                yield _sse({"type": "error", "content": f"LLM request failed: {str(e)}"})
-                # 保存错误 Step
-                async with async_session() as write_db:
-                    err_step = Step(
-                        task_id=task_id,
-                        role="assistant",
-                        step_type="assistant_message",
-                        content=f"⚠️ LLM request failed: {str(e)}",
-                    )
-                    write_db.add(err_step)
-                    await write_db.commit()
-                    await write_db.refresh(err_step)
-                    saved_steps.append(_step_to_dict(err_step))
-                    yield _sse({"type": "step_saved", "step": _step_to_dict(err_step)})
-                break
-
-            # 逐 chunk 累积
-            text_content = ""
-            tool_calls_acc: dict[int, dict[str, str]] = {}
-            # tool_calls_acc[index] = {"id": "...", "name": "...", "arguments": "..."}
-
-            async for chunk in stream:
-                choice = chunk.choices[0] if chunk.choices else None
-                if not choice:
-                    continue
-
-                delta = choice.delta
-
-                # ── 文本流 ──────────────────────────────────
-                if delta.content:
-                    token = delta.content
-                    text_content += token
-                    yield _sse({"type": "text", "content": token})
-
-                # ── Tool call 流 ────────────────────────────
-                if delta.tool_calls:
-                    for tc_delta in delta.tool_calls:
-                        idx = tc_delta.index
-                        if idx not in tool_calls_acc:
-                            tool_calls_acc[idx] = {
-                                "id": "",
-                                "name": "",
-                                "arguments": "",
-                            }
-                        if tc_delta.id:
-                            tool_calls_acc[idx]["id"] = tc_delta.id
-                        if tc_delta.function:
-                            if tc_delta.function.name:
-                                tool_calls_acc[idx]["name"] = tc_delta.function.name
-                            if tc_delta.function.arguments:
-                                tool_calls_acc[idx]["arguments"] += tc_delta.function.arguments
-
-                # 检查是否结束
-                if choice.finish_reason:
-                    break
-
-            # ── 处理本轮结果 ────────────────────────────────
-
-            # 情况 A：有 tool_calls → 执行代码 → 继续循环
-            if tool_calls_acc:
-                # 如果同时有文本，先保存为思考步骤
-                if text_content.strip():
-                    async with async_session() as write_db:
-                        thought_step = Step(
-                            task_id=task_id,
-                            role="assistant",
-                            step_type="assistant_message",
-                            content=text_content.strip(),
-                        )
-                        write_db.add(thought_step)
-                        await write_db.commit()
-                        await write_db.refresh(thought_step)
-                        saved_steps.append(_step_to_dict(thought_step))
-                        yield _sse({"type": "step_saved", "step": _step_to_dict(thought_step)})
-
-                # 构造 assistant message（带 tool_calls）给 messages 上下文
-                tool_calls_for_api = []
-                for idx in sorted(tool_calls_acc.keys()):
-                    tc = tool_calls_acc[idx]
-                    tool_calls_for_api.append({
-                        "id": tc["id"],
-                        "type": "function",
-                        "function": {
-                            "name": tc["name"],
-                            "arguments": tc["arguments"],
-                        },
-                    })
-
-                assistant_msg: dict[str, Any] = {
-                    "role": "assistant",
-                    "content": text_content or None,
-                    "tool_calls": tool_calls_for_api,
-                }
-                messages.append(assistant_msg)  # type: ignore
-
-                # 逐个执行 tool_call
-                for idx in sorted(tool_calls_acc.keys()):
-                    tc = tool_calls_acc[idx]
-                    tool_call_id = tc["id"]
-                    func_name = tc["name"]
-                    try:
-                        args = json.loads(tc["arguments"])
-                    except (json.JSONDecodeError, TypeError):
-                        # 参数解析失败，直接返回错误而不执行
-                        error_msg = f"Failed to parse tool arguments: {tc['arguments'][:200]}"
-                        yield _sse({
-                            "type": "tool_result",
-                            "success": False,
-                            "output": None,
-                            "error": error_msg,
-                            "time": 0,
-                        })
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call_id,
-                            "content": f"ERROR: {error_msg}",
-                        })  # type: ignore
-                        continue
-
-                    if func_name == "execute_python_code":
-                        code = args.get("code", "")
-                        purpose = args.get("purpose", "")
-
-                        # 通知前端：即将执行代码
-                        yield _sse({
-                            "type": "tool_start",
-                            "code": code,
-                            "purpose": purpose,
-                        })
-
-                        # 创建 DataFrame 捕获目录
-                        capture_id = uuid.uuid4().hex[:12]
-                        capture_dir = os.path.join(UPLOADS_DIR, task_id, "captures")
-                        # capture_dir = os.path.join(
-                        #     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                        #     "data", "uploads", task_id, "captures",
-                        # )
-                        os.makedirs(capture_dir, exist_ok=True)
-                        # 沙箱执行
-                        try:
-                            exec_result = await execute_code_in_sandbox(
-                                code=code,
-                                csv_var_map=csv_var_map,
-                                capture_dir=capture_dir,
-                            )
-                        except Exception as sandbox_err:
-                            exec_result = {
-                                "success": False,
-                                "output": None,
-                                "error": f"Sandbox crashed: {str(sandbox_err)}",
-                                "execution_time": 0.0,
-                            }
-
-
-                        # 重命名捕获的 DataFrame 文件，注入 capture_id
-                        captured_dfs = exec_result.get("dataframes", [])
-                        for df_meta in captured_dfs:
-                            df_meta["capture_id"] = capture_id
-                            old_path = os.path.join(capture_dir, f"{df_meta['name']}.json")
-                            new_name = f"{capture_id}_{df_meta['name']}.json"
-                            new_path = os.path.join(capture_dir, new_name)
-                            if os.path.exists(old_path):
-                                try:
-                                    os.rename(old_path, new_path)
-                                except OSError:
-                                    pass
-
-                        # 通知前端：执行结果（含 dataframes 元数据）
-                        yield _sse({
-                            "type": "tool_result",
-                            "success": exec_result["success"],
-                            "output": exec_result.get("output"),
-                            "error": exec_result.get("error"),
-                            "time": exec_result.get("execution_time", 0),
-                            "dataframes": captured_dfs,
-                        })
-
-                        # 组装 tool result 文本
-                        if exec_result["success"]:
-                            tool_output = exec_result.get("output") or "(no output)"
-                        else:
-                            tool_output = f"ERROR:\n{exec_result.get('error', 'Unknown error')}"
-                            if exec_result.get("output"):
-                                tool_output = f"STDOUT:\n{exec_result['output']}\n\n{tool_output}"
-
-                        # 限制回传给 LLM 的输出长度（节省 token）
-                        if len(tool_output) > 8000:
-                            tool_output = tool_output[:8000] + "\n\n[Output truncated for context limit]"
-
-                        # 追加 tool result 到 messages
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call_id,
-                            "content": tool_output,
-                        })  # type: ignore
-
-                        # 持久化为 tool_use Step
+            # 解析事件
+            if event_line.startswith("data: "):
+                try:
+                    event_data = json.loads(event_line[6:])
+                    event_type = event_data.get("type")
+                    
+                    # 保存tool_use类型的Step
+                    if event_type == "tool_result":
                         async with async_session() as write_db:
+                            # 查找对应的tool_start事件中的code和purpose
+                            # 简化：从event_data中获取（需要Orchestrator传递）
                             tool_step = Step(
                                 task_id=task_id,
                                 role="assistant",
                                 step_type="tool_use",
-                                content=purpose,
-                                code=code,
+                                content=event_data.get("purpose", "Code execution"),
+                                code=event_data.get("code", ""),
                                 code_output=json.dumps({
-                                    "success": exec_result["success"],
-                                    "output": exec_result.get("output"),
-                                    "error": exec_result.get("error"),
-                                    "execution_time": exec_result.get("execution_time", 0),
-                                    "dataframes": captured_dfs,
+                                    "success": event_data.get("success"),
+                                    "output": event_data.get("output"),
+                                    "error": event_data.get("error"),
+                                    "execution_time": event_data.get("time", 0),
+                                    "dataframes": event_data.get("dataframes", []),
                                 }, ensure_ascii=False),
                             )
                             write_db.add(tool_step)
@@ -600,80 +431,52 @@ async def run_agent_stream(
                             await write_db.refresh(tool_step)
                             saved_steps.append(_step_to_dict(tool_step))
                             yield _sse({"type": "step_saved", "step": _step_to_dict(tool_step)})
-                    else:
-                        # 不认识的函数
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call_id,
-                            "content": f"Unknown function: {func_name}",
-                        })  # type: ignore
-
-                # 继续循环 → 回到 LLM 调用
-                continue
-
-            # 情况 B：纯文本回复 → 保存并结束
-            if text_content.strip():
-                async with async_session() as write_db:
-                    answer_step = Step(
-                        task_id=task_id,
-                        role="assistant",
-                        step_type="assistant_message",
-                        content=text_content.strip(),
-                    )
-                    write_db.add(answer_step)
-                    await write_db.commit()
-                    await write_db.refresh(answer_step)
-                    saved_steps.append(_step_to_dict(answer_step))
-                    yield _sse({"type": "step_saved", "step": _step_to_dict(answer_step)})
-
-            # 纯文本意味着 Agent 认为回答完成 → 退出循环
-            break
-
-        else:
-            # for-else: 达到 MAX_TOOL_ROUNDS 上限
-            yield _sse({
-                "type": "text",
-                "content": f"\n\n⚠️ Reached maximum analysis rounds ({MAX_TOOL_ROUNDS}). "
-                        "Please ask a follow-up question to continue."
-            })
-            async with async_session() as write_db:
-                limit_step = Step(
-                    task_id=task_id,
-                    role="assistant",
-                    step_type="assistant_message",
-                    content=f"⚠️ Reached maximum analysis rounds ({MAX_TOOL_ROUNDS}). "
-                            "Please ask a follow-up question to continue.",
-                )
-                write_db.add(limit_step)
-                await write_db.commit()
-                await write_db.refresh(limit_step)
-                saved_steps.append(_step_to_dict(limit_step))
-
-        # ── 发送完成信号 ──────────────────────────────────────
+                    
+                    # 保存plan_generated事件
+                    elif event_type == "plan_generated":
+                        plan_data = event_data.get("plan", {})
+                        async with async_session() as write_db:
+                            plan_step = Step(
+                                task_id=task_id,
+                                role="assistant",
+                                step_type="assistant_message",
+                                content=f"Generated plan with {len(plan_data.get('subtasks', []))} subtasks",
+                                code_output=json.dumps(plan_data, ensure_ascii=False),
+                            )
+                            write_db.add(plan_step)
+                            await write_db.commit()
+                            await write_db.refresh(plan_step)
+                            saved_steps.append(_step_to_dict(plan_step))
+                            yield _sse({"type": "step_saved", "step": _step_to_dict(plan_step)})
+                    
+                except json.JSONDecodeError:
+                    pass
+            
+            # 转发原始事件
+            yield event_line
+        
+        # 发送完成信号
         yield _sse({"type": "done", "steps": saved_steps})
+        
     except Exception as e:
-        # 全局兜底：确保前端一定收到错误信息
         import traceback
         error_detail = traceback.format_exc()
-        yield _sse({
-            "type": "error",
-            "content": f"Agent internal error: {str(e)}",
-        })
-        # 持久化错误
+        yield _sse({"type": "error", "content": f"Agent error: {str(e)}"})
+        
         try:
             async with async_session() as write_db:
                 err_step = Step(
                     task_id=task_id,
                     role="assistant",
                     step_type="assistant_message",
-                    content=f"⚠️ Internal error: {str(e)}",
+                    content=f"⚠️ Error: {str(e)}",
                 )
                 write_db.add(err_step)
                 await write_db.commit()
         except Exception:
-            pass  # 数据库写入失败也不能再抛
+            pass
+        
         yield _sse({"type": "done", "steps": []})
-
 
 # ── 工具函数 ──────────────────────────────────────────────────
 
