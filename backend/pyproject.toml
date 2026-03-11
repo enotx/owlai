@@ -21,13 +21,11 @@ dependencies = [
     "tabulate>=0.9.0",
     "uvicorn>=0.39.0",
     "xlrd>=2.0.2",
-    "pytalos==0.2.3"
+    "pytalos==0.2.3",
+    "openpyxl>=3.1.5",
 ]
 
 
-[[tool.uv.index]]
-name = "sankuai"
-url = "http://pypi.sankuai.com/simple"
-explicit = true  # 只有明确指定的包才从这个源安装
 [tool.uv.sources]
-pytalos = { index = "sankuai" }  # 指定 pytalos 使用 sankuai 源
+pytalos = { path = "vendor/pytalos-0.2.3-py3-none-any.whl" }
+

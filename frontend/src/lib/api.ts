@@ -85,10 +85,18 @@ export const uploadKnowledge = async (taskId: string, file: File) => {
 export const deleteKnowledge = async (knowledgeId: string) =>
   (await getApi()).delete(`/knowledge/${knowledgeId}`);
 
-export const previewKnowledge = async (knowledgeId: string, n = 50) =>
-  (await getApi()).get(`/knowledge/${knowledgeId}/preview`, {
-    params: { n },
-  });
+export const previewKnowledge = async (
+  knowledgeId: string, 
+  nRows: number = 50,
+  sheetName?: string
+) => {
+  const params = new URLSearchParams({ n: nRows.toString() });
+  if (sheetName) {
+    params.append("sheet_name", sheetName);
+  }
+  return (await getApi()).get(`/knowledge/${knowledgeId}/preview?${params.toString()}`);
+};
+
 
 // ===== Chat =====
 export const sendMessage = async (taskId: string, message: string) =>
@@ -420,3 +428,22 @@ export const updateTaskMode = async (
   taskId: string,
   mode: "auto" | "plan" | "analyst"
 ) => (await getApi()).patch(`/tasks/${taskId}/mode`, { mode });
+
+// ===== Data Export =====
+/**
+ * 下载Knowledge源文件
+ */
+export const downloadKnowledge = async (knowledgeId: string) => {
+  const baseUrl = await getBaseUrl();
+  const url = `${baseUrl}/knowledge/${knowledgeId}/download`;
+  window.open(url, '_blank');
+};
+
+/**
+ * 导出DataFrame为Excel
+ */
+export const exportStepDataframe = async (stepId: string, dfName: string) => {
+  const baseUrl = await getBaseUrl();
+  const url = `${baseUrl}/chat/steps/${stepId}/dataframe/${dfName}/export`;
+  window.open(url, '_blank');
+};

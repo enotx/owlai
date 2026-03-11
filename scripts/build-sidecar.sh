@@ -88,9 +88,9 @@ echo "🐍 Python version:"
 echo "📦 Upgrading pip..."
 "$PYTHON_EXE" -m pip install --upgrade pip
 
-# 安装依赖
+# 安装依赖（修改这里，显式指定 vendor 目录）
 echo "📦 Installing dependencies..."
-"$PIP_EXE" install -r backend/requirements.txt
+"$PIP_EXE" install --find-links="$PROJECT_ROOT/backend/vendor" -r backend/requirements.txt
 
 # 复制后端代码
 echo "📋 Copying backend code..."

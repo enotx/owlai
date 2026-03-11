@@ -2,21 +2,17 @@
 
 "use client";
 
-/**
- * Knowledge Zone：展示当前 Task 的知识文件标签 + 上传入口
- */
 import { useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useTaskStore } from "@/stores/use-task-store";
 import { uploadKnowledge } from "@/lib/api";
-import { Plus, X, FileSpreadsheet, FileText } from "lucide-react";
+import { Plus, X, FileSpreadsheet, FileText, Sheet } from "lucide-react";
 
 export default function KnowledgeZone() {
   const { currentTaskId, knowledgeList, addKnowledge, removeKnowledge, setPreviewData } = useTaskStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  /* 上传文件 */
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !currentTaskId) return;
@@ -26,11 +22,9 @@ export default function KnowledgeZone() {
     } catch (err) {
       console.error("Upload failed:", err);
     }
-    // 重置 input 以便重复选同一文件
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  /* 删除 Knowledge */
   const handleRemove = async (id: string) => {
     try {
       const { deleteKnowledge: delApi } = await import("@/lib/api");
@@ -41,14 +35,31 @@ export default function KnowledgeZone() {
     }
   };
 
-  /* 点击 Knowledge 触发数据预览 */
   const handlePreview = async (k: (typeof knowledgeList)[0]) => {
-    if (k.type !== "csv") return; // 仅 CSV 支持表格预览
     try {
       const { previewKnowledge } = await import("@/lib/api");
       const res = await previewKnowledge(k.id);
-      const { columns, rows } = res.data;
-      setPreviewData(rows, columns, { type: "knowledge", name: k.name });
+      const data = res.data;
+      
+      if (data.type === "text") {
+        // 文本文件预览
+        setPreviewData([], [], {
+          type: "knowledge",
+          name: k.name,
+          fileType: "text",
+          textContent: data.content,
+        });
+      } else {
+        // 表格文件预览（CSV/Excel）
+        setPreviewData(data.rows, data.columns, {
+          type: "knowledge",
+          name: k.name,
+          fileType: data.type,
+          availableSheets: data.available_sheets,
+          currentSheet: data.current_sheet,
+          knowledgeId: k.id,
+        });
+      }
     } catch (err) {
       console.error("Preview failed:", err);
     }
@@ -56,38 +67,40 @@ export default function KnowledgeZone() {
 
   if (!currentTaskId) return null;
 
+  // 根据文件类型返回图标
+  const getFileIcon = (type: string) => {
+    if (type === "csv") return <FileSpreadsheet className="h-3 w-3" />;
+    if (type === "excel") return <Sheet className="h-3 w-3" />;
+    return <FileText className="h-3 w-3" />;
+  };
+
   return (
     <div className="rounded-lg border bg-card p-3">
       <h3 className="mb-2 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider">
         Knowledge Zone
       </h3>
       <div className="flex flex-wrap items-center gap-2">
-      {knowledgeList.map((k) => (
-        <Badge
-          key={k.id}
-          variant="secondary"
-          className="gap-1.5 pl-2 pr-1 py-1.5 text-xs font-normal cursor-pointer hover:bg-secondary/80 transition-colors"
-          onClick={() => handlePreview(k)}
-        >
-          {k.type === "csv" ? (
-            <FileSpreadsheet className="h-3 w-3" />
-          ) : (
-            <FileText className="h-3 w-3" />
-          )}
-          {k.name}
-          <button
-            className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20 transition-colors"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleRemove(k.id);
-            }}
+        {knowledgeList.map((k) => (
+          <Badge
+            key={k.id}
+            variant="secondary"
+            className="gap-1.5 pl-2 pr-1 py-1.5 text-xs font-normal cursor-pointer hover:bg-secondary/80 transition-colors"
+            onClick={() => handlePreview(k)}
           >
-            <X className="h-3 w-3" />
-          </button>
-        </Badge>
-      ))}
+            {getFileIcon(k.type)}
+            {k.name}
+            <button
+              className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20 transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleRemove(k.id);
+              }}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </Badge>
+        ))}
 
-        {/* 上传按钮 */}
         <Button
           variant="outline"
           size="sm"
@@ -100,7 +113,7 @@ export default function KnowledgeZone() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".csv,.txt,.md"
+          accept=".csv,.txt,.md,.xlsx,.xls"
           className="hidden"
           onChange={handleUpload}
         />

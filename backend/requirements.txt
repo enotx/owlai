@@ -34,7 +34,6 @@ typing-inspection==0.4.2
 uvicorn==0.41.0
 xlrd==2.0.2
 
-
---index-url http://pypi.sankuai.com/simple
---trusted-host pypi.sankuai.com
+--find-links=./vendor
 pytalos==0.2.3
+

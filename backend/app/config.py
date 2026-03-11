@@ -53,8 +53,10 @@ def get_python_executable() -> str:
     else:
         return sys.executable
 
+PYTHON_EXECUTABLE = get_python_executable()
 
 DATA_DIR = get_data_dir()
 UPLOADS_DIR = DATA_DIR / "uploads"
 UPLOADS_DIR.mkdir(exist_ok=True)
-PYTHON_EXECUTABLE = get_python_executable()
+TEMP_DIR = DATA_DIR / "temp"
+TEMP_DIR.mkdir(parents=True, exist_ok=True)

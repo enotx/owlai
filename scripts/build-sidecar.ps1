@@ -63,8 +63,10 @@ Write-Host "🐍 Python version:" -ForegroundColor Cyan
 Write-Host "📦 Upgrading pip..." -ForegroundColor Yellow
 & $PythonExe -m pip install --upgrade pip
 
+# 安装依赖（修改这里，显式指定 vendor 目录）
 Write-Host "📦 Installing dependencies..." -ForegroundColor Yellow
-& $PipExe install -r backend/requirements.txt
+$VendorPath = Join-Path $ProjectRoot "backend\vendor"
+& $PipExe install --find-links="$VendorPath" -r backend/requirements.txt
 
 Write-Host "📋 Copying backend code..." -ForegroundColor Yellow
 Copy-Item -Recurse -Force backend/app (Join-Path $DestDir "app")

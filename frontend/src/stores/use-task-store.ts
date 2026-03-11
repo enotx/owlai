@@ -49,9 +49,8 @@ export interface StreamingMessage {
 }
 
 /**
- * 正在执行的代码块（tool_start → tool_result 之间的状态）
+ * 捕获的 DataFrame 元信息
  */
-/** 捕获的 DataFrame 元信息 */
 export interface CapturedDataFrame {
   name: string;
   row_count: number;
@@ -59,6 +58,10 @@ export interface CapturedDataFrame {
   columns: string[];
   capture_id: string;
 }
+
+/**
+ * 正在执行的代码块（tool_start → tool_result 之间的状态）
+ */
 export interface PendingToolExecution {
   code: string;
   purpose: string;
@@ -72,6 +75,9 @@ export interface PendingToolExecution {
   };
 }
 
+/**
+ * SubTask 定义
+ */
 export interface SubTask {
   id: string;
   task_id: string;
@@ -83,6 +89,10 @@ export interface SubTask {
   created_at: string;
   updated_at: string;
 }
+
+/**
+ * 待确认的 Plan
+ */
 export interface PendingPlan {
   subtasks: Array<{
     title: string;
@@ -90,6 +100,21 @@ export interface PendingPlan {
     order: number;
   }>;
   message: string; // PlanAgent的说明文本
+}
+
+/**
+ * 数据预览来源信息（支持 Knowledge 和 Step DataFrame）
+ */
+export interface PreviewSource {
+  type: "knowledge" | "step";
+  name?: string;
+  dfName?: string;
+  stepId?: string;
+  fileType?: "csv" | "excel" | "text";
+  textContent?: string;
+  availableSheets?: string[];
+  currentSheet?: string;
+  knowledgeId?: string;
 }
 
 interface TaskStore {
@@ -126,30 +151,34 @@ interface TaskStore {
   // 数据面板展示
   previewData: Record<string, unknown>[] | null;
   previewColumns: string[];
-  /** 当前预览来源标识，用于 DataPanel 标题展示 */
-  previewSource: { type: "knowledge"; name: string } | { type: "step"; stepId: string; dfName: string } | null;
-  setPreviewData: (data: Record<string, unknown>[] | null, columns?: string[], source?: TaskStore["previewSource"]) => void;
+  previewSource: PreviewSource | null;
+  setPreviewData: (
+    data: Record<string, unknown>[] | null,
+    columns?: string[],
+    source?: PreviewSource | null
+  ) => void;
   /** 加载某个 Step 中捕获的 DataFrame 到数据面板 */
   loadStepDataframe: (stepId: string, dfName: string) => Promise<void>;
 
   // 加载状态
   isSending: boolean;
   setIsSending: (v: boolean) => void;
-  
+
   // SubTask 状态
   subtasks: SubTask[];
   setSubTasks: (subtasks: SubTask[]) => void;
   addSubTask: (subtask: SubTask) => void;
   updateSubTask: (id: string, updates: Partial<SubTask>) => void;
+
   // 当前模式和模型选择
   currentMode: "auto" | "plan" | "analyst";
   setCurrentMode: (mode: "auto" | "plan" | "analyst") => void;
   selectedModel: { providerId: string; modelId: string } | null;
   setSelectedModel: (model: { providerId: string; modelId: string } | null) => void;
+
   // Plan确认流程
   pendingPlan: PendingPlan | null;
   setPendingPlan: (plan: PendingPlan | null) => void;
-
 }
 
 export const useTaskStore = create<TaskStore>((set) => ({
@@ -259,13 +288,14 @@ export const useTaskStore = create<TaskStore>((set) => ({
     set((s) => ({
       subtasks: s.subtasks.map((st) => (st.id === id ? { ...st, ...updates } : st)),
     })),
+
   // Mode & Model
   currentMode: "auto",
   setCurrentMode: (mode) => set({ currentMode: mode }),
   selectedModel: null,
   setSelectedModel: (model) => set({ selectedModel: model }),
+
   // Pending Plan
   pendingPlan: null,
   setPendingPlan: (plan) => set({ pendingPlan: plan }),
-
 }));
