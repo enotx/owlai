@@ -141,21 +141,35 @@ export async function streamChat(
   taskId: string,
   message: string,
   onEvent: (event: SSEEvent) => void,
+  mode?: "auto" | "plan" | "analyst",
+  modelOverride?: { provider_id: string; model_id: string }
 ) {
   const controller = new AbortController();
   const globalTimeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
-
   try {
     const baseUrl = await getBaseUrl();
     const streamUrl = `${baseUrl}/chat/stream`;
-
+    const body: {
+      task_id: string;
+      message: string;
+      mode?: string;
+      model_override?: { provider_id: string; model_id: string };
+    } = {
+      task_id: taskId,
+      message,
+    };
+    if (mode) {
+      body.mode = mode;
+    }
+    if (modelOverride) {
+      body.model_override = modelOverride;
+    }
     const res = await fetch(streamUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task_id: taskId, message }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
-
     if (!res.ok || !res.body) {
       onEvent({
         type: "error",
@@ -360,3 +374,49 @@ export const recreateDatabase = async (): Promise<DBRecreateResponse> => {
   const response = await (await getApi()).post<DBRecreateResponse>("/database/recreate");
   return response.data;
 };
+
+
+// ===== SubTask Management =====
+export const fetchSubTasks = async (taskId: string) =>
+  (await getApi()).get(`/subtasks/${taskId}`);
+
+export const confirmPlan = async (
+  taskId: string,
+  data: {
+    confirmed: boolean;
+    subtasks?: Array<{
+      task_id: string;
+      title: string;
+      description: string | null;
+      order: number;
+    }>;
+    modifications?: string;
+  }
+) => (await getApi()).post(`/subtasks/${taskId}/confirm-plan`, data);
+
+export const startSubTask = async (subtaskId: string) =>
+  (await getApi()).post(`/subtasks/${subtaskId}/start`);
+
+export const completeSubTask = async (
+  subtaskId: string,
+  resultSummary?: string
+) =>
+  (await getApi()).post(`/subtasks/${subtaskId}/complete`, null, {
+    params: { result_summary: resultSummary },
+  });
+
+export const updateSubTask = async (
+  subtaskId: string,
+  data: {
+    title?: string;
+    description?: string;
+    status?: "pending" | "running" | "completed" | "failed";
+    result?: string;
+  }
+) => (await getApi()).patch(`/subtasks/${subtaskId}`, data);
+
+// ===== Task Mode Management =====
+export const updateTaskMode = async (
+  taskId: string,
+  mode: "auto" | "plan" | "analyst"
+) => (await getApi()).patch(`/tasks/${taskId}/mode`, { mode });

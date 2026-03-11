@@ -72,6 +72,26 @@ export interface PendingToolExecution {
   };
 }
 
+export interface SubTask {
+  id: string;
+  task_id: string;
+  title: string;
+  description: string | null;
+  order: number;
+  status: "pending" | "running" | "completed" | "failed";
+  result: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export interface PendingPlan {
+  subtasks: Array<{
+    title: string;
+    description: string | null;
+    order: number;
+  }>;
+  message: string; // PlanAgent的说明文本
+}
+
 interface TaskStore {
   // Task 状态
   tasks: Task[];
@@ -115,6 +135,21 @@ interface TaskStore {
   // 加载状态
   isSending: boolean;
   setIsSending: (v: boolean) => void;
+  
+  // SubTask 状态
+  subtasks: SubTask[];
+  setSubTasks: (subtasks: SubTask[]) => void;
+  addSubTask: (subtask: SubTask) => void;
+  updateSubTask: (id: string, updates: Partial<SubTask>) => void;
+  // 当前模式和模型选择
+  currentMode: "auto" | "plan" | "analyst";
+  setCurrentMode: (mode: "auto" | "plan" | "analyst") => void;
+  selectedModel: { providerId: string; modelId: string } | null;
+  setSelectedModel: (model: { providerId: string; modelId: string } | null) => void;
+  // Plan确认流程
+  pendingPlan: PendingPlan | null;
+  setPendingPlan: (plan: PendingPlan | null) => void;
+
 }
 
 export const useTaskStore = create<TaskStore>((set) => ({
@@ -134,6 +169,9 @@ export const useTaskStore = create<TaskStore>((set) => ({
       previewData: null,
       previewColumns: [],
       previewSource: null,
+      subtasks: [], // 重置SubTask
+      pendingPlan: null, // 重置待确认Plan
+      currentMode: "auto", // 重置为默认模式
     }),
 
   addTask: (task) => set((s) => ({ tasks: [task, ...s.tasks] })),
@@ -212,4 +250,22 @@ export const useTaskStore = create<TaskStore>((set) => ({
   // Loading
   isSending: false,
   setIsSending: (v) => set({ isSending: v }),
+
+  // SubTask
+  subtasks: [],
+  setSubTasks: (subtasks) => set({ subtasks }),
+  addSubTask: (subtask) => set((s) => ({ subtasks: [...s.subtasks, subtask] })),
+  updateSubTask: (id, updates) =>
+    set((s) => ({
+      subtasks: s.subtasks.map((st) => (st.id === id ? { ...st, ...updates } : st)),
+    })),
+  // Mode & Model
+  currentMode: "auto",
+  setCurrentMode: (mode) => set({ currentMode: mode }),
+  selectedModel: null,
+  setSelectedModel: (model) => set({ selectedModel: model }),
+  // Pending Plan
+  pendingPlan: null,
+  setPendingPlan: (plan) => set({ pendingPlan: plan }),
+
 }));

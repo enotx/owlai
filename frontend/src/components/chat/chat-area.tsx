@@ -12,6 +12,9 @@ import { useTaskStore } from "@/stores/use-task-store";
 import type { Step, PendingToolExecution, StreamingMessage } from "@/stores/use-task-store";
 import KnowledgeZone from "./knowledge-zone";
 import MessageInput from "./message-input";
+import SubTaskList from "./subtask-list";
+import PlanConfirmationDialog from "./plan-confirmation";
+
 import {
   Bot,
   User,
@@ -318,7 +321,13 @@ export default function ChatArea() {
       {/* 顶部：Knowledge Zone */}
       <div className="shrink-0 border-b px-4 py-3">
         {currentTaskId ? (
-          <KnowledgeZone />
+          <>
+            <KnowledgeZone />
+            {/* SubTask列表 */}
+            <div className="mt-3">
+              <SubTaskList />
+            </div>
+          </>
         ) : (
           <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-6 text-center text-sm text-muted-foreground">
             Select or create a task to start
@@ -378,6 +387,10 @@ export default function ChatArea() {
           <MessageInput />
         </div>
       </div>
+
+      {/* Plan确认对话框 */}
+      <PlanConfirmationDialog />
+
     </div>
   );
 }
