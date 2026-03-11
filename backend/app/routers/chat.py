@@ -24,7 +24,6 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 # ── SSE 流式对话（ReAct Agent） ────────────────────────────────
 @router.post("/stream")
-@router.post("/stream")
 async def stream_message(body: ChatRequest, db: AsyncSession = Depends(get_db)):
     """
     通过 SSE 逐步推送 Agent 的分析过程。
