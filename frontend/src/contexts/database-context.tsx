@@ -4,6 +4,9 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { checkDatabaseCompatibility, type DBCompatibilityResponse } from "@/lib/api";
+import { useBackend } from "./backend-context";
+
+
 
 interface DatabaseContextType {
   compatibility: DBCompatibilityResponse | null;
@@ -45,10 +48,13 @@ export function DatabaseProvider({ children }: { children: ReactNode }) {
     setShouldShowWarning(false);
   };
 
-  // 初始检查（仅在组件挂载时执行一次）
+  const { isReady } = useBackend();
+  // 等待后端就绪后再执行兼容性检查
   useEffect(() => {
-    recheckCompatibility();
-  }, []);
+    if (isReady) {
+      recheckCompatibility();
+    }
+  }, [isReady]);
 
   return (
     <DatabaseContext.Provider

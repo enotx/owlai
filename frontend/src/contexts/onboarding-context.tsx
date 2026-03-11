@@ -3,6 +3,7 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { useBackend } from "./backend-context";
+import { useDatabase } from "./database-context";
 import { fetchProviders } from "@/lib/api";
 
 interface OnboardingContextValue {
@@ -48,12 +49,13 @@ export function OnboardingProvider({ children }: OnboardingProviderProps) {
     }
   };
 
-  // 后端就绪后自动检测配置
+  const { shouldShowWarning: showDatabaseWarning, isChecking: isDatabaseChecking } = useDatabase();
+  // 等待后端就绪 + 数据库检查完成 + 数据库兼容后再检测配置
   useEffect(() => {
-    if (isReady && configCheckStatus === "idle") {
+    if (isReady && !isDatabaseChecking && !showDatabaseWarning && configCheckStatus === "idle") {
       checkConfiguration();
     }
-  }, [isReady]);
+  }, [isReady, isDatabaseChecking, showDatabaseWarning, configCheckStatus]);
 
   // 计算是否应该显示新手引导：后端就绪 + 检测完成 + 无配置 + 未跳过
   const shouldShowOnboarding =
