@@ -26,27 +26,58 @@ MAX_OUTPUT_LENGTH = 50_000  # 最大输出字符数
 
 def _build_sandbox_script(
     code: str,
-    csv_var_map: dict[str, str],
+    data_var_map: dict[str, str],  # 改名：data_var_map → data_var_map
     capture_dir: str | None = None,
 ) -> str:
     """
     构建在子进程中执行的 Python 脚本。
-    csv_var_map: {variable_name: absolute_file_path}
+    data_var_map: {variable_name: absolute_file_path}
     capture_dir: 若提供，执行后扫描命名空间中的 DataFrame 并序列化到此目录
     """
-    # CSV 加载语句
+    # 数据加载语句（支持 CSV 和 Excel）
     loader_lines = []
-    for var_name, fpath in csv_var_map.items():
+    for var_name, fpath in data_var_map.items():
         escaped_path = fpath.replace("\\", "\\\\")
-        loader_lines.append(f'    {var_name} = __pd.read_csv("{escaped_path}")')
+        
+        # 根据文件扩展名选择加载器
+        ext = fpath.lower().split('.')[-1]
+        
+        if ext == 'csv':
+            loader_lines.append(f'    {var_name} = __pd.read_csv("{escaped_path}")')
+        
+        elif ext in ('xlsx', 'xls'):
+            # 加载默认 sheet（第一个）到主变量
+            loader_lines.append(f'    {var_name} = __pd.read_excel("{escaped_path}")')
+            # 加载所有 sheets 到字典变量
+            loader_lines.append(f'    {var_name}_sheets = __pd.read_excel("{escaped_path}", sheet_name=None)')
+        
+        else:
+            # 未知格式，尝试 CSV
+            loader_lines.append(f'    {var_name} = __pd.read_csv("{escaped_path}")')
+    
     loader_code = "\n".join(loader_lines)
-    # namespace 注入语句
-    namespace_inject = chr(10).join(
-        f"    _namespace['{var}'] = {var}" for var in csv_var_map.keys()
-    )
-    # 已有 CSV 变量名集合（排除这些，只捕获用户代码新生成的 DF）
-    preloaded_var_names = set(csv_var_map.keys())
-    preloaded_repr = repr(preloaded_var_names)
+    
+    # namespace 注入语句（包括 _sheets 变量）
+    namespace_inject_lines = []
+    for var in data_var_map.keys():
+        namespace_inject_lines.append(f"    _namespace['{var}'] = {var}")
+        # 如果是 Excel，也注入 _sheets 变量
+        fpath = data_var_map[var]
+        ext = fpath.lower().split('.')[-1]
+        if ext in ('xlsx', 'xls'):
+            namespace_inject_lines.append(f"    _namespace['{var}_sheets'] = {var}_sheets")
+    
+    namespace_inject = "\n".join(namespace_inject_lines)
+    
+    # 预加载变量名集合（包括 _sheets）
+    preloaded_var_names = set(data_var_map.keys())
+    for var in list(data_var_map.keys()):
+        fpath = data_var_map[var]
+        ext = fpath.lower().split('.')[-1]
+        if ext in ('xlsx', 'xls'):
+            preloaded_var_names.add(f"{var}_sheets")
+    
+    preloaded_repr = repr(preloaded_var_names)    # 已有 CSV 变量名集合（排除这些，只捕获用户代码新生成的 DF）
     # capture_dir 路径（转义）
     capture_dir_escaped = (capture_dir or "").replace("\\", "\\\\")
     script = textwrap.dedent(f"""\
@@ -59,7 +90,8 @@ def _build_sandbox_script(
         'pandas', 'numpy', 'math', 'statistics', 'collections',
         'itertools', 'functools', 'operator', 'string', 're',
         'datetime', 'json', 'decimal', 'fractions', 'textwrap',
-        'collections.abc', 'typing', 'numbers',
+        'collections.abc', 'typing', 'numbers', 'hashlib', 'random', 'sklearn',
+        'scipy', 'pytalos'
     }}
     _original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
     def _safe_import(name, *args, **kwargs):
@@ -256,7 +288,7 @@ def _build_sandbox_script(
 
 async def execute_code_in_sandbox(
     code: str,
-    csv_var_map: dict[str, str],
+    data_var_map: dict[str, str],
     timeout: int = SANDBOX_TIMEOUT,
     capture_dir: str | None = None,
 ) -> dict[str, Any]:
@@ -264,7 +296,7 @@ async def execute_code_in_sandbox(
     在子进程中安全执行代码。
     Args:
         code: 要执行的 Python 代码
-        csv_var_map: {变量名: CSV文件绝对路径}
+        data_var_map: {变量名: CSV文件绝对路径}
         timeout: 超时秒数
         capture_dir: 若提供，沙箱执行后将捕获的 DataFrame 以 JSON 写入此目录
     Returns:
@@ -288,7 +320,7 @@ async def execute_code_in_sandbox(
 
 
     # 写入临时脚本文件
-    script_content = _build_sandbox_script(code, csv_var_map, capture_dir)
+    script_content = _build_sandbox_script(code, data_var_map, capture_dir)
 
     tmp_file = None
     start_time = time.monotonic()

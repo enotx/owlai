@@ -75,7 +75,7 @@ class AnalystAgent(BaseAgent):
         subtask_id = context.get("subtask_id")
         
         # 获取Knowledge上下文
-        dataset_ctx, text_ctx, var_ref, csv_var_map = await self._get_knowledge_context()
+        dataset_ctx, text_ctx, var_ref, data_var_map = await self._get_knowledge_context()
         
         # 如果有SubTask，加载其描述
         current_task = ""
@@ -197,7 +197,7 @@ class AnalystAgent(BaseAgent):
                         try:
                             exec_result = await execute_code_in_sandbox(
                                 code=code,
-                                csv_var_map=csv_var_map,
+                                data_var_map=data_var_map,
                                 capture_dir=capture_dir,
                             )
                         except Exception as e:

@@ -115,7 +115,7 @@ class PlanAgent(BaseAgent):
         user_message = context.get("user_message", "")
         history = context.get("history_messages", [])
         # 获取Knowledge上下文
-        dataset_ctx, text_ctx, var_ref, csv_var_map = await self._get_knowledge_context()
+        dataset_ctx, text_ctx, var_ref, data_var_map = await self._get_knowledge_context()
         
         system_prompt = PLAN_SYSTEM_PROMPT.format(
             dataset_context=dataset_ctx,
@@ -239,7 +239,7 @@ class PlanAgent(BaseAgent):
                         try:
                             exec_result = await execute_code_in_sandbox(
                                 code=code,
-                                csv_var_map=csv_var_map,
+                                data_var_map=data_var_map,
                                 capture_dir=capture_dir,
                             )
                         except Exception as e:

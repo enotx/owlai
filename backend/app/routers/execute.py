@@ -17,7 +17,7 @@ from app.services.data_processor import sanitize_variable_name
 router = APIRouter(prefix="/api/execute", tags=["execute"])
 
 
-async def _build_csv_var_map(task_id: str, db: AsyncSession) -> dict[str, str]:
+async def _build_data_var_map(task_id: str, db: AsyncSession) -> dict[str, str]:
     """
     根据 task_id 查出所有 CSV Knowledge，构建 {变量名: 绝对路径} 映射。
     """
@@ -41,7 +41,7 @@ async def _build_csv_var_map(task_id: str, db: AsyncSession) -> dict[str, str]:
 async def execute_code(body: ExecuteRequest, db: AsyncSession = Depends(get_db)):
     """执行 Pandas 代码（沙箱隔离）"""
     try:
-        csv_var_map = await _build_csv_var_map(body.task_id, db)
+        data_var_map = await _build_data_var_map(body.task_id, db)
     except Exception as e:
         return ExecuteResponse(
             success=False,
@@ -52,7 +52,7 @@ async def execute_code(body: ExecuteRequest, db: AsyncSession = Depends(get_db))
     try:
         result = await execute_code_in_sandbox(
             code=body.code,
-            csv_var_map=csv_var_map,
+            data_var_map=data_var_map,
         )
     except Exception as e:
         return ExecuteResponse(

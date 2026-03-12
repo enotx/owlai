@@ -49,16 +49,18 @@ class BaseAgent(ABC):
     async def _get_knowledge_context(self) -> tuple[str, str, str, dict[str, str]]:
         """
         获取Knowledge上下文
-        Returns: (dataset_context, text_context, variable_reference, csv_var_map)
+        Returns: (dataset_context, text_context, variable_reference, data_var_map)
         """
         from app.services.data_processor import (
             sanitize_variable_name,
             get_csv_sample_rows,
+            get_excel_sample_rows,
             read_text_content,
         )
         from app.models import Knowledge
         from sqlalchemy import select
         import os
+        import json
         
         result = await self.db.execute(
             select(Knowledge).where(Knowledge.task_id == self.task_id)
@@ -68,14 +70,17 @@ class BaseAgent(ABC):
         dataset_parts: list[str] = []
         text_parts: list[str] = []
         var_ref_parts: list[str] = []
-        csv_var_map: dict[str, str] = {}
+        data_var_map: dict[str, str] = {}  # 改名：data_var_map → data_var_map
         
         for k in knowledge_items:
+            # ── CSV 处理 ──────────────────────────────────────
             if k.type == "csv" and k.file_path and os.path.exists(k.file_path):
                 var_name = sanitize_variable_name(k.name)
-                csv_var_map[var_name] = os.path.abspath(k.file_path)
+                data_var_map[var_name] = os.path.abspath(k.file_path)
                 
                 section = f"### 📊 {k.name}  →  variable: `{var_name}`\n"
+                section += "- **Type**: CSV\n"
+                
                 if k.metadata_json:
                     try:
                         meta = json.loads(k.metadata_json)
@@ -84,8 +89,10 @@ class BaseAgent(ABC):
                         if "columns" in meta and "dtypes" in meta:
                             col_info = ", ".join(
                                 f"`{c}` ({meta['dtypes'].get(c, '?')})"
-                                for c in meta["columns"]
+                                for c in meta["columns"][:10]  # 限制显示列数
                             )
+                            if len(meta["columns"]) > 10:
+                                col_info += f", ... ({len(meta['columns'])} total)"
                             section += f"- **Columns**: {col_info}\n"
                     except json.JSONDecodeError:
                         pass
@@ -101,6 +108,78 @@ class BaseAgent(ABC):
                 dataset_parts.append(section)
                 var_ref_parts.append(f"- `{var_name}` ← {k.name}")
             
+            # ── Excel 处理 ────────────────────────────────────
+            elif k.type == "excel" and k.file_path and os.path.exists(k.file_path):
+                var_name = sanitize_variable_name(k.name)
+                data_var_map[var_name] = os.path.abspath(k.file_path)
+                
+                section = f"### 📊 {k.name}  →  variable: `{var_name}`\n"
+                section += "- **Type**: Excel\n"
+                
+                # 解析元数据
+                sheet_names = []
+                default_sheet = None
+                if k.metadata_json:
+                    try:
+                        meta = json.loads(k.metadata_json)
+                        sheet_names = meta.get("sheet_names", [])
+                        sheets_data = meta.get("sheets", [])
+                        
+                        if sheet_names:
+                            section += f"- **Sheets**: {', '.join(sheet_names)}\n"
+                            default_sheet = sheet_names[0]
+                            section += f"- **Default sheet**: `{default_sheet}` (loaded as `{var_name}`)\n"
+                            
+                            if len(sheet_names) > 1:
+                                other_sheets = ', '.join(f"`{s}`" for s in sheet_names[1:])
+                                section += f"- **Access other sheets**: Use `{var_name}_sheets[{other_sheets}]`\n"
+                        
+                        # 展示默认 sheet 的详细信息
+                        if sheets_data:
+                            first_sheet = sheets_data[0]
+                            shape = first_sheet.get("shape", [0, 0])
+                            section += f"- **Shape** (default sheet): {shape[0]:,} rows × {shape[1]} columns\n"
+                            
+                            if "columns" in first_sheet and "dtypes" in first_sheet:
+                                col_info = ", ".join(
+                                    f"`{c}` ({first_sheet['dtypes'].get(c, '?')})"
+                                    for c in first_sheet["columns"][:10]
+                                )
+                                if len(first_sheet["columns"]) > 10:
+                                    col_info += f", ... ({len(first_sheet['columns'])} total)"
+                                section += f"- **Columns**: {col_info}\n"
+                            
+                            # 其他 sheet 的简要信息
+                            if len(sheets_data) > 1:
+                                other_info = []
+                                for sheet_meta in sheets_data[1:]:
+                                    s_name = sheet_meta.get("sheet_name", "?")
+                                    s_shape = sheet_meta.get("shape", [0, 0])
+                                    other_info.append(f"`{s_name}` ({s_shape[0]:,} rows)")
+                                section += f"- **Other sheets**: {', '.join(other_info)}\n"
+                    
+                    except json.JSONDecodeError:
+                        pass
+                
+                # 样本行（默认 sheet）
+                try:
+                    sample = get_excel_sample_rows(
+                        k.file_path, 
+                        sheet_name=default_sheet,
+                        n_rows=200
+                    )
+                    if len(sample) > 5000:
+                        sample = sample[:5000] + "\n... [sample truncated]"
+                    section += f"- **Sample rows** (default sheet):\n```\n{sample}\n```\n"
+                except Exception:
+                    pass
+                
+                dataset_parts.append(section)
+                var_ref_parts.append(f"- `{var_name}` ← {k.name} (default sheet)")
+                if len(sheet_names) > 1:
+                    var_ref_parts.append(f"  - `{var_name}_sheets` ← all sheets dictionary")
+            
+            # ── 文本文件处理 ──────────────────────────────────
             elif k.type in ("text", "backstory") and k.file_path and os.path.exists(k.file_path):
                 try:
                     content = read_text_content(k.file_path)
@@ -112,4 +191,4 @@ class BaseAgent(ABC):
         text_context = "\n\n".join(text_parts) if text_parts else "[No reference documents.]"
         variable_reference = "\n".join(var_ref_parts) if var_ref_parts else "[No datasets available.]"
         
-        return dataset_context, text_context, variable_reference, csv_var_map
+        return dataset_context, text_context, variable_reference, data_var_map

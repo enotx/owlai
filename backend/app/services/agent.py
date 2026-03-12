@@ -172,9 +172,9 @@ async def _build_knowledge_context(
     1. dataset_context: CSV 元数据 + 样本行
     2. text_context: TXT 全文
     3. variable_reference: 变量名对照表
-    4. csv_var_map: {变量名: 文件路径} 用于沙箱
+    4. data_var_map: {变量名: 文件路径} 用于沙箱
 
-    Returns: (dataset_context, text_context, variable_reference, csv_var_map)
+    Returns: (dataset_context, text_context, variable_reference, data_var_map)
     """
     result = await db.execute(
         select(Knowledge).where(Knowledge.task_id == task_id)
@@ -184,12 +184,12 @@ async def _build_knowledge_context(
     dataset_parts: list[str] = []
     text_parts: list[str] = []
     var_ref_parts: list[str] = []
-    csv_var_map: dict[str, str] = {}
+    data_var_map: dict[str, str] = {}
 
     for k in knowledge_items:
         if k.type == "csv" and k.file_path and os.path.exists(k.file_path):
             var_name = sanitize_variable_name(k.name)
-            csv_var_map[var_name] = os.path.abspath(k.file_path)
+            data_var_map[var_name] = os.path.abspath(k.file_path)
 
             # 元数据
             section = f"### 📊 {k.name}  →  variable: `{var_name}`\n"
@@ -233,7 +233,7 @@ async def _build_knowledge_context(
     text_context = "\n\n".join(text_parts) if text_parts else "[No reference documents.]"
     variable_reference = "\n".join(var_ref_parts) if var_ref_parts else "[No datasets available.]"
 
-    return dataset_context, text_context, variable_reference, csv_var_map
+    return dataset_context, text_context, variable_reference, data_var_map
 
 
 async def _load_history_messages(

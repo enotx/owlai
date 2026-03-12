@@ -9,6 +9,7 @@ frontend/.next/
 frontend/.env.local
 frontend/out/
 # Data & SQLite
+backend/data/*
 backend/data/*.db
 backend/data/uploads/
 *.log
@@ -18,7 +19,7 @@ frontend/src-tauri/target/
 /target/
 /gen/schemas
 
-# Python Environment & Cache
+# Sidecar Python Environment & Cache
 python_env/
 .cache/
 
