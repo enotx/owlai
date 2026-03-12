@@ -408,8 +408,8 @@ def _build_sandbox_script(
                             _pf.write(_json_str)
                         _persisted_vars[_k] = _ppath
                         _persist_count += 1
-                except Exception:
-                    pass
+            except Exception:
+                pass
     result = {{
         "success": _error is None,
         "output": _output if _output else None,
