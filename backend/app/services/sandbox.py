@@ -367,7 +367,7 @@ def _build_sandbox_script(
                     _slice = _v.head(_MAX_PERSIST_ROWS)
                     _clean = _slice.where(__pd.notnull(_slice), None)
                     _data = json.loads(_clean.to_json(default_handler=str))
-                    # to_json on Series gives '{"0":val,...}', 转为 list
+                    # to_json on Series returns index-keyed dict, convert to list
                     _data_list = list(_data.values()) if isinstance(_data, dict) else _data
                     _blob = {{
                         "__persist_type__": "series",
