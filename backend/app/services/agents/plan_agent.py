@@ -8,6 +8,7 @@ from app.services.agents.base import BaseAgent
 from openai.types.chat import ChatCompletionMessageParam
 
 
+
 PLAN_SYSTEM_PROMPT = """\
 You are **Owl Planning Agent 🦉**, a careful analyst who helps users prepare for data analysis.
 
@@ -44,26 +45,6 @@ You can ONLY generate a plan when BOTH conditions are met:
 - NEVER skip Phase 1 and Phase 2
 - If the user pushes you to plan prematurely, politely explain what information is still needed
 - If you're unsure about data sufficiency, ASK rather than assume
-
-### Plan Output Format (ONLY use when ready)
-When you're truly ready to propose a plan, output:
-```json
-{{
-"plan_ready": true,
-"confidence": "high", // or "medium" if you have concerns
-"prerequisites_met": {{
- "requirements_clear": true,
- "data_sufficient": true
-}},
-"subtasks": [
- {{
- "order": 1,
- "title": "...",
- "description": "..."
- }}
-]
-}}
-
 
 ## Available Datasets
 {dataset_context}
@@ -112,6 +93,10 @@ class PlanAgent(BaseAgent):
         3. 生成SubTask列表
         4. 等待用户确认
         """
+        import os
+        import glob
+        from app.config import UPLOADS_DIR
+
         user_message = context.get("user_message", "")
         history = context.get("history_messages", [])
         # 获取Knowledge上下文
@@ -142,6 +127,16 @@ class PlanAgent(BaseAgent):
             *history,
             {"role": "user", "content": user_message},
         ]
+        
+        # 跨轮次持久化的中间变量 {var_name: json_file_path}
+        persistent_vars: dict[str, str] = {}
+        
+        # 从 persist/ 目录恢复之前对话轮次的变量
+        persist_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "persist")
+        if os.path.isdir(persist_dir):
+            for fpath in glob.glob(os.path.join(persist_dir, "*.json")):
+                var_name = os.path.splitext(os.path.basename(fpath))[0]
+                persistent_vars[var_name] = fpath
         
         # 调用LLM（支持tool calling）
         max_rounds = 5  # Plan阶段限制轮次
@@ -197,8 +192,6 @@ class PlanAgent(BaseAgent):
             if tool_calls_acc:
                 # 执行代码（探索性分析）
                 from app.services.sandbox import execute_code_in_sandbox
-                import os
-                from app.config import UPLOADS_DIR
                 
                 tool_calls_for_api = []
                 for idx in sorted(tool_calls_acc.keys()):
@@ -241,6 +234,7 @@ class PlanAgent(BaseAgent):
                                 code=code,
                                 data_var_map=data_var_map,
                                 capture_dir=capture_dir,
+                                json_var_map=persistent_vars if persistent_vars else None,
                             )
                         except Exception as e:
                             exec_result = {
@@ -249,7 +243,12 @@ class PlanAgent(BaseAgent):
                                 "error": str(e),
                                 "execution_time": 0.0,
                             }
-                        
+                            
+                        # 收集本轮持久化的变量，供下轮沙箱使用
+                        new_persisted = exec_result.get("persisted_vars", {})
+                        if new_persisted:
+                            persistent_vars.update(new_persisted)
+
                         yield self._sse({
                             "type": "tool_result",
                             "success": exec_result["success"],

@@ -15,6 +15,9 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import ProvidersView from "./providers-view";
 import AgentsView from "./agents-view";
+import SkillsView from "./skills-view";
+
+
 
 type MenuItem = {
   id: string;
@@ -26,8 +29,10 @@ const menuItems: MenuItem[] = [
   { id: "interface", label: "Interface", category: "General" },
   { id: "providers", label: "Providers/Models", category: "LLM" },
   { id: "agents", label: "Agents", category: "LLM" },
+  { id: "skills", label: "Skills", category: "Extensions" },
   { id: "misc", label: "Miscellaneous", category: "Other" },
 ];
+
 
 export default function SettingsDialog() {
   const { isSettingsOpen, setSettingsOpen, setProviders, currentView, setCurrentView } =
@@ -58,6 +63,11 @@ export default function SettingsDialog() {
     if (selectedItem === "agents") {
       return <AgentsView />; 
     }
+
+    if (selectedItem === "skills") {
+      return <SkillsView />;
+    }
+
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         Coming Soon

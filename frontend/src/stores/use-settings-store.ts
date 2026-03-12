@@ -4,6 +4,8 @@
  * Settings 状态管理：LLM Providers 配置
  */
 import { create } from "zustand";
+import type { SkillData } from "@/lib/api";
+
 
 export interface LLMModel {
   id: string;
@@ -53,6 +55,21 @@ interface SettingsStore {
   
   currentView: "list" | "edit";
   setCurrentView: (view: "list" | "edit") => void;
+  // 在 currentView 相关代码之后追加：
+
+  // Skill 列表
+  skills: SkillData[];
+  setSkills: (skills: SkillData[]) => void;
+  addSkill: (skill: SkillData) => void;
+  updateSkillInStore: (id: string, skill: SkillData) => void;
+  removeSkill: (id: string) => void;
+  // 当前编辑的 Skill（null 表示新建）
+  editingSkill: SkillData | null;
+  setEditingSkill: (skill: SkillData | null) => void;
+  // Skill 视图状态
+  skillView: "list" | "edit";
+  setSkillView: (view: "list" | "edit") => void;
+
 }
 
 
@@ -85,4 +102,20 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
 
   currentView: "list",
   setCurrentView: (view) => set({ currentView: view }),
+
+    // Skill 状态
+  skills: [],
+  setSkills: (skills) => set({ skills }),
+  addSkill: (skill) => set((s) => ({ skills: [...s.skills, skill] })),
+  updateSkillInStore: (id, skill) =>
+    set((s) => ({
+      skills: s.skills.map((sk) => (sk.id === id ? skill : sk)),
+    })),
+  removeSkill: (id) =>
+    set((s) => ({ skills: s.skills.filter((sk) => sk.id !== id) })),
+  editingSkill: null,
+  setEditingSkill: (skill) => set({ editingSkill: skill }),
+  skillView: "list",
+  setSkillView: (view) => set({ skillView: view }),
+
 }));

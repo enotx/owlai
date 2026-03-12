@@ -447,3 +447,43 @@ export const exportStepDataframe = async (stepId: string, dfName: string) => {
   const url = `${baseUrl}/chat/steps/${stepId}/dataframe/${dfName}/export`;
   window.open(url, '_blank');
 };
+
+// ===== Skills =====
+export interface SkillData {
+  id: string;
+  name: string;
+  description: string | null;
+  prompt_markdown: string | null;
+  env_vars: Record<string, string>;
+  allowed_modules: string[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export const fetchSkills = async () =>
+  (await getApi()).get<SkillData[]>("/skills");
+
+export const createSkill = async (data: {
+  name: string;
+  description?: string;
+  prompt_markdown?: string;
+  env_vars?: Record<string, string>;
+  allowed_modules?: string[];
+  is_active?: boolean;
+}) => (await getApi()).post<SkillData>("/skills", data);
+
+export const updateSkill = async (
+  id: string,
+  data: {
+    name?: string;
+    description?: string;
+    prompt_markdown?: string;
+    env_vars?: Record<string, string>;
+    allowed_modules?: string[];
+    is_active?: boolean;
+  }
+) => (await getApi()).patch<SkillData>(`/skills/${id}`, data);
+
+export const deleteSkill = async (id: string) =>
+  (await getApi()).delete(`/skills/${id}`);

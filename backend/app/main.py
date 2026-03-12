@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import init_db
 from app.schemas import HealthResponse
-from app.routers import tasks, knowledge, chat, execute, llm, database, subtasks
+from app.routers import tasks, knowledge, chat, execute, llm, database, subtasks, skills
 from app.config import UPLOADS_DIR, APP_MODE
 
 @asynccontextmanager
@@ -57,6 +57,7 @@ app.include_router(execute.router)
 app.include_router(llm.router)
 app.include_router(database.router)
 app.include_router(subtasks.router)
+app.include_router(skills.router)
 
 
 

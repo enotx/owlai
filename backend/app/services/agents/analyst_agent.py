@@ -27,6 +27,7 @@ Work step-by-step:
 - Always explore before concluding
 - Break complex analysis into smaller steps
 - Name result DataFrames with prefixes: `result_`, `output_`, `summary_`
+- **Variables persist across code executions** within the same conversation. If you created `df_cleaned` in a previous step, you can use it directly in the next `execute_python_code` call without re-creating it.
 - Answer in the **same language** as the user
 
 ## Available Datasets
@@ -37,6 +38,9 @@ Work step-by-step:
 
 ## Variable Reference
 {variable_reference}
+
+## Available Skills
+{skill_context}
 
 ## Current Task
 {current_task}
@@ -76,7 +80,10 @@ class AnalystAgent(BaseAgent):
         
         # 获取Knowledge上下文
         dataset_ctx, text_ctx, var_ref, data_var_map = await self._get_knowledge_context()
-        
+
+        # 获取Skill上下文（提示词 + 环境变量）
+        skill_ctx, skill_envs = await self._get_skill_context()
+
         # 如果有SubTask，加载其描述
         current_task = ""
         if subtask_id:
@@ -93,6 +100,7 @@ class AnalystAgent(BaseAgent):
             dataset_context=dataset_ctx,
             text_context=text_ctx,
             variable_reference=var_ref,
+            skill_context=skill_ctx,
             current_task=current_task or "[Direct analysis mode]",
         )
         
@@ -104,6 +112,17 @@ class AnalystAgent(BaseAgent):
             *history,
             {"role": "user", "content": user_message},
         ]
+        
+        # 跨轮次持久化的中间变量 {var_name: json_file_path}
+        persistent_vars: dict[str, str] = {}
+        
+        # 尝试从 persist/ 目录恢复之前对话轮次的变量
+        persist_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "persist")
+        if os.path.isdir(persist_dir):
+            import glob
+            for fpath in glob.glob(os.path.join(persist_dir, "*.json")):
+                var_name = os.path.splitext(os.path.basename(fpath))[0]
+                persistent_vars[var_name] = fpath
         
         # ReAct循环
         max_rounds = 10
@@ -199,6 +218,8 @@ class AnalystAgent(BaseAgent):
                                 code=code,
                                 data_var_map=data_var_map,
                                 capture_dir=capture_dir,
+                                injected_envs=skill_envs if skill_envs else None,
+                                json_var_map=persistent_vars if persistent_vars else None,
                             )
                         except Exception as e:
                             exec_result = {
@@ -220,7 +241,12 @@ class AnalystAgent(BaseAgent):
                                     os.rename(old_path, new_path)
                                 except OSError:
                                     pass
-                        
+
+                        # 收集本轮持久化的变量，供下轮沙箱使用
+                        new_persisted = exec_result.get("persisted_vars", {})
+                        if new_persisted:
+                            persistent_vars.update(new_persisted)
+
                         yield self._sse({
                             "type": "tool_result",
                             "success": exec_result["success"],

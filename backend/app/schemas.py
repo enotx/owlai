@@ -210,3 +210,56 @@ class DBRecreateResponse(BaseModel):
     """数据库重建响应"""
     success: bool
     message: str
+
+
+# ===== Skill =====
+class SkillCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: str | None = None
+    prompt_markdown: str | None = None
+    env_vars: dict[str, str] = Field(default_factory=dict)
+    allowed_modules: list[str] = Field(default_factory=list)
+    is_active: bool = True
+
+
+class SkillUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=100)
+    description: str | None = None
+    prompt_markdown: str | None = None
+    env_vars: dict[str, str] | None = None
+    allowed_modules: list[str] | None = None
+    is_active: bool | None = None
+
+
+class SkillResponse(BaseModel):
+    id: str
+    name: str
+    description: str | None
+    prompt_markdown: str | None
+    env_vars: dict[str, str]
+    allowed_modules: list[str]
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+    @classmethod
+    def model_validate(cls, obj, **kwargs):
+        """自定义验证：将 JSON 字符串字段解析为 Python 对象"""
+        import json as _json
+        if hasattr(obj, "env_vars_json"):
+            # ORM 对象 → 转换 JSON 字段
+            data = {
+                "id": obj.id,
+                "name": obj.name,
+                "description": obj.description,
+                "prompt_markdown": obj.prompt_markdown,
+                "env_vars": _json.loads(obj.env_vars_json) if obj.env_vars_json else {},
+                "allowed_modules": _json.loads(obj.allowed_modules_json) if obj.allowed_modules_json else [],
+                "is_active": obj.is_active,
+                "created_at": obj.created_at,
+                "updated_at": obj.updated_at,
+            }
+            return super().model_validate(data, **kwargs)
+        return super().model_validate(obj, **kwargs)

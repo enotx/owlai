@@ -192,3 +192,53 @@ class BaseAgent(ABC):
         variable_reference = "\n".join(var_ref_parts) if var_ref_parts else "[No datasets available.]"
         
         return dataset_context, text_context, variable_reference, data_var_map
+    
+    async def _get_skill_context(self) -> tuple[str, dict[str, str]]:
+        """
+        获取所有激活的 Skill 上下文
+        Returns:
+            skill_prompt: 拼接后的 Skill 提示词（Markdown），注入 System Prompt
+            skill_envs:   合并后的环境变量字典（含 __allowed_modules__ 特殊键）
+        """
+        from app.models import Skill
+        from sqlalchemy import select
+        import json
+        result = await self.db.execute(
+            select(Skill).where(Skill.is_active == True)
+        )
+        skills = list(result.scalars().all())
+        if not skills:
+            return "[No skills configured.]", {}
+        prompt_parts: list[str] = []
+        merged_envs: dict[str, str] = {}
+        all_modules: set[str] = set()
+        for skill in skills:
+            # 拼接提示词
+            section = f"### 🔧 Skill: {skill.name}\n"
+            if skill.description:
+                section += f"{skill.description}\n"
+            if skill.prompt_markdown:
+                section += f"\n{skill.prompt_markdown}\n"
+            # 提示 Agent 可以通过 getenv() 获取凭证
+            try:
+                env_dict: dict[str, str] = json.loads(skill.env_vars_json) if skill.env_vars_json else {}
+            except (json.JSONDecodeError, TypeError):
+                env_dict = {}
+            if env_dict:
+                env_keys = ", ".join(f"`{k}`" for k in env_dict.keys())
+                section += f"\n> **Available env vars** (use `getenv('KEY')`): {env_keys}\n"
+                merged_envs.update(env_dict)
+            # 收集额外模块
+            try:
+                modules: list[str] = json.loads(skill.allowed_modules_json) if skill.allowed_modules_json else []
+            except (json.JSONDecodeError, TypeError):
+                modules = []
+            if modules:
+                all_modules.update(modules)
+                section += f"> **Allowed imports**: {', '.join(f'`{m}`' for m in modules)}\n"
+            prompt_parts.append(section)
+        # 将 allowed_modules 打包为特殊 key，由 sandbox 层解析
+        if all_modules:
+            merged_envs["__allowed_modules__"] = json.dumps(list(all_modules))
+        skill_prompt = "\n---\n".join(prompt_parts)
+        return skill_prompt, merged_envs

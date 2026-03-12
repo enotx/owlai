@@ -17,7 +17,7 @@ import textwrap
 import time
 from typing import Any
 from app.services.code_security import check_code_security
-from app.config import PYTHON_EXECUTABLE, DATA_DIR
+from app.config import PYTHON_EXECUTABLE, UPLOADS_DIR
 
 
 # 沙箱参数
@@ -26,8 +26,10 @@ MAX_OUTPUT_LENGTH = 50_000  # 最大输出字符数
 
 def _build_sandbox_script(
     code: str,
-    data_var_map: dict[str, str],  # 改名：data_var_map → data_var_map
+    data_var_map: dict[str, str],
     capture_dir: str | None = None,
+    extra_allowed_modules: list[str] | None = None,
+    json_var_map: dict[str, str] | None = None,  # 上一轮持久化的 DataFrame {var_name: json_path}
 ) -> str:
     """
     构建在子进程中执行的 Python 脚本。
@@ -56,6 +58,19 @@ def _build_sandbox_script(
             loader_lines.append(f'    {var_name} = __pd.read_csv("{escaped_path}")')
     
     loader_code = "\n".join(loader_lines)
+    # ── 从上一轮持久化的 JSON 恢复 DataFrame ──
+    json_loader_lines = []
+    json_var_names: set[str] = set()
+    if json_var_map:
+        for var_name, json_path in json_var_map.items():
+            escaped = json_path.replace("\\", "\\\\")
+            json_loader_lines.append(
+                f'    with open("{escaped}", "r", encoding="utf-8") as __jf:\n'
+                f'        __jdata = __json_mod.load(__jf)\n'
+                f'    {var_name} = __pd.DataFrame(__jdata["rows"], columns=__jdata["columns"])'
+            )
+            json_var_names.add(var_name)
+    json_loader_code = "\n".join(json_loader_lines)
     
     # namespace 注入语句（包括 _sheets 变量）
     namespace_inject_lines = []
@@ -67,10 +82,15 @@ def _build_sandbox_script(
         if ext in ('xlsx', 'xls'):
             namespace_inject_lines.append(f"    _namespace['{var}_sheets'] = {var}_sheets")
     
+    # 追加 JSON 恢复变量的注入
+    for var_name in json_var_names:
+        namespace_inject_lines.append(f"    _namespace['{var_name}'] = {var_name}")
     namespace_inject = "\n".join(namespace_inject_lines)
     
-    # 预加载变量名集合（包括 _sheets）
+    # 预加载变量名集合（包括 _sheets 和 JSON 恢复的变量）
     preloaded_var_names = set(data_var_map.keys())
+    preloaded_var_names.update(json_var_names)  # JSON 恢复的变量也视为"预加载"，避免重复捕获
+
     for var in list(data_var_map.keys()):
         fpath = data_var_map[var]
         ext = fpath.lower().split('.')[-1]
@@ -91,8 +111,11 @@ def _build_sandbox_script(
         'itertools', 'functools', 'operator', 'string', 're',
         'datetime', 'json', 'decimal', 'fractions', 'textwrap',
         'collections.abc', 'typing', 'numbers', 'hashlib', 'random', 'sklearn',
-        'scipy', 'pytalos'
+        'scipy',
     }}
+    # 动态追加 Skill 声明的额外模块
+    _ALLOWED_MODULES.update({repr(set(extra_allowed_modules or []))})
+
     _original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
     def _safe_import(name, *args, **kwargs):
         top_level = name.split('.')[0]
@@ -110,6 +133,10 @@ def _build_sandbox_script(
         if _k not in _BLOCKED and not _k.startswith('_'):
             _safe_builtins[_k] = getattr(_builtins_mod, _k)
     _safe_builtins['__import__'] = _safe_import
+    # 提供受限的环境变量读取能力（仅限 Skill 注入的变量）
+    def _safe_getenv(key, default=None):
+        return _os.environ.get(key, default)
+    _safe_builtins['getenv'] = _safe_getenv
     _safe_builtins['print'] = print
     _safe_builtins['range'] = range
     _safe_builtins['len'] = len
@@ -184,8 +211,11 @@ def _build_sandbox_script(
     # ── 预加载数据分析库 ────────────────────────────────────
     import pandas as __pd
     import numpy as __np
+    import json as __json_mod
     # ── 加载 CSV 数据 ──────────────────────────────────────
 {loader_code}
+    # ── 恢复上一轮持久化的 DataFrame ──────────────────────
+{json_loader_code}
     # ── 捕获 stdout ────────────────────────────────────────
     _stdout_capture = StringIO()
     _original_stdout = sys.stdout
@@ -276,11 +306,38 @@ def _build_sandbox_script(
                 except Exception as _cap_err:
                     # 捕获失败不影响主结果
                     pass
+    # ── 持久化所有新 DataFrame 到 persist/ 目录（供下一轮复用） ──
+    _persisted_vars = {{}}
+    _MAX_PERSIST = 20  # 最多持久化的 DF 数量
+    _MAX_PERSIST_ROWS = 200000  # 持久化的最大行数
+    if _capture_dir:
+        _persist_dir = _os.path.join(_capture_dir, "persist")
+        _os.makedirs(_persist_dir, exist_ok=True)
+        _persist_count = 0
+        for _k, _v in _namespace.items():
+            if _persist_count >= _MAX_PERSIST:
+                break
+            if _k.startswith('_') or _k in _SKIP_KEYS or _k in _PRELOADED:
+                continue
+            if isinstance(_v, __pd.DataFrame):
+                try:
+                    _slice = _v.head(_MAX_PERSIST_ROWS)
+                    _cols = [str(c) for c in _slice.columns.tolist()]
+                    _clean = _slice.where(__pd.notnull(_slice), None)
+                    _rows = json.loads(_clean.to_json(orient='records', default_handler=str))
+                    _ppath = _os.path.join(_persist_dir, _k + ".json")
+                    with open(_ppath, 'w', encoding='utf-8') as _pf:
+                        json.dump({{"columns": _cols, "rows": _rows}}, _pf, ensure_ascii=False, default=str)
+                    _persisted_vars[_k] = _ppath
+                    _persist_count += 1
+                except Exception:
+                    pass
     result = {{
         "success": _error is None,
         "output": _output if _output else None,
         "error": _error,
         "dataframes": _captured_dfs,
+        "persisted_vars": _persisted_vars,
     }}
     print(json.dumps(result, ensure_ascii=False))
     """)
@@ -291,6 +348,8 @@ async def execute_code_in_sandbox(
     data_var_map: dict[str, str],
     timeout: int = SANDBOX_TIMEOUT,
     capture_dir: str | None = None,
+    injected_envs: dict[str, str] | None = None,
+    json_var_map: dict[str, str] | None = None,  # 上一轮持久化的中间变量
 ) -> dict[str, Any]:
     """
     在子进程中安全执行代码。
@@ -318,27 +377,49 @@ async def execute_code_in_sandbox(
             "dataframes": [],
         }
 
+    # ── 【新增】从 injected_envs 中分离 allowed_modules ──
+    # injected_envs 可能包含一个特殊 key "__allowed_modules__"
+    # 它是 JSON 字符串，如 '["pytalos"]'，需要提取出来给沙箱白名单
+    # 剩下的 clean_envs 才是真正要注入子进程的环境变量
+    extra_modules: list[str] = []
+    clean_envs: dict[str, str] | None = injected_envs
+    if injected_envs and "__allowed_modules__" in injected_envs:
+        import json as _json
+        try:
+            extra_modules = _json.loads(injected_envs["__allowed_modules__"])
+        except (ValueError, TypeError):
+            pass
+        # 去掉特殊 key，只保留真正的环境变量
+        clean_envs = {k: v for k, v in injected_envs.items() if k != "__allowed_modules__"}
 
-    # 写入临时脚本文件
-    script_content = _build_sandbox_script(code, data_var_map, capture_dir)
-
+    # ── 构建沙箱脚本（原有位置，增加 extra_modules 参数） ──
+    script_content = _build_sandbox_script(code, data_var_map, capture_dir, extra_modules, json_var_map)
     tmp_file = None
     start_time = time.monotonic()
     try:
-        # 创建临时文件（不自动删除，手动清理）
         tmp_file = tempfile.NamedTemporaryFile(
             mode="w", suffix=".py", delete=False, encoding="utf-8"
         )
         tmp_file.write(script_content)
         tmp_file.flush()
         tmp_file.close()
+        # ── 【新增】构建沙箱进程的环境变量（最小化 + 动态注入） ──
+        sandbox_env: dict[str, str] | None = None
+        if clean_envs:
+            sandbox_env = {}
+            # 保留必要的系统路径变量
+            for key in ("PATH", "PYTHONPATH", "SYSTEMROOT", "HOME", "LANG", "LC_ALL"):
+                if key in os.environ:
+                    sandbox_env[key] = os.environ[key]
+            # 这里！把 Skill 的环境变量（如 TALOS_USER, TALOS_TOKEN）注入
+            sandbox_env.update(clean_envs)
         # 在子进程中执行
         proc = await asyncio.create_subprocess_exec(
             PYTHON_EXECUTABLE, tmp_file.name,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            # 设置工作目录为DATA目录，确保相对路径能找到 data/uploads
-            cwd=DATA_DIR, # 其实UPLOADS_DIR更准确，以后再说
+            cwd=UPLOADS_DIR,  # 沙箱工作目录
+            env=sandbox_env,  # None 时继承父进程环境，有值时使用精简环境
         )
 
         try:

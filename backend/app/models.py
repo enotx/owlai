@@ -117,3 +117,22 @@ class AgentConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
     
     provider: Mapped["LLMProvider | None"] = relationship()
+
+class Skill(Base):
+    """
+    动态扩展技能模型
+    - prompt_markdown: 给 Agent 看的使用说明（Markdown 格式）
+    - env_vars_json: 运行时注入沙箱的环境变量 {"KEY": "VALUE"}
+    - allowed_modules_json: 该技能需要额外放行的 Python 模块 ["pytalos"]
+    """
+    __tablename__ = "skills"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prompt_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
+    env_vars_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    allowed_modules_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
