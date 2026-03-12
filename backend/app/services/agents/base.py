@@ -189,7 +189,88 @@ class BaseAgent(ABC):
         
         dataset_context = "\n".join(dataset_parts) if dataset_parts else "[No datasets uploaded yet.]"
         text_context = "\n\n".join(text_parts) if text_parts else "[No reference documents.]"
-        variable_reference = "\n".join(var_ref_parts) if var_ref_parts else "[No datasets available.]"
+        
+        # ── 扫描 persist/ 目录，将已持久化的中间变量摘要加入 variable_reference ──
+        from app.config import UPLOADS_DIR
+        import glob
+        persist_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "persist")
+        persisted_var_parts: list[str] = []
+        if os.path.isdir(persist_dir):
+            for fpath in sorted(glob.glob(os.path.join(persist_dir, "*.json"))):
+                vname = os.path.splitext(os.path.basename(fpath))[0]
+                # 跳过已被 Knowledge 数据集覆盖的同名变量
+                if vname in data_var_map:
+                    continue
+                # 读取 JSON 头部，生成摘要
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        blob = json.load(f)
+                    ptype = blob.get("__persist_type__")
+                    
+                    # 向后兼容：无 __persist_type__ 视为 DataFrame
+                    if ptype is None or ptype == "dataframe":
+                        cols = blob.get("columns", [])
+                        rows = blob.get("rows", [])
+                        col_preview = ", ".join(f"`{c}`" for c in cols[:8])
+                        if len(cols) > 8:
+                            col_preview += f", ... ({len(cols)} cols)"
+                        persisted_var_parts.append(
+                            f"- `{vname}` — DataFrame ({len(rows)} rows) [{col_preview}]"
+                        )
+                    elif ptype == "series":
+                        data = blob.get("data", [])
+                        name = blob.get("name", "")
+                        dtype = blob.get("dtype", "?")
+                        persisted_var_parts.append(
+                            f"- `{vname}` — Series(name={name!r}, dtype={dtype}, len={len(data)})"
+                        )
+                    elif ptype == "ndarray":
+                        shape = blob.get("shape", [])
+                        dtype = blob.get("dtype", "?")
+                        persisted_var_parts.append(
+                            f"- `{vname}` — np.ndarray(shape={shape}, dtype={dtype})"
+                        )
+                    elif ptype == "numpy_scalar":
+                        val = blob.get("value")
+                        dtype = blob.get("dtype", "?")
+                        persisted_var_parts.append(
+                            f"- `{vname}` — numpy scalar = {val!r} ({dtype})"
+                        )
+                    elif ptype == "value":
+                        val = blob.get("value")
+                        type_name = type(val).__name__
+                        # 为容器类型显示长度
+                        if isinstance(val, (list, dict)):
+                            val_preview = repr(val)
+                            if len(val_preview) > 80:
+                                val_preview = val_preview[:77] + "..."
+                            persisted_var_parts.append(
+                                f"- `{vname}` — {type_name}(len={len(val)}) = {val_preview}"
+                            )
+                        else:
+                            persisted_var_parts.append(
+                                f"- `{vname}` — {type_name} = {val!r}"
+                            )
+                    else:
+                        persisted_var_parts.append(
+                            f"- `{vname}` — (unknown type: {ptype})"
+                        )
+                except Exception:
+                    persisted_var_parts.append(f"- `{vname}` — (unable to read)")
+        
+        # 合并 variable_reference
+        if var_ref_parts or persisted_var_parts:
+            all_var_parts = []
+            if var_ref_parts:
+                all_var_parts.append("**Datasets (preloaded):**")
+                all_var_parts.extend(var_ref_parts)
+            if persisted_var_parts:
+                all_var_parts.append("")
+                all_var_parts.append("**Intermediate variables (from previous steps):**")
+                all_var_parts.extend(persisted_var_parts)
+            variable_reference = "\n".join(all_var_parts)
+        else:
+            variable_reference = "[No datasets or variables available.]"
         
         return dataset_context, text_context, variable_reference, data_var_map
     

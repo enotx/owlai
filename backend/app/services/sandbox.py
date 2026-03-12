@@ -58,16 +58,14 @@ def _build_sandbox_script(
             loader_lines.append(f'    {var_name} = __pd.read_csv("{escaped_path}")')
     
     loader_code = "\n".join(loader_lines)
-    # ── 从上一轮持久化的 JSON 恢复 DataFrame ──
+    # ── 从上一轮持久化的 JSON 恢复变量（支持多种类型） ──
     json_loader_lines = []
     json_var_names: set[str] = set()
     if json_var_map:
         for var_name, json_path in json_var_map.items():
             escaped = json_path.replace("\\", "\\\\")
             json_loader_lines.append(
-                f'    with open("{escaped}", "r", encoding="utf-8") as __jf:\n'
-                f'        __jdata = __json_mod.load(__jf)\n'
-                f'    {var_name} = __pd.DataFrame(__jdata["rows"], columns=__jdata["columns"])'
+                f'    {var_name} = __restore_var("{escaped}")'
             )
             json_var_names.add(var_name)
     json_loader_code = "\n".join(json_loader_lines)
@@ -212,6 +210,40 @@ def _build_sandbox_script(
     import pandas as __pd
     import numpy as __np
     import json as __json_mod
+    # ── 通用变量恢复函数 ────────────────────────────────────
+    def __restore_var(__fpath):
+        with open(__fpath, "r", encoding="utf-8") as __rf:
+            __blob = __json_mod.load(__rf)
+        __ptype = __blob.get("__persist_type__")
+        # 向后兼容：旧格式无 __persist_type__，视为 DataFrame
+        if __ptype is None or __ptype == "dataframe":
+            return __pd.DataFrame(__blob["rows"], columns=__blob["columns"])
+        if __ptype == "series":
+            __s = __pd.Series(__blob["data"], name=__blob.get("name"))
+            __dt = __blob.get("dtype")
+            if __dt:
+                try:
+                    __s = __s.astype(__dt)
+                except Exception:
+                    pass
+            return __s
+        if __ptype == "ndarray":
+            __arr = __np.array(__blob["data"])
+            __dt = __blob.get("dtype")
+            if __dt:
+                try:
+                    __arr = __arr.astype(__dt)
+                except Exception:
+                    pass
+            return __arr
+        if __ptype == "numpy_scalar":
+            __dt = __blob.get("dtype", "float64")
+            try:
+                return __np.dtype(__dt).type(__blob["value"])
+            except Exception:
+                return __blob["value"]
+        # __ptype == "value" 或未知类型
+        return __blob.get("value")
     # ── 加载 CSV 数据 ──────────────────────────────────────
 {loader_code}
     # ── 恢复上一轮持久化的 DataFrame ──────────────────────
@@ -253,7 +285,7 @@ def _build_sandbox_script(
     _capture_dir = "{capture_dir_escaped}"
     _PRELOADED = {preloaded_repr}
     _PRIORITY_PREFIXES = ['result', 'output', 'summary']
-    _MAX_CAPTURE = 5  # 最多捕获的DataFrame个数
+    _MAX_CAPTURE = 10  # 最多捕获的DataFrame个数
     _MAX_ROWS = 500
     _SKIP_KEYS = {{'__builtins__', 'pd', 'np', 'pandas', 'numpy'}}
     if _capture_dir:
@@ -306,10 +338,11 @@ def _build_sandbox_script(
                 except Exception as _cap_err:
                     # 捕获失败不影响主结果
                     pass
-    # ── 持久化所有新 DataFrame 到 persist/ 目录（供下一轮复用） ──
+    # ── 持久化所有新变量到 persist/ 目录（供下一轮复用） ──────
     _persisted_vars = {{}}
-    _MAX_PERSIST = 20  # 最多持久化的 DF 数量
-    _MAX_PERSIST_ROWS = 200000  # 持久化的最大行数
+    _MAX_PERSIST = 30
+    _MAX_PERSIST_ROWS = 200000
+    _MAX_VALUE_SIZE = 500000  # 序列化后 JSON 字符串最大字符数
     if _capture_dir:
         _persist_dir = _os.path.join(_capture_dir, "persist")
         _os.makedirs(_persist_dir, exist_ok=True)
@@ -319,17 +352,62 @@ def _build_sandbox_script(
                 break
             if _k.startswith('_') or _k in _SKIP_KEYS or _k in _PRELOADED:
                 continue
-            if isinstance(_v, __pd.DataFrame):
-                try:
+            _ppath = _os.path.join(_persist_dir, _k + ".json")
+            try:
+                _blob = None
+                # ── DataFrame ──
+                if isinstance(_v, __pd.DataFrame):
                     _slice = _v.head(_MAX_PERSIST_ROWS)
                     _cols = [str(c) for c in _slice.columns.tolist()]
                     _clean = _slice.where(__pd.notnull(_slice), None)
                     _rows = json.loads(_clean.to_json(orient='records', default_handler=str))
-                    _ppath = _os.path.join(_persist_dir, _k + ".json")
-                    with open(_ppath, 'w', encoding='utf-8') as _pf:
-                        json.dump({{"columns": _cols, "rows": _rows}}, _pf, ensure_ascii=False, default=str)
-                    _persisted_vars[_k] = _ppath
-                    _persist_count += 1
+                    _blob = {{"__persist_type__": "dataframe", "columns": _cols, "rows": _rows}}
+                # ── Series ──
+                elif isinstance(_v, __pd.Series):
+                    _slice = _v.head(_MAX_PERSIST_ROWS)
+                    _clean = _slice.where(__pd.notnull(_slice), None)
+                    _data = json.loads(_clean.to_json(default_handler=str))
+                    # to_json on Series gives '{"0":val,...}', 转为 list
+                    _data_list = list(_data.values()) if isinstance(_data, dict) else _data
+                    _blob = {{
+                        "__persist_type__": "series",
+                        "data": _data_list,
+                        "name": str(_v.name) if _v.name is not None else None,
+                        "dtype": str(_v.dtype),
+                    }}
+                # ── numpy ndarray ──
+                elif isinstance(_v, __np.ndarray):
+                    if _v.size > _MAX_PERSIST_ROWS:
+                        _v = _v.flat[:_MAX_PERSIST_ROWS]
+                        _v = __np.array(_v)
+                    _blob = {{
+                        "__persist_type__": "ndarray",
+                        "data": _v.tolist(),
+                        "dtype": str(_v.dtype),
+                        "shape": list(_v.shape),
+                    }}
+                # ── numpy scalar ──
+                elif isinstance(_v, __np.generic):
+                    _blob = {{
+                        "__persist_type__": "numpy_scalar",
+                        "value": _v.item(),
+                        "dtype": str(_v.dtype),
+                    }}
+                # ── Python 基础类型（int, float, str, bool, None, list, dict, tuple, set） ──
+                elif isinstance(_v, (int, float, str, bool, list, dict, tuple, set, type(None))):
+                    # tuple / set 转 list（JSON 不支持）
+                    _serializable = list(_v) if isinstance(_v, (tuple, set)) else _v
+                    _blob = {{"__persist_type__": "value", "value": _serializable}}
+                # ── 其他类型：跳过 ──
+                else:
+                    continue
+                if _blob is not None:
+                    _json_str = json.dumps(_blob, ensure_ascii=False, default=str)
+                    if len(_json_str) <= _MAX_VALUE_SIZE:
+                        with open(_ppath, 'w', encoding='utf-8') as _pf:
+                            _pf.write(_json_str)
+                        _persisted_vars[_k] = _ppath
+                        _persist_count += 1
                 except Exception:
                     pass
     result = {{
