@@ -323,3 +323,57 @@ class BaseAgent(ABC):
             merged_envs["__allowed_modules__"] = json.dumps(list(all_modules))
         skill_prompt = "\n---\n".join(prompt_parts)
         return skill_prompt, merged_envs
+
+
+    async def _execute_code_with_heartbeat(
+        self,
+        code: str,
+        data_var_map: dict[str, str],
+        capture_dir: str,
+        skill_envs: dict[str, str] | None = None,
+        persistent_vars: dict[str, str] | None = None,
+    ) -> AsyncGenerator[str | dict, None]:
+        """
+        执行代码并定期发送心跳，避免前端90s超时
+        
+        Yields:
+            - str: SSE心跳事件
+            - dict: 最终执行结果（最后一个yield）
+        """
+        import asyncio
+        from app.services.sandbox import execute_code_in_sandbox
+        
+        exec_task = asyncio.create_task(
+            execute_code_in_sandbox(
+                code=code,
+                data_var_map=data_var_map,
+                capture_dir=capture_dir,
+                injected_envs=skill_envs,
+                json_var_map=persistent_vars,
+            )
+        )
+        
+        while not exec_task.done():
+            try:
+                # 使用 shield 保护任务不被取消
+                result = await asyncio.wait_for(
+                    asyncio.shield(exec_task), 
+                    timeout=15.0
+                )
+                yield result
+                return
+            except asyncio.TimeoutError:
+                # 任务还在运行，发送心跳
+                yield self._sse({"type": "heartbeat", "content": "tool_running"})
+        
+        # 如果循环结束但任务已完成，获取结果
+        try:
+            result = await exec_task
+            yield result
+        except Exception as e:
+            yield {
+                "success": False,
+                "output": None,
+                "error": f"Execution failed: {str(e)}",
+                "execution_time": 0.0,
+            }

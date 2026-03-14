@@ -214,13 +214,29 @@ class AnalystAgent(BaseAgent):
                         os.makedirs(capture_dir, exist_ok=True)
                         
                         try:
-                            exec_result = await execute_code_in_sandbox(
+                            # 使用心跳包装器执行代码
+                            exec_result = None
+                            async for item in self._execute_code_with_heartbeat(
                                 code=code,
                                 data_var_map=data_var_map,
                                 capture_dir=capture_dir,
-                                injected_envs=skill_envs if skill_envs else None,
-                                json_var_map=persistent_vars if persistent_vars else None,
-                            )
+                                skill_envs=skill_envs if skill_envs else None,
+                                persistent_vars=persistent_vars if persistent_vars else None,
+                            ):
+                                if isinstance(item, str):
+                                    # 心跳事件，直接转发
+                                    yield item
+                                else:
+                                    # 执行结果
+                                    exec_result = item
+                            
+                            if exec_result is None:
+                                exec_result = {
+                                    "success": False,
+                                    "output": None,
+                                    "error": "Execution failed: no result returned",
+                                    "execution_time": 0.0,
+                                }
                         except Exception as e:
                             exec_result = {
                                 "success": False,
@@ -241,12 +257,10 @@ class AnalystAgent(BaseAgent):
                                     os.rename(old_path, new_path)
                                 except OSError:
                                     pass
-
-                        # 收集本轮持久化的变量，供下轮沙箱使用
+                        # 收集本轮持久化的变量
                         new_persisted = exec_result.get("persisted_vars", {})
                         if new_persisted:
                             persistent_vars.update(new_persisted)
-
                         yield self._sse({
                             "type": "tool_result",
                             "success": exec_result["success"],

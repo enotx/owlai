@@ -15,6 +15,7 @@ import sys
 import tempfile
 import textwrap
 import time
+import uuid
 from typing import Any
 from app.services.code_security import check_code_security
 from app.config import PYTHON_EXECUTABLE, UPLOADS_DIR
@@ -22,6 +23,9 @@ from app.config import PYTHON_EXECUTABLE, UPLOADS_DIR
 
 # 沙箱参数
 SANDBOX_TIMEOUT = 60  # 秒
+SANDBOX_TOTAL_TIMEOUT = 7200  # 2小时总超时（硬上限）
+SANDBOX_IDLE_TIMEOUT = 90     # 90秒无活动视为挂死
+
 MAX_OUTPUT_LENGTH = 50_000  # 最大输出字符数
 
 def _build_sandbox_script(
@@ -30,6 +34,7 @@ def _build_sandbox_script(
     capture_dir: str | None = None,
     extra_allowed_modules: list[str] | None = None,
     json_var_map: dict[str, str] | None = None,  # 上一轮持久化的 DataFrame {var_name: json_path}
+    heartbeat_file: str | None = None,  # 新增：心跳文件路径
 ) -> str:
     """
     构建在子进程中执行的 Python 脚本。
@@ -45,17 +50,17 @@ def _build_sandbox_script(
         ext = fpath.lower().split('.')[-1]
         
         if ext == 'csv':
-            loader_lines.append(f'    {var_name} = __pd.read_csv("{escaped_path}")')
+            loader_lines.append(f'{var_name} = __pd.read_csv("{escaped_path}")')
         
         elif ext in ('xlsx', 'xls'):
             # 加载默认 sheet（第一个）到主变量
-            loader_lines.append(f'    {var_name} = __pd.read_excel("{escaped_path}")')
+            loader_lines.append(f'{var_name} = __pd.read_excel("{escaped_path}")')
             # 加载所有 sheets 到字典变量
-            loader_lines.append(f'    {var_name}_sheets = __pd.read_excel("{escaped_path}", sheet_name=None)')
+            loader_lines.append(f'{var_name}_sheets = __pd.read_excel("{escaped_path}", sheet_name=None)')
         
         else:
             # 未知格式，尝试 CSV
-            loader_lines.append(f'    {var_name} = __pd.read_csv("{escaped_path}")')
+            loader_lines.append(f'{var_name} = __pd.read_csv("{escaped_path}")')
     
     loader_code = "\n".join(loader_lines)
     # ── 从上一轮持久化的 JSON 恢复变量（支持多种类型） ──
@@ -65,7 +70,7 @@ def _build_sandbox_script(
         for var_name, json_path in json_var_map.items():
             escaped = json_path.replace("\\", "\\\\")
             json_loader_lines.append(
-                f'    {var_name} = __restore_var("{escaped}")'
+                f'{var_name} = __restore_var("{escaped}")'
             )
             json_var_names.add(var_name)
     json_loader_code = "\n".join(json_loader_lines)
@@ -73,16 +78,16 @@ def _build_sandbox_script(
     # namespace 注入语句（包括 _sheets 变量）
     namespace_inject_lines = []
     for var in data_var_map.keys():
-        namespace_inject_lines.append(f"    _namespace['{var}'] = {var}")
+        namespace_inject_lines.append(f"_namespace['{var}'] = {var}")
         # 如果是 Excel，也注入 _sheets 变量
         fpath = data_var_map[var]
         ext = fpath.lower().split('.')[-1]
         if ext in ('xlsx', 'xls'):
-            namespace_inject_lines.append(f"    _namespace['{var}_sheets'] = {var}_sheets")
+            namespace_inject_lines.append(f"_namespace['{var}_sheets'] = {var}_sheets")
     
     # 追加 JSON 恢复变量的注入
     for var_name in json_var_names:
-        namespace_inject_lines.append(f"    _namespace['{var_name}'] = {var_name}")
+        namespace_inject_lines.append(f"_namespace['{var_name}'] = {var_name}")
     namespace_inject = "\n".join(namespace_inject_lines)
     
     # 预加载变量名集合（包括 _sheets 和 JSON 恢复的变量）
@@ -98,339 +103,378 @@ def _build_sandbox_script(
     preloaded_repr = repr(preloaded_var_names)    # 已有 CSV 变量名集合（排除这些，只捕获用户代码新生成的 DF）
     # capture_dir 路径（转义）
     capture_dir_escaped = (capture_dir or "").replace("\\", "\\\\")
-    script = textwrap.dedent(f"""\
-    import sys
-    import json
-    import os as _os
-    from io import StringIO
-    # ── 白名单 import 机制 ──────────────────────────────────
-    _ALLOWED_MODULES = {{
-        'pandas', 'numpy', 'math', 'statistics', 'collections',
-        'itertools', 'functools', 'operator', 'string', 're',
-        'datetime', 'json', 'decimal', 'fractions', 'textwrap',
-        'collections.abc', 'typing', 'numbers', 'hashlib', 'random', 'sklearn',
-        'scipy',
-    }}
-    # 动态追加 Skill 声明的额外模块
-    _ALLOWED_MODULES.update({repr(set(extra_allowed_modules or []))})
 
-    _original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
-    def _safe_import(name, *args, **kwargs):
-        top_level = name.split('.')[0]
-        if top_level not in _ALLOWED_MODULES:
-            raise ImportError(f"Import of '{{name}}' is not allowed in sandbox")
-        return _original_import(name, *args, **kwargs)
-    # ── 安全内建 ────────────────────────────────────────────
-    import builtins as _builtins_mod
-    _safe_builtins = {{}}
-    _BLOCKED = {{'exec', 'eval', 'compile', '__import__', 'open',
-                 'input', 'breakpoint', 'exit', 'quit', 'globals',
-                 'locals', 'vars', 'setattr', 'delattr',
-                 'memoryview', 'classmethod', 'staticmethod'}}
-    for _k in dir(_builtins_mod):
-        if _k not in _BLOCKED and not _k.startswith('_'):
-            _safe_builtins[_k] = getattr(_builtins_mod, _k)
-    _safe_builtins['__import__'] = _safe_import
-    # 提供受限的环境变量读取能力（仅限 Skill 注入的变量）
-    def _safe_getenv(key, default=None):
-        return _os.environ.get(key, default)
-    _safe_builtins['getenv'] = _safe_getenv
-    _safe_builtins['print'] = print
-    _safe_builtins['range'] = range
-    _safe_builtins['len'] = len
-    _safe_builtins['enumerate'] = enumerate
-    _safe_builtins['zip'] = zip
-    _safe_builtins['map'] = map
-    _safe_builtins['filter'] = filter
-    _safe_builtins['sorted'] = sorted
-    _safe_builtins['reversed'] = reversed
-    _safe_builtins['list'] = list
-    _safe_builtins['dict'] = dict
-    _safe_builtins['set'] = set
-    _safe_builtins['tuple'] = tuple
-    _safe_builtins['str'] = str
-    _safe_builtins['int'] = int
-    _safe_builtins['float'] = float
-    _safe_builtins['bool'] = bool
-    _safe_builtins['type'] = type
-    _safe_builtins['isinstance'] = isinstance
-    _safe_builtins['issubclass'] = issubclass
-    _safe_builtins['hasattr'] = hasattr
-    _safe_builtins['repr'] = repr
-    _safe_builtins['abs'] = abs
-    _safe_builtins['round'] = round
-    _safe_builtins['min'] = min
-    _safe_builtins['max'] = max
-    _safe_builtins['sum'] = sum
-    _safe_builtins['any'] = any
-    _safe_builtins['all'] = all
-    _safe_builtins['slice'] = slice
-    _safe_builtins['hash'] = hash
-    _safe_builtins['id'] = id
-    _safe_builtins['None'] = None
-    _safe_builtins['True'] = True
-    _safe_builtins['False'] = False
-    _safe_builtins['Exception'] = Exception
-    _safe_builtins['ValueError'] = ValueError
-    _safe_builtins['TypeError'] = TypeError
-    _safe_builtins['KeyError'] = KeyError
-    _safe_builtins['IndexError'] = IndexError
-    _safe_builtins['AttributeError'] = AttributeError
-    _safe_builtins['RuntimeError'] = RuntimeError
-    _safe_builtins['StopIteration'] = StopIteration
-    _safe_builtins['ZeroDivisionError'] = ZeroDivisionError
-    _safe_builtins['NotImplementedError'] = NotImplementedError
-    _safe_builtins['dir'] = dir
-    _safe_builtins['getattr'] = getattr
-    _safe_builtins['super'] = super
-    _safe_builtins['property'] = property
-    _safe_builtins['frozenset'] = frozenset
-    _safe_builtins['bytes'] = bytes
-    _safe_builtins['bytearray'] = bytearray
-    _safe_builtins['complex'] = complex
-    _safe_builtins['format'] = format
-    _safe_builtins['iter'] = iter
-    _safe_builtins['next'] = next
-    _safe_builtins['callable'] = callable
-    _safe_builtins['chr'] = chr
-    _safe_builtins['ord'] = ord
-    _safe_builtins['hex'] = hex
-    _safe_builtins['oct'] = oct
-    _safe_builtins['bin'] = bin
-    _safe_builtins['pow'] = pow
-    _safe_builtins['divmod'] = divmod
-    _safe_builtins['object'] = object
-    _safe_builtins['ArithmeticError'] = ArithmeticError
-    _safe_builtins['LookupError'] = LookupError
-    _safe_builtins['OverflowError'] = OverflowError
-    _safe_builtins['UnicodeError'] = UnicodeError
-    _safe_builtins['UnicodeDecodeError'] = UnicodeDecodeError
-    _safe_builtins['UnicodeEncodeError'] = UnicodeEncodeError
-    # ── 预加载数据分析库 ────────────────────────────────────
-    import pandas as __pd
-    import numpy as __np
-    import json as __json_mod
-    # ── 通用变量恢复函数 ────────────────────────────────────
-    def __restore_var(__fpath):
-        with open(__fpath, "r", encoding="utf-8") as __rf:
-            __blob = __json_mod.load(__rf)
-        __ptype = __blob.get("__persist_type__")
-        # 向后兼容：旧格式无 __persist_type__，视为 DataFrame
-        if __ptype is None or __ptype == "dataframe":
-            return __pd.DataFrame(__blob["rows"], columns=__blob["columns"])
-        if __ptype == "series":
-            __s = __pd.Series(__blob["data"], name=__blob.get("name"))
-            __dt = __blob.get("dtype")
-            if __dt:
-                try:
-                    __s = __s.astype(__dt)
-                except Exception:
-                    pass
-            return __s
-        if __ptype == "ndarray":
-            __arr = __np.array(__blob["data"])
-            __dt = __blob.get("dtype")
-            if __dt:
-                try:
-                    __arr = __arr.astype(__dt)
-                except Exception:
-                    pass
-            return __arr
-        if __ptype == "numpy_scalar":
-            __dt = __blob.get("dtype", "float64")
+    # 心跳线程代码（注入到用户代码执行前）
+    heartbeat_code = ""
+    if heartbeat_file:
+        escaped_hb = heartbeat_file.replace("\\", "\\\\")
+        heartbeat_code = f"""\
+# ── 心跳线程（每10秒写入心跳文件） ──────────────────
+import threading as _threading
+import time as _time_mod
+_heartbeat_file = "{escaped_hb}"
+_heartbeat_stop = _threading.Event()
+def _heartbeat_worker():
+    while not _heartbeat_stop.is_set():
+        try:
+            with open(_heartbeat_file, 'w') as _hf:
+                _hf.write(str(_time_mod.time()))
+            _hf_flush = True
+        except Exception:
+            pass
+        _heartbeat_stop.wait(10)  # 每10秒写一次
+_heartbeat_thread = _threading.Thread(target=_heartbeat_worker, daemon=True)
+_heartbeat_thread.start()
+        """
+    heartbeat_code = heartbeat_code
+
+    script = f"""\
+import sys
+import json
+import os as _os
+from io import StringIO
+# ── 白名单 import 机制 ──────────────────────────────────
+_ALLOWED_MODULES = {{
+    'pandas', 'numpy', 'math', 'statistics', 'collections',
+    'itertools', 'functools', 'operator', 'string', 're',
+    'datetime', 'json', 'decimal', 'fractions', 'textwrap',
+    'collections.abc', 'typing', 'numbers', 'hashlib', 'random',
+    'sklearn', 'scipy', 'time'
+}}
+# 动态追加 Skill 声明的额外模块
+_ALLOWED_MODULES.update({repr(set(extra_allowed_modules or []))})
+
+_original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
+def _safe_import(name, *args, **kwargs):
+    top_level = name.split('.')[0]
+    if top_level not in _ALLOWED_MODULES:
+        raise ImportError(f"Import of '{{name}}' is not allowed in sandbox")
+    return _original_import(name, *args, **kwargs)
+# ── 安全内建 ────────────────────────────────────────────
+import builtins as _builtins_mod
+_safe_builtins = {{}}
+_BLOCKED = {{'exec', 'eval', 'compile', '__import__', 'open',
+                'input', 'breakpoint', 'exit', 'quit', 'globals',
+                'locals', 'vars', 'setattr', 'delattr',
+                'memoryview', 'classmethod', 'staticmethod'}}
+for _k in dir(_builtins_mod):
+    if _k not in _BLOCKED and not _k.startswith('_'):
+        _safe_builtins[_k] = getattr(_builtins_mod, _k)
+_safe_builtins['__import__'] = _safe_import
+# 提供受限的环境变量读取能力（仅限 Skill 注入的变量）
+def _safe_getenv(key, default=None):
+    return _os.environ.get(key, default)
+_safe_builtins['getenv'] = _safe_getenv
+_safe_builtins['print'] = print
+_safe_builtins['range'] = range
+_safe_builtins['len'] = len
+_safe_builtins['enumerate'] = enumerate
+_safe_builtins['zip'] = zip
+_safe_builtins['map'] = map
+_safe_builtins['filter'] = filter
+_safe_builtins['sorted'] = sorted
+_safe_builtins['reversed'] = reversed
+_safe_builtins['list'] = list
+_safe_builtins['dict'] = dict
+_safe_builtins['set'] = set
+_safe_builtins['tuple'] = tuple
+_safe_builtins['str'] = str
+_safe_builtins['int'] = int
+_safe_builtins['float'] = float
+_safe_builtins['bool'] = bool
+_safe_builtins['type'] = type
+_safe_builtins['isinstance'] = isinstance
+_safe_builtins['issubclass'] = issubclass
+_safe_builtins['hasattr'] = hasattr
+_safe_builtins['repr'] = repr
+_safe_builtins['abs'] = abs
+_safe_builtins['round'] = round
+_safe_builtins['min'] = min
+_safe_builtins['max'] = max
+_safe_builtins['sum'] = sum
+_safe_builtins['any'] = any
+_safe_builtins['all'] = all
+_safe_builtins['slice'] = slice
+_safe_builtins['hash'] = hash
+_safe_builtins['id'] = id
+_safe_builtins['None'] = None
+_safe_builtins['True'] = True
+_safe_builtins['False'] = False
+_safe_builtins['Exception'] = Exception
+_safe_builtins['ValueError'] = ValueError
+_safe_builtins['TypeError'] = TypeError
+_safe_builtins['KeyError'] = KeyError
+_safe_builtins['IndexError'] = IndexError
+_safe_builtins['AttributeError'] = AttributeError
+_safe_builtins['RuntimeError'] = RuntimeError
+_safe_builtins['StopIteration'] = StopIteration
+_safe_builtins['ZeroDivisionError'] = ZeroDivisionError
+_safe_builtins['NotImplementedError'] = NotImplementedError
+_safe_builtins['dir'] = dir
+_safe_builtins['getattr'] = getattr
+_safe_builtins['super'] = super
+_safe_builtins['property'] = property
+_safe_builtins['frozenset'] = frozenset
+_safe_builtins['bytes'] = bytes
+_safe_builtins['bytearray'] = bytearray
+_safe_builtins['complex'] = complex
+_safe_builtins['format'] = format
+_safe_builtins['iter'] = iter
+_safe_builtins['next'] = next
+_safe_builtins['callable'] = callable
+_safe_builtins['chr'] = chr
+_safe_builtins['ord'] = ord
+_safe_builtins['hex'] = hex
+_safe_builtins['oct'] = oct
+_safe_builtins['bin'] = bin
+_safe_builtins['pow'] = pow
+_safe_builtins['divmod'] = divmod
+_safe_builtins['object'] = object
+_safe_builtins['ArithmeticError'] = ArithmeticError
+_safe_builtins['LookupError'] = LookupError
+_safe_builtins['OverflowError'] = OverflowError
+_safe_builtins['UnicodeError'] = UnicodeError
+_safe_builtins['UnicodeDecodeError'] = UnicodeDecodeError
+_safe_builtins['UnicodeEncodeError'] = UnicodeEncodeError
+# ── 预加载数据分析库 ────────────────────────────────────
+import pandas as __pd
+import numpy as __np
+import json as __json_mod
+# ── 通用变量恢复函数 ────────────────────────────────────
+def __restore_var(__fpath):
+    with open(__fpath, "r", encoding="utf-8") as __rf:
+        __blob = __json_mod.load(__rf)
+    __ptype = __blob.get("__persist_type__")
+    # 向后兼容：旧格式无 __persist_type__，视为 DataFrame
+    if __ptype is None or __ptype == "dataframe":
+        return __pd.DataFrame(__blob["rows"], columns=__blob["columns"])
+    if __ptype == "series":
+        __s = __pd.Series(__blob["data"], name=__blob.get("name"))
+        __dt = __blob.get("dtype")
+        if __dt:
             try:
-                return __np.dtype(__dt).type(__blob["value"])
-            except Exception:
-                return __blob["value"]
-        # __ptype == "value" 或未知类型
-        return __blob.get("value")
-    # ── 加载 CSV 数据 ──────────────────────────────────────
-{loader_code}
-    # ── 恢复上一轮持久化的 DataFrame ──────────────────────
-{json_loader_code}
-    # ── 捕获 stdout ────────────────────────────────────────
-    _stdout_capture = StringIO()
-    _original_stdout = sys.stdout
-    sys.stdout = _stdout_capture
-    # ── 构造受限命名空间 ───────────────────────────────────
-    _namespace = {{
-        '__builtins__': _safe_builtins,
-        'pd': __pd,
-        'np': __np,
-        'pandas': __pd,
-        'numpy': __np,
-    }}
-    # 注入 DataFrame 变量
-{namespace_inject}
-    # ── 执行用户代码 ───────────────────────────────────────
-    _error = None
-    try:
-        exec(
-            {repr(code)},
-            _namespace,
-            _namespace,
-        )
-    except Exception as _e:
-        import traceback as _tb
-        _error = _tb.format_exc()
-    # ── 输出结果 ───────────────────────────────────────────
-    sys.stdout = _original_stdout
-    _output = _stdout_capture.getvalue()
-    # 截断过长输出
-    _MAX = {MAX_OUTPUT_LENGTH}
-    if len(_output) > _MAX:
-        _output = _output[:_MAX] + "\\n\\n[Output truncated at {{_MAX}} chars]"
-    # ── 捕获命名空间中的 DataFrame ─────────────────────────
-    _captured_dfs = []
-    _capture_dir = "{capture_dir_escaped}"
-    _PRELOADED = {preloaded_repr}
-    _PRIORITY_PREFIXES = ['result', 'output', 'summary']
-    _MAX_CAPTURE = 10  # 最多捕获的DataFrame个数
-    _MAX_ROWS = 500
-    _SKIP_KEYS = {{'__builtins__', 'pd', 'np', 'pandas', 'numpy'}}
-    if _capture_dir:
-        # 收集所有新生成的 DataFrame（排除预加载的 CSV 变量）
-        _all_dfs = {{}}
-        for _k, _v in _namespace.items():
-            if _k.startswith('_') or _k in _SKIP_KEYS or _k in _PRELOADED:
-                continue
-            if isinstance(_v, __pd.DataFrame):
-                _all_dfs[_k] = _v
-        # 排序：前缀模糊匹配优先，精确命中最优先
-        _ordered = []
-        _priority_set = set()
-        # 第一轮：精确匹配（result / output / summary）
-        for _prefix in _PRIORITY_PREFIXES:
-            if _prefix in _all_dfs and _prefix not in _priority_set:
-                _ordered.append(_prefix)
-                _priority_set.add(_prefix)
-        # 第二轮：前缀匹配（result_xxx / output_xxx / summary_xxx）
-        for _prefix in _PRIORITY_PREFIXES:
-            for _k in sorted(_all_dfs.keys()):
-                if _k not in _priority_set and (_k.startswith(_prefix + '_') or _k.startswith(_prefix + '-')):
-                    _ordered.append(_k)
-                    _priority_set.add(_k)
-        # 第三轮：其余 DataFrame 按原始顺序
-        for _k in _all_dfs:
-            if _k not in _priority_set:
-                _ordered.append(_k)
-        _ordered = _ordered[:_MAX_CAPTURE]
-        if _ordered:
-            _os.makedirs(_capture_dir, exist_ok=True)
-            for _dfname in _ordered:
-                try:
-                    _df = _all_dfs[_dfname]
-                    _preview = _df.head(_MAX_ROWS)
-                    _cols = [str(c) for c in _preview.columns.tolist()]
-                    # 处理 NaN/Infinity → None，日期等 → str
-                    _clean = _preview.where(__pd.notnull(_preview), None)
-                    _rows = json.loads(_clean.to_json(orient='records', default_handler=str))
-                    _meta = {{
-                        "name": _dfname,
-                        "row_count": len(_df),
-                        "preview_count": len(_preview),
-                        "columns": _cols,
-                    }}
-                    _fpath = _os.path.join(_capture_dir, _dfname + ".json")
-                    with open(_fpath, 'w', encoding='utf-8') as _f:
-                        json.dump({{"columns": _cols, "rows": _rows}}, _f, ensure_ascii=False, default=str)
-                    _captured_dfs.append(_meta)
-                except Exception as _cap_err:
-                    # 捕获失败不影响主结果
-                    pass
-    # ── 持久化所有新变量到 persist/ 目录（供下一轮复用） ──────
-    _persisted_vars = {{}}
-    _MAX_PERSIST = 30
-    _MAX_PERSIST_ROWS = 200000
-    _MAX_VALUE_SIZE = 500000  # 序列化后 JSON 字符串最大字符数
-    if _capture_dir:
-        _persist_dir = _os.path.join(_capture_dir, "persist")
-        _os.makedirs(_persist_dir, exist_ok=True)
-        _persist_count = 0
-        for _k, _v in _namespace.items():
-            if _persist_count >= _MAX_PERSIST:
-                break
-            if _k.startswith('_') or _k in _SKIP_KEYS or _k in _PRELOADED:
-                continue
-            _ppath = _os.path.join(_persist_dir, _k + ".json")
-            try:
-                _blob = None
-                # ── DataFrame ──
-                if isinstance(_v, __pd.DataFrame):
-                    _slice = _v.head(_MAX_PERSIST_ROWS)
-                    _cols = [str(c) for c in _slice.columns.tolist()]
-                    _clean = _slice.where(__pd.notnull(_slice), None)
-                    _rows = json.loads(_clean.to_json(orient='records', default_handler=str))
-                    _blob = {{"__persist_type__": "dataframe", "columns": _cols, "rows": _rows}}
-                # ── Series ──
-                elif isinstance(_v, __pd.Series):
-                    _slice = _v.head(_MAX_PERSIST_ROWS)
-                    _clean = _slice.where(__pd.notnull(_slice), None)
-                    _data = json.loads(_clean.to_json(default_handler=str))
-                    # to_json on Series returns index-keyed dict, convert to list
-                    _data_list = list(_data.values()) if isinstance(_data, dict) else _data
-                    _blob = {{
-                        "__persist_type__": "series",
-                        "data": _data_list,
-                        "name": str(_v.name) if _v.name is not None else None,
-                        "dtype": str(_v.dtype),
-                    }}
-                # ── numpy ndarray ──
-                elif isinstance(_v, __np.ndarray):
-                    if _v.size > _MAX_PERSIST_ROWS:
-                        _v = _v.flat[:_MAX_PERSIST_ROWS]
-                        _v = __np.array(_v)
-                    _blob = {{
-                        "__persist_type__": "ndarray",
-                        "data": _v.tolist(),
-                        "dtype": str(_v.dtype),
-                        "shape": list(_v.shape),
-                    }}
-                # ── numpy scalar ──
-                elif isinstance(_v, __np.generic):
-                    _blob = {{
-                        "__persist_type__": "numpy_scalar",
-                        "value": _v.item(),
-                        "dtype": str(_v.dtype),
-                    }}
-                # ── Python 基础类型（int, float, str, bool, None, list, dict, tuple, set） ──
-                elif isinstance(_v, (int, float, str, bool, list, dict, tuple, set, type(None))):
-                    # tuple / set 转 list（JSON 不支持）
-                    _serializable = list(_v) if isinstance(_v, (tuple, set)) else _v
-                    _blob = {{"__persist_type__": "value", "value": _serializable}}
-                # ── 其他类型：跳过 ──
-                else:
-                    continue
-                if _blob is not None:
-                    _json_str = json.dumps(_blob, ensure_ascii=False, default=str)
-                    if len(_json_str) <= _MAX_VALUE_SIZE:
-                        with open(_ppath, 'w', encoding='utf-8') as _pf:
-                            _pf.write(_json_str)
-                        _persisted_vars[_k] = _ppath
-                        _persist_count += 1
+                __s = __s.astype(__dt)
             except Exception:
                 pass
-    result = {{
-        "success": _error is None,
-        "output": _output if _output else None,
-        "error": _error,
-        "dataframes": _captured_dfs,
-        "persisted_vars": _persisted_vars,
-    }}
-    print(json.dumps(result, ensure_ascii=False))
-    """)
+        return __s
+    if __ptype == "ndarray":
+        __arr = __np.array(__blob["data"])
+        __dt = __blob.get("dtype")
+        if __dt:
+            try:
+                __arr = __arr.astype(__dt)
+            except Exception:
+                pass
+        return __arr
+    if __ptype == "numpy_scalar":
+        __dt = __blob.get("dtype", "float64")
+        try:
+            return __np.dtype(__dt).type(__blob["value"])
+        except Exception:
+            return __blob["value"]
+    # __ptype == "value" 或未知类型
+    return __blob.get("value")
+# ── 加载 CSV 数据 ──────────────────────────────────────
+{loader_code}
+# ── 恢复上一轮持久化的 DataFrame ──────────────────────
+{json_loader_code}
+# ── 启动心跳线程 ──────────────────────────────────────
+{heartbeat_code}
+# ── 捕获 stdout ────────────────────────────────────────
+_stdout_capture = StringIO()
+_original_stdout = sys.stdout
+sys.stdout = _stdout_capture
+# ── 构造受限命名空间 ───────────────────────────────────
+_namespace = {{
+    '__builtins__': _safe_builtins,
+    'pd': __pd,
+    'np': __np,
+    'pandas': __pd,
+    'numpy': __np,
+}}
+# 注入 DataFrame 变量
+{namespace_inject}
+# ── 执行用户代码 ───────────────────────────────────────
+_error = None
+try:
+    exec(
+        {repr(code)},
+        _namespace,
+        _namespace,
+    )
+except Exception as _e:
+    import traceback as _tb
+    _error = _tb.format_exc()
+finally:
+    # 停止心跳线程（如果存在）
+    try:
+        _heartbeat_stop.set()
+    except NameError:
+        pass
+
+# ── 输出结果 ───────────────────────────────────────────
+sys.stdout = _original_stdout
+_output = _stdout_capture.getvalue()
+# 截断过长输出
+_MAX = {MAX_OUTPUT_LENGTH}
+if len(_output) > _MAX:
+    _output = _output[:_MAX] + "\\n\\n[Output truncated at {{_MAX}} chars]"
+# ── 捕获命名空间中的 DataFrame ─────────────────────────
+_captured_dfs = []
+_capture_dir = "{capture_dir_escaped}"
+_PRELOADED = {preloaded_repr}
+_PRIORITY_PREFIXES = ['result', 'output', 'summary']
+_MAX_CAPTURE = 10  # 最多捕获的DataFrame个数
+_MAX_ROWS = 500
+_SKIP_KEYS = {{'__builtins__', 'pd', 'np', 'pandas', 'numpy'}}
+if _capture_dir:
+    # 收集所有新生成的 DataFrame（排除预加载的 CSV 变量）
+    _all_dfs = {{}}
+    for _k, _v in _namespace.items():
+        if _k.startswith('_') or _k in _SKIP_KEYS or _k in _PRELOADED:
+            continue
+        if isinstance(_v, __pd.DataFrame):
+            _all_dfs[_k] = _v
+    # 排序：前缀模糊匹配优先，精确命中最优先
+    _ordered = []
+    _priority_set = set()
+    # 第一轮：精确匹配（result / output / summary）
+    for _prefix in _PRIORITY_PREFIXES:
+        if _prefix in _all_dfs and _prefix not in _priority_set:
+            _ordered.append(_prefix)
+            _priority_set.add(_prefix)
+    # 第二轮：前缀匹配（result_xxx / output_xxx / summary_xxx）
+    for _prefix in _PRIORITY_PREFIXES:
+        for _k in sorted(_all_dfs.keys()):
+            if _k not in _priority_set and (_k.startswith(_prefix + '_') or _k.startswith(_prefix + '-')):
+                _ordered.append(_k)
+                _priority_set.add(_k)
+    # 第三轮：其余 DataFrame 按原始顺序
+    for _k in _all_dfs:
+        if _k not in _priority_set:
+            _ordered.append(_k)
+    _ordered = _ordered[:_MAX_CAPTURE]
+    if _ordered:
+        _os.makedirs(_capture_dir, exist_ok=True)
+        for _dfname in _ordered:
+            try:
+                _df = _all_dfs[_dfname]
+                _preview = _df.head(_MAX_ROWS)
+                _cols = [str(c) for c in _preview.columns.tolist()]
+                # 处理 NaN/Infinity → None，日期等 → str
+                _clean = _preview.where(__pd.notnull(_preview), None)
+                _rows = json.loads(_clean.to_json(orient='records', default_handler=str))
+                _meta = {{
+                    "name": _dfname,
+                    "row_count": len(_df),
+                    "preview_count": len(_preview),
+                    "columns": _cols,
+                }}
+                _fpath = _os.path.join(_capture_dir, _dfname + ".json")
+                with open(_fpath, 'w', encoding='utf-8') as _f:
+                    json.dump({{"columns": _cols, "rows": _rows}}, _f, ensure_ascii=False, default=str)
+                _captured_dfs.append(_meta)
+            except Exception as _cap_err:
+                # 捕获失败不影响主结果
+                pass
+# ── 持久化所有新变量到 persist/ 目录（供下一轮复用） ──────
+_persisted_vars = {{}}
+_MAX_PERSIST = 30
+_MAX_PERSIST_ROWS = 200000
+_MAX_VALUE_SIZE = 500000  # 序列化后 JSON 字符串最大字符数
+if _capture_dir:
+    _persist_dir = _os.path.join(_capture_dir, "persist")
+    _os.makedirs(_persist_dir, exist_ok=True)
+    _persist_count = 0
+    for _k, _v in _namespace.items():
+        if _persist_count >= _MAX_PERSIST:
+            break
+        if _k.startswith('_') or _k in _SKIP_KEYS or _k in _PRELOADED:
+            continue
+        _ppath = _os.path.join(_persist_dir, _k + ".json")
+        try:
+            _blob = None
+            # ── DataFrame ──
+            if isinstance(_v, __pd.DataFrame):
+                _slice = _v.head(_MAX_PERSIST_ROWS)
+                _cols = [str(c) for c in _slice.columns.tolist()]
+                _clean = _slice.where(__pd.notnull(_slice), None)
+                _rows = json.loads(_clean.to_json(orient='records', default_handler=str))
+                _blob = {{"__persist_type__": "dataframe", "columns": _cols, "rows": _rows}}
+            # ── Series ──
+            elif isinstance(_v, __pd.Series):
+                _slice = _v.head(_MAX_PERSIST_ROWS)
+                _clean = _slice.where(__pd.notnull(_slice), None)
+                _data = json.loads(_clean.to_json(default_handler=str))
+                # to_json on Series returns index-keyed dict, convert to list
+                _data_list = list(_data.values()) if isinstance(_data, dict) else _data
+                _blob = {{
+                    "__persist_type__": "series",
+                    "data": _data_list,
+                    "name": str(_v.name) if _v.name is not None else None,
+                    "dtype": str(_v.dtype),
+                }}
+            # ── numpy ndarray ──
+            elif isinstance(_v, __np.ndarray):
+                if _v.size > _MAX_PERSIST_ROWS:
+                    _v = _v.flat[:_MAX_PERSIST_ROWS]
+                    _v = __np.array(_v)
+                _blob = {{
+                    "__persist_type__": "ndarray",
+                    "data": _v.tolist(),
+                    "dtype": str(_v.dtype),
+                    "shape": list(_v.shape),
+                }}
+            # ── numpy scalar ──
+            elif isinstance(_v, __np.generic):
+                _blob = {{
+                    "__persist_type__": "numpy_scalar",
+                    "value": _v.item(),
+                    "dtype": str(_v.dtype),
+                }}
+            # ── Python 基础类型（int, float, str, bool, None, list, dict, tuple, set） ──
+            elif isinstance(_v, (int, float, str, bool, list, dict, tuple, set, type(None))):
+                # tuple / set 转 list（JSON 不支持）
+                _serializable = list(_v) if isinstance(_v, (tuple, set)) else _v
+                _blob = {{"__persist_type__": "value", "value": _serializable}}
+            # ── 其他类型：跳过 ──
+            else:
+                continue
+            if _blob is not None:
+                _json_str = json.dumps(_blob, ensure_ascii=False, default=str)
+                if len(_json_str) <= _MAX_VALUE_SIZE:
+                    with open(_ppath, 'w', encoding='utf-8') as _pf:
+                        _pf.write(_json_str)
+                    _persisted_vars[_k] = _ppath
+                    _persist_count += 1
+        except Exception:
+            pass
+result = {{
+    "success": _error is None,
+    "output": _output if _output else None,
+    "error": _error,
+    "dataframes": _captured_dfs,
+    "persisted_vars": _persisted_vars,
+}}
+print(json.dumps(result, ensure_ascii=False))
+    """
     return script
 
 async def execute_code_in_sandbox(
     code: str,
     data_var_map: dict[str, str],
-    timeout: int = SANDBOX_TIMEOUT,
+    timeout: int = SANDBOX_TOTAL_TIMEOUT,
     capture_dir: str | None = None,
     injected_envs: dict[str, str] | None = None,
     json_var_map: dict[str, str] | None = None,  # 上一轮持久化的中间变量
 ) -> dict[str, Any]:
     """
-    在子进程中安全执行代码。
+    在子进程中安全执行代码。增加支持心跳机制。
+    心跳策略：
+    - 监控stdout输出和心跳文件
+    - 90秒无任何活动 → 杀进程
+    - 2小时总超时 → 硬上限
+
     Args:
         code: 要执行的 Python 代码
         data_var_map: {变量名: CSV文件绝对路径}
@@ -470,8 +514,15 @@ async def execute_code_in_sandbox(
         # 去掉特殊 key，只保留真正的环境变量
         clean_envs = {k: v for k, v in injected_envs.items() if k != "__allowed_modules__"}
 
+    # 创建心跳文件
+    heartbeat_file = os.path.join(
+        tempfile.gettempdir(),
+        f"owl_sandbox_{uuid.uuid4().hex}.heartbeat"
+    )
+
     # ── 构建沙箱脚本（原有位置，增加 extra_modules 参数） ──
-    script_content = _build_sandbox_script(code, data_var_map, capture_dir, extra_modules, json_var_map)
+    script_content = _build_sandbox_script(code, data_var_map, capture_dir, extra_modules, json_var_map, heartbeat_file)
+    
     tmp_file = None
     start_time = time.monotonic()
     try:
@@ -500,25 +551,85 @@ async def execute_code_in_sandbox(
             env=sandbox_env,  # None 时继承父进程环境，有值时使用精简环境
         )
 
+        # ── 心跳监控逻辑 ──────────────────────────────────
+        timeout_reason = None
+        
+        async def monitor_heartbeat():
+            """监控心跳文件，超时则杀进程"""
+            nonlocal timeout_reason
+            last_heartbeat_time = time.monotonic()
+            
+            while proc.returncode is None:
+                await asyncio.sleep(5)
+                now = time.monotonic()
+                
+                # 检查心跳文件
+                if os.path.exists(heartbeat_file):
+                    try:
+                        mtime = os.path.getmtime(heartbeat_file)
+                        file_age = now - mtime
+                        if file_age < 30:  # 心跳文件30秒内更新过
+                            last_heartbeat_time = now
+                    except OSError:
+                        pass
+                
+                # 判断超时
+                idle_time = now - last_heartbeat_time
+                total_time = now - start_time
+                
+                if idle_time > SANDBOX_IDLE_TIMEOUT:
+                    timeout_reason = "idle"
+                    proc.kill()
+                    return
+                
+                if total_time > timeout:
+                    timeout_reason = "total"
+                    proc.kill()
+                    return
+        
+        # 并发执行：communicate + 心跳监控
+        monitor_task = asyncio.create_task(monitor_heartbeat())
+        
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.communicate()
-            elapsed = time.monotonic() - start_time
+            # 使用 communicate() 读取输出
+            stdout_bytes, stderr_bytes = await proc.communicate()
+        finally:
+            # 确保监控任务结束
+            monitor_task.cancel()
+            try:
+                await monitor_task
+            except asyncio.CancelledError:
+                pass
+        
+        elapsed = time.monotonic() - start_time
+        
+        # 处理超时情况
+        if timeout_reason == "idle":
             return {
                 "success": False,
                 "output": None,
-                "error": f"⏱️ Code execution timed out after {timeout}s",
+                "error": (
+                    f"⏱️ Code execution appears to be stuck "
+                    f"(no activity for {SANDBOX_IDLE_TIMEOUT}s). "
+                    f"Consider adding print() statements to show progress."
+                ),
                 "execution_time": elapsed,
                 "dataframes": [],
             }
-
-        elapsed = time.monotonic() - start_time
+        
+        if timeout_reason == "total":
+            return {
+                "success": False,
+                "output": None,
+                "error": f"⏱️ Code execution exceeded maximum time limit ({timeout}s)",
+                "execution_time": elapsed,
+                "dataframes": [],
+            }
+        
+        # 正常结束，解析输出
         stdout_text = stdout_bytes.decode("utf-8", errors="replace").strip()
         stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+
 
         # 尝试解析脚本最后输出的 JSON 结果
         if stdout_text:
@@ -568,5 +679,11 @@ async def execute_code_in_sandbox(
         if tmp_file and os.path.exists(tmp_file.name):
             try:
                 os.unlink(tmp_file.name)
+            except OSError:
+                pass
+        # 清理心跳文件
+        if os.path.exists(heartbeat_file):
+            try:
+                os.unlink(heartbeat_file)
             except OSError:
                 pass

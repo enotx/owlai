@@ -122,7 +122,15 @@ export const fetchStepDataframe = async (stepId: string, dfName: string) =>
  */
 // ===== Streaming Chat (SSE) — ReAct Agent =====
 export interface SSEEvent {
-  type: "text" | "tool_start" | "tool_result" | "step_saved" | "done" | "error";
+  // 新增 heartbeat：后端长耗时工具执行期间定期发，前端用于“续命”，UI可忽略
+  type:
+    | "text"
+    | "tool_start"
+    | "tool_result"
+    | "step_saved"
+    | "done"
+    | "error"
+    | "heartbeat";
   content?: string;
   code?: string;
   purpose?: string;
@@ -153,7 +161,10 @@ export async function streamChat(
   modelOverride?: { provider_id: string; model_id: string }
 ) {
   const controller = new AbortController();
-  const globalTimeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+
+  // 允许长任务（比如代码执行）最长 2 小时
+  const globalTimeout = setTimeout(() => controller.abort(), 2 * 60 * 60 * 1000);
+  
   try {
     const baseUrl = await getBaseUrl();
     const streamUrl = `${baseUrl}/chat/stream`;

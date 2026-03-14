@@ -4,6 +4,7 @@
 
 from typing import AsyncGenerator, Any
 import json
+import uuid
 from app.services.agents.base import BaseAgent
 from openai.types.chat import ChatCompletionMessageParam
 
@@ -101,7 +102,7 @@ class PlanAgent(BaseAgent):
         history = context.get("history_messages", [])
         # 获取Knowledge上下文
         dataset_ctx, text_ctx, var_ref, data_var_map = await self._get_knowledge_context()
-        
+
         system_prompt = PLAN_SYSTEM_PROMPT.format(
             dataset_context=dataset_ctx,
             text_context=text_ctx,
@@ -226,16 +227,34 @@ class PlanAgent(BaseAgent):
                         
                         yield self._sse({"type": "tool_start", "code": code, "purpose": purpose})
                         
+                        capture_id = uuid.uuid4().hex[:12]
                         capture_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures")
                         os.makedirs(capture_dir, exist_ok=True)
                         
                         try:
-                            exec_result = await execute_code_in_sandbox(
+                            # 使用心跳包装器执行代码
+                            exec_result = None
+                            async for item in self._execute_code_with_heartbeat(
                                 code=code,
                                 data_var_map=data_var_map,
                                 capture_dir=capture_dir,
-                                json_var_map=persistent_vars if persistent_vars else None,
-                            )
+                                skill_envs= None,
+                                persistent_vars=persistent_vars if persistent_vars else None,
+                            ):
+                                if isinstance(item, str):
+                                    # 心跳事件，直接转发
+                                    yield item
+                                else:
+                                    # 执行结果
+                                    exec_result = item
+                            
+                            if exec_result is None:
+                                exec_result = {
+                                    "success": False,
+                                    "output": None,
+                                    "error": "Execution failed: no result returned",
+                                    "execution_time": 0.0,
+                                }
                         except Exception as e:
                             exec_result = {
                                 "success": False,
@@ -243,30 +262,45 @@ class PlanAgent(BaseAgent):
                                 "error": str(e),
                                 "execution_time": 0.0,
                             }
-                            
-                        # 收集本轮持久化的变量，供下轮沙箱使用
+                        
+                        # 重命名捕获的DataFrame文件
+                        captured_dfs = exec_result.get("dataframes", [])
+                        for df_meta in captured_dfs:
+                            df_meta["capture_id"] = capture_id
+                            old_path = os.path.join(capture_dir, f"{df_meta['name']}.json")
+                            new_name = f"{capture_id}_{df_meta['name']}.json"
+                            new_path = os.path.join(capture_dir, new_name)
+                            if os.path.exists(old_path):
+                                try:
+                                    os.rename(old_path, new_path)
+                                except OSError:
+                                    pass
+                        # 收集本轮持久化的变量
                         new_persisted = exec_result.get("persisted_vars", {})
                         if new_persisted:
                             persistent_vars.update(new_persisted)
-
                         yield self._sse({
                             "type": "tool_result",
                             "success": exec_result["success"],
                             "output": exec_result.get("output"),
                             "error": exec_result.get("error"),
                             "time": exec_result.get("execution_time", 0),
+                            "dataframes": captured_dfs,
                         })
                         
                         tool_output = exec_result.get("output") or "(no output)"
                         if not exec_result["success"]:
                             tool_output = f"ERROR: {exec_result.get('error', 'Unknown')}"
                         
+                        if len(tool_output) > 8000:
+                            tool_output = tool_output[:8000] + "\n[truncated]"
+                        
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc["id"],
-                            "content": tool_output[:4000],  # 限制长度
+                            "content": tool_output,
                         })  # type: ignore
-                
+
                 continue  # 继续下一轮
             
             # 在处理纯文本回复时，检查是否包含Plan JSON
