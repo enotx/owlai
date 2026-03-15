@@ -127,6 +127,7 @@ export interface SSEEvent {
     | "text"
     | "tool_start"
     | "tool_result"
+    | "visualization"
     | "step_saved"
     | "done"
     | "error"
@@ -145,6 +146,9 @@ export interface SSEEvent {
     columns: string[];
     capture_id: string;
   }>;
+  title?: string;
+  chart_type?: string;
+  option?: Record<string, unknown>;
   step?: Record<string, unknown>;
   steps?: Record<string, unknown>[];
 }
@@ -498,3 +502,19 @@ export const updateSkill = async (
 
 export const deleteSkill = async (id: string) =>
   (await getApi()).delete(`/skills/${id}`);
+
+// ===== Visualizations =====
+export interface VisualizationItem {
+  id: string;
+  task_id: string;
+  subtask_id: string | null;
+  step_id: string | null;
+  title: string;
+  chart_type: string;
+  option_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export const fetchVisualizations = async (taskId: string) =>
+  (await getApi()).get<VisualizationItem[]>(`/visualizations/task/${taskId}`);

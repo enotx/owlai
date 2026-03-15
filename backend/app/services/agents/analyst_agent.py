@@ -19,8 +19,9 @@ Work step-by-step:
 1. **Understand the task** - Read the subtask description carefully
 2. **Explore data** - Use `execute_python_code` to inspect data structure
 3. **Analyze** - Write code to perform the required analysis
-4. **Verify** - Check results make sense
-5. **Summarize** - Present findings clearly with key numbers
+4. **Visualize** - If the user ask you to visualize the data, use the function `create_visualization` of echarts to generate interactive charts. DO NOT use matplotlib or other libraries to create static images. Always prefer interactive charts for better user experience. Remember to embed data directly in the ECharts option object you provide to `create_visualization`.
+5. **Verify** - Check results make sense
+6. **Summarize** - Present findings clearly with key numbers
 
 ## Rules
 - Use pandas, numpy, sklearn, scipy as needed
@@ -29,6 +30,57 @@ Work step-by-step:
 - Name result DataFrames with prefixes: `result_`, `output_`, `summary_`
 - **Variables persist across code executions** within the same conversation. If you created `df_cleaned` in a previous step, you can use it directly in the next `execute_python_code` call without re-creating it.
 - Answer in the **same language** as the user
+
+## Visualization Guidelines
+Use `create_visualization` to create interactive ECharts charts when:
+- **Comparing values** across categories → use `bar` chart
+- **Showing trends** over time → use `line` chart
+- **Showing proportions** or composition → use `pie` chart
+- **Exploring correlations** between two variables → use `scatter` chart
+- **Showing distributions** → use `boxplot` or `bar` (histogram-style)
+- **Multi-dimensional comparison** → use `radar` chart
+- **Showing density/matrix data** → use `heatmap`
+- **Showing funnel/conversion** → use `funnel` chart
+
+### ECharts Option Requirements
+- The `option` must be a **complete, self-contained** ECharts option object
+- Data must be **embedded directly** in the option (not referencing external variables)
+- Always include: `title`, `tooltip`, `series`
+- Include `legend` when there are multiple series
+- Include `xAxis`/`yAxis` for cartesian charts (bar, line, scatter, boxplot)
+- Use readable axis labels; rotate if too long: `axisLabel: {{ rotate: 45 }}`
+- Keep data volume reasonable (≤ 50 data points per series for readability; aggregate if needed)
+- Use colors that are accessible and distinguishable
+
+### Example — Bar Chart
+```json
+{{
+"title": {{ "text": "Revenue by Region", "left": "center" }},
+"tooltip": {{ "trigger": "axis" }},
+"xAxis": {{ "type": "category", "data": ["East", "West", "North", "South"] }},
+"yAxis": {{ "type": "value", "name": "Revenue ($)" }},
+"series": [{{ "type": "bar", "data": [120, 200, 150, 80], "name": "Revenue" }}]
+}}
+```
+
+
+### Example — Pie Chart
+```json
+{{
+"title": {{ "text": "Market Share", "left": "center" }},
+"tooltip": {{ "trigger": "item" }},
+"legend": {{ "orient": "vertical", "left": "left" }},
+"series": [{{
+ "type": "pie", "radius": "50%",
+ "data": [
+ {{ "value": 1048, "name": "Product A" }},
+ {{ "value": 735, "name": "Product B" }},
+ {{ "value": 580, "name": "Product C" }}
+ ]
+}}]
+}}
+```
+
 
 ## Available Datasets
 {dataset_context}
@@ -61,8 +113,90 @@ ANALYST_TOOLS = [
                 "required": ["code", "purpose"],
             },
         },
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_visualization",
+            "description": (
+                "Create an interactive ECharts visualization. "
+                "You MUST provide a complete ECharts option object with embedded data, "
+                "including at least: title, tooltip, and series."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Chart title (concise, descriptive)",
+                    },
+                    "chart_type": {
+                        "type": "string",
+                        "enum": ["bar", "line", "pie", "scatter", "radar", "heatmap", "boxplot", "funnel"],
+                        "description": "Chart type",
+                    },
+                    "option": {
+                        "type": "object",
+                        "description": "Complete ECharts option configuration object with data embedded",
+                    },
+                },
+                "required": ["title", "chart_type", "option"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
+
+def _validate_echarts_option(option: dict) -> tuple[bool, str]:
+    """基础校验 ECharts option 结构，返回 (is_valid, error_message)"""
+    if not isinstance(option, dict):
+        return False, "option must be a JSON object"
+    if "series" not in option:
+        return False, "option must contain 'series'"
+    series = option["series"]
+    if not isinstance(series, list) or len(series) == 0:
+        return False, "option.series must be a non-empty array"
+    for i, s in enumerate(series):
+        if not isinstance(s, dict):
+            return False, f"series[{i}] must be an object"
+        if "type" not in s:
+            return False, f"series[{i}] must have a 'type' field"
+    return True, ""
+
+def _normalize_echarts_option(raw_option: Any) -> tuple[dict[str, Any] | None, str]:
+    """
+    归一化 LLM 传入的 ECharts option，兼容以下情况：
+    1) option 是 dict（正常）
+    2) option 是 JSON 字符串（需要 json.loads）
+    3) option 外层被包了一层 {"option": {...}}（自动解包）
+    4) series 被错误给成 dict（自动转为 list）
+    返回 (option_dict_or_none, err_msg)
+    """
+    option_obj: Any = raw_option
+    # case: option 是字符串（常见：LLM 把对象 stringify 了）
+    if isinstance(option_obj, str):
+        s = option_obj.strip()
+        if not s:
+            return None, "option is empty string"
+        try:
+            option_obj = json.loads(s)
+        except json.JSONDecodeError as e:
+            # 这里明确提示：不要用 python dict 风格
+            return None, (
+                "option is a string but not valid JSON. "
+                "Please provide strict JSON (double quotes, true/false/null). "
+                f"json error: {e}"
+            )
+    if not isinstance(option_obj, dict):
+        return None, "option must be a JSON object"
+    # case: 被包裹了一层 {"option": {...}}
+    # 有些模型会多包一层，递归解包 1 层即可（避免死循环）
+    if "series" not in option_obj and "option" in option_obj and isinstance(option_obj["option"], dict):
+        option_obj = option_obj["option"]
+    # case: series 给成了对象（容错）
+    if "series" in option_obj and isinstance(option_obj["series"], dict):
+        option_obj["series"] = [option_obj["series"]]
+    return option_obj, ""
 
 
 class AnalystAgent(BaseAgent):
@@ -276,13 +410,71 @@ class AnalystAgent(BaseAgent):
                         
                         if len(tool_output) > 8000:
                             tool_output = tool_output[:8000] + "\n[truncated]"
-                        
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc["id"],
-                            "content": tool_output,
-                        })  # type: ignore
-                
+
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": tool_output,
+                            }  # type: ignore
+                        )
+
+                    # ---------- Tool: create_visualization ----------
+                    elif tc["name"] == "create_visualization":
+                        title = str(args.get("title", "")).strip() or "Untitled Chart"
+                        chart_type = str(args.get("chart_type", "")).strip() or "bar"
+                        raw_option = args.get("option", {})
+                        normalized_option, norm_err = _normalize_echarts_option(raw_option)
+                        if normalized_option is None:
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tc["id"],
+                                    "content": f"ERROR: Invalid ECharts option: {norm_err}",
+                                }  # type: ignore
+                            )
+                            yield self._sse({"type": "error", "content": f"Visualization option invalid: {norm_err}"})
+                            continue
+                        ok, err = _validate_echarts_option(normalized_option)
+                        if not ok:
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tc["id"],
+                                    "content": f"ERROR: Invalid ECharts option: {err}",
+                                }  # type: ignore
+                            )
+                            yield self._sse({"type": "error", "content": f"Visualization option invalid: {err}"})
+                            continue
+                        option = normalized_option
+
+                        # 关键：这里不直接写 DB（因为 Agent 层不负责持久化），只产出 SSE 事件
+                        # 后端 agent service 层（app/services/agent.py）会接管持久化
+                        yield self._sse(
+                            {
+                                "type": "visualization",
+                                "title": title,
+                                "chart_type": chart_type,
+                                "option": option,
+                            }
+                        )
+
+                        # tool 回传给 LLM，告诉它已创建（后续它可以继续总结）
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": f"OK: visualization created. title={title!r}, chart_type={chart_type!r}",
+                            }  # type: ignore
+                        )
+
+                        # messages.append({
+                        #     "role": "tool",
+                        #     "tool_call_id": tc["id"],
+                        #     "content": tool_output,
+                        # })  # type: ignore
+
+                # 继续下一轮 ReAct                
                 continue
             
             # 纯文本 - 结束

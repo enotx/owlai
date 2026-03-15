@@ -25,7 +25,11 @@ export interface Knowledge {
   created_at: string;
 }
 
-export type StepType = "user_message" | "assistant_message" | "tool_use";
+export type StepType =
+  | "user_message"
+  | "assistant_message"
+  | "tool_use"
+  | "visualization";
 
 export interface Step {
   id: string;

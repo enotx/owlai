@@ -283,7 +283,10 @@ async def _load_history_messages(
             })  # type: ignore
         elif s.step_type == "assistant_message":
             messages.append({"role": "assistant", "content": s.content})
-
+        elif s.step_type == "visualization":
+            # 对 LLM 来说，可视化属于展示结果；这里作为 assistant 的简短描述即可
+            messages.append({"role": "assistant", "content": f"[Visualization created] {s.content}"})
+            
     return messages
 
 
@@ -296,6 +299,7 @@ async def _load_history_messages(
 # {"type": "step_saved",  "step": {...}}        -- 一个 Step 已持久化
 # {"type": "done",        "steps": [...]}       -- 全部完成
 # {"type": "error",       "content": "..."}     -- 错误
+# {"type": "visualization","title": "...","chart_type":"bar","option": {...}}  -- 生成 ECharts 图表（需要持久化）
 
 
 async def run_agent_stream(
@@ -495,7 +499,76 @@ async def run_agent_stream(
                             await write_db.refresh(plan_step)
                             saved_steps.append(_step_to_dict(plan_step))
                             yield _sse({"type": "step_saved", "step": _step_to_dict(plan_step)})
-                    
+
+                    # visualization 事件：持久化 Visualization + 保存一个 visualization Step
+                    elif event_type == "visualization":
+                        # 先把累积的文本落库（避免“图表前的文字”丢失）
+                        if accumulated_text.strip():
+                            async with async_session() as write_db:
+                                text_step = Step(
+                                    task_id=task_id,
+                                    role="assistant",
+                                    step_type="assistant_message",
+                                    content=accumulated_text.strip(),
+                                )
+                                write_db.add(text_step)
+                                await write_db.commit()
+                                await write_db.refresh(text_step)
+                                saved_steps.append(_step_to_dict(text_step))
+                                yield _sse({"type": "step_saved", "step": _step_to_dict(text_step)})
+                            accumulated_text = ""
+
+                        from app.models import Visualization
+
+                        title = str(event_data.get("title", "")).strip() or "Untitled Chart"
+                        chart_type = str(event_data.get("chart_type", "")).strip() or "bar"
+                        option = event_data.get("option", {})
+
+                        # 基础安全/体积限制：避免 option 过大导致 DB/前端卡死
+                        try:
+                            option_json = json.dumps(option, ensure_ascii=False)
+                        except Exception:
+                            yield _sse({"type": "error", "content": "Invalid visualization option JSON"})
+                            continue
+
+                        if len(option_json) > 200_000:
+                            yield _sse({"type": "error", "content": "Visualization option too large (>200KB). Please aggregate data."})
+                            continue
+
+                        async with async_session() as write_db:
+                            viz = Visualization(
+                                task_id=task_id,
+                                title=title,
+                                chart_type=chart_type,
+                                option_json=option_json,
+                            )
+                            write_db.add(viz)
+                            await write_db.commit()
+                            await write_db.refresh(viz)
+
+                            # 写一个 Step：step_type = visualization
+                            viz_step = Step(
+                                task_id=task_id,
+                                role="assistant",
+                                step_type="visualization",
+                                content=title,
+                                code_output=json.dumps(
+                                    {
+                                        "visualization_id": viz.id,
+                                        "title": title,
+                                        "chart_type": chart_type,
+                                        "option": option,  # 直接存一份给前端渲染（历史也能回放）
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                            )
+                            write_db.add(viz_step)
+                            await write_db.commit()
+                            await write_db.refresh(viz_step)
+
+                            saved_steps.append(_step_to_dict(viz_step))
+                            yield _sse({"type": "step_saved", "step": _step_to_dict(viz_step)})
+
                 except json.JSONDecodeError:
                     pass
             

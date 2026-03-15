@@ -190,6 +190,10 @@ export default function MessageInput() {
               break;
             }
 
+            case "visualization":
+              // 当前版本以 step_saved(visualization) 为准，这里可忽略或用于将来做即时预览
+              break;
+
             case "done": {
               // 全部完成 — 冲刷可能残留的流式文本
               const finalState = useTaskStore.getState();

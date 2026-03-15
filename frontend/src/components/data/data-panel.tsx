@@ -2,11 +2,13 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTaskStore } from "@/stores/use-task-store";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Download } from "lucide-react";
-import { downloadKnowledge, exportStepDataframe } from "@/lib/api";
+import { downloadKnowledge, exportStepDataframe, fetchVisualizations, type VisualizationItem } from "@/lib/api";
+import EChartsView from "@/components/chat/echarts-view";
+
 
 import {
   Table,
@@ -24,9 +26,36 @@ import { previewKnowledge } from "@/lib/api";
 export default function DataPanel() {
   const { currentTaskId, previewData, previewColumns, previewSource, setPreviewData } = useTaskStore();
   const [selectedSheet, setSelectedSheet] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"data" | "charts">("data");
+  const [vizList, setVizList] = useState<VisualizationItem[]>([]);
+  const [selectedViz, setSelectedViz] = useState<VisualizationItem | null>(null);
 
   const hasData = previewColumns.length > 0 && previewData && previewData.length > 0;
   const isTextPreview = previewSource?.fileType === "text" && previewSource?.textContent;
+
+  // 拉取可视化列表
+  useEffect(() => {
+    if (!currentTaskId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetchVisualizations(currentTaskId);
+        if (cancelled) return;
+        setVizList(res.data);
+        // 默认选中最新一个
+        if (res.data.length > 0) {
+          setSelectedViz(res.data[res.data.length - 1]);
+        } else {
+          setSelectedViz(null);
+        }
+      } catch (e) {
+        console.error("Failed to fetch visualizations:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentTaskId]);
 
   // 切换Excel sheet
   const handleSheetChange = async (sheetName: string) => {
@@ -68,7 +97,26 @@ export default function DataPanel() {
     <div className="flex items-center gap-2 border-b px-4 py-3">
       <TableProperties className="h-5 w-5 text-primary" />
       <h2 className="text-sm font-semibold tracking-tight">Data View</h2>
-      
+
+      <div className="ml-2 flex items-center gap-1 rounded-md border bg-muted/30 p-0.5">
+        <Button
+          variant={activeTab === "data" ? "default" : "ghost"}
+          size="sm"
+          className="h-6 px-2 text-[11px]"
+          onClick={() => setActiveTab("data")}
+        >
+          Data
+        </Button>
+        <Button
+          variant={activeTab === "charts" ? "default" : "ghost"}
+          size="sm"
+          className="h-6 px-2 text-[11px]"
+          onClick={() => setActiveTab("charts")}
+        >
+          Charts
+        </Button>
+      </div>
+
       {/* 数据源标签 */}
       {(hasData || isTextPreview) && previewSource && (
         <span
@@ -134,6 +182,82 @@ export default function DataPanel() {
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
           <DatabaseZap className="h-10 w-10 opacity-30" />
           <p className="text-sm">Select a task to view data</p>
+        </div>
+      ) : activeTab === "charts" ? (
+        <div className="flex flex-1 flex-col">
+          <div className="border-b px-3 py-2 text-xs text-muted-foreground">
+            {vizList.length} charts
+          </div>
+          <div className="flex flex-1 min-h-0">
+            {/* 左侧：图表列表 */}
+            <div className="w-[220px] shrink-0 border-r">
+              <ScrollArea className="h-full">
+                <div className="p-2 space-y-1">
+                  {vizList.length === 0 ? (
+                    <div className="p-3 text-xs text-muted-foreground">
+                      No charts yet. Ask Owl to visualize results.
+                    </div>
+                  ) : (
+                    vizList
+                      .slice()
+                      .reverse()
+                      .map((v) => (
+                        <button
+                          key={v.id}
+                          className={cn(
+                            "w-full rounded-md border px-2 py-2 text-left text-xs hover:bg-muted/40",
+                            selectedViz?.id === v.id
+                              ? "border-primary bg-muted"
+                              : "border-transparent"
+                          )}
+                          onClick={() => setSelectedViz(v)}
+                        >
+                          <div className="font-medium line-clamp-2">{v.title}</div>
+                          <div className="mt-1 text-[10px] text-muted-foreground">
+                            {v.chart_type}
+                          </div>
+                        </button>
+                      ))
+                  )}
+                </div>
+              </ScrollArea>
+            </div>
+            {/* 右侧：预览 */}
+            <div className="flex-1 min-w-0">
+              <ScrollArea className="h-full">
+                <div className="p-3">
+                  {!selectedViz ? (
+                    <div className="text-xs text-muted-foreground">
+                      Select a chart to preview.
+                    </div>
+                  ) : (
+                    (() => {
+                      let option: Record<string, unknown> | null = null;
+                      try {
+                        option = JSON.parse(selectedViz.option_json);
+                      } catch {
+                        option = null;
+                      }
+                      return (
+                        <div className="space-y-2">
+                          <div className="text-sm font-semibold">
+                            {selectedViz.title}
+                          </div>
+                          {option ? (
+                            <EChartsView option={option} height={420} />
+                          ) : (
+                            <div className="text-xs text-red-600">
+                              Invalid chart option_json.
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()
+                  )}
+                </div>
+              </ScrollArea>
+            </div>
+          </div>
         </div>
       ) : isTextPreview ? (
         /* 文本预览模式 */

@@ -34,6 +34,7 @@ class Task(Base):
     knowledge_items: Mapped[list["Knowledge"]] = relationship(back_populates="task", cascade="all, delete-orphan")
     steps: Mapped[list["Step"]] = relationship(back_populates="task", cascade="all, delete-orphan")
     subtasks: Mapped[list["SubTask"]] = relationship(back_populates="task", cascade="all, delete-orphan", order_by="SubTask.order")
+    visualizations: Mapped[list["Visualization"]] = relationship(back_populates="task", cascade="all, delete-orphan")
 
 
 class SubTask(Base):
@@ -136,3 +137,17 @@ class Skill(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+class Visualization(Base):
+    """ECharts 可视化配置表"""
+    __tablename__ = "visualizations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    task_id: Mapped[str] = mapped_column(String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
+    subtask_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("subtasks.id", ondelete="SET NULL"), nullable=True)
+    step_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("steps.id", ondelete="SET NULL"), nullable=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    chart_type: Mapped[str] = mapped_column(String(50), nullable=False)  # 'bar','line','pie','scatter','radar','heatmap','boxplot','funnel'
+    option_json: Mapped[str] = mapped_column(Text, nullable=False)  # 完整 ECharts option JSON
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    task: Mapped["Task"] = relationship(back_populates="visualizations")

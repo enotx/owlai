@@ -263,3 +263,17 @@ class SkillResponse(BaseModel):
             }
             return super().model_validate(data, **kwargs)
         return super().model_validate(obj, **kwargs)
+
+# ===== Visualization =====
+class VisualizationResponse(BaseModel):
+    id: str
+    task_id: str
+    subtask_id: str | None
+    step_id: str | None
+    title: str
+    chart_type: str
+    option_json: str  # 前端自行 JSON.parse
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}

@@ -14,6 +14,9 @@ import KnowledgeZone from "./knowledge-zone";
 import MessageInput from "./message-input";
 import SubTaskList from "./subtask-list";
 import PlanConfirmationDialog from "./plan-confirmation";
+import EChartsView from "./echarts-view";
+
+
 
 import {
   Bot,
@@ -155,6 +158,54 @@ function ToolUseBlock({ step }: { step: Step }) {
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function VisualizationBlock({ step }: { step: Step }) {
+  const parsed = useMemo(() => {
+    if (!step.code_output) return null;
+    try {
+      return JSON.parse(step.code_output) as {
+        visualization_id: string;
+        title: string;
+        chart_type: string;
+        option: Record<string, unknown>;
+      };
+    } catch {
+      return null;
+    }
+  }, [step.code_output]);
+
+  if (!parsed?.option) {
+    return (
+      <div className="flex gap-3 justify-start">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+          <Bot className="h-4 w-4" />
+        </div>
+        <div className="max-w-[85%] w-full rounded-lg bg-muted px-3.5 py-2.5 text-sm">
+          <p className="whitespace-pre-wrap">{step.content}</p>
+          <p className="mt-2 text-xs text-muted-foreground">Invalid chart payload.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex gap-3 justify-start">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+        <Bot className="h-4 w-4" />
+      </div>
+      <div className="max-w-[85%] w-full space-y-2">
+        <div className="rounded-lg bg-muted px-3.5 py-2.5 text-sm">
+          <p className="font-medium">📊 {parsed.title || step.content}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Chart type: {parsed.chart_type}
+          </p>
+        </div>
+
+        <EChartsView option={parsed.option} height={360} />
       </div>
     </div>
   );
@@ -388,7 +439,9 @@ export default function ChatArea() {
             if (step.step_type === "tool_use") {
               return <ToolUseBlock key={step.id} step={step} />;
             }
-            // assistant_message
+            if (step.step_type === "visualization") {
+              return <VisualizationBlock key={step.id} step={step} />;
+            }
             return <AssistantBubble key={step.id} content={step.content} />;
           })}
 
