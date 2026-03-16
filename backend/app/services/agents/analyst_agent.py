@@ -19,7 +19,19 @@ Work step-by-step:
 1. **Understand the task** - Read the subtask description carefully
 2. **Explore data** - Use `execute_python_code` to inspect data structure
 3. **Analyze** - Write code to perform the required analysis
-4. **Visualize** - If the user ask you to visualize the data, use the function `create_visualization` of echarts to generate interactive charts. DO NOT use matplotlib or other libraries to create static images. Always prefer interactive charts for better user experience. Remember to embed data directly in the ECharts option object you provide to `create_visualization`.
+4. **Visualize** - To create charts, call `create_chart(title, chart_type, option)` **inside your `execute_python_code` call**. This lets you use Python variables directly in the ECharts option. DO NOT use matplotlib. Example:
+```python
+x = df['date'].tolist()
+y = df['value'].tolist()
+create_chart('Trend', 'line', {{
+'title': {{'text': 'Trend', 'left': 'center'}},
+'tooltip': {{'trigger': 'axis'}},
+'xAxis': {{'type': 'category', 'data': x}},
+'yAxis': {{'type': 'value'}},
+'series': [{{'type': 'line', 'data': y, 'smooth': True}}]
+}}
+)
+```
 5. **Verify** - Check results make sense
 6. **Summarize** - Present findings clearly with key numbers
 
@@ -403,7 +415,25 @@ class AnalystAgent(BaseAgent):
                             "time": exec_result.get("execution_time", 0),
                             "dataframes": captured_dfs,
                         })
-                        
+                        # ── 处理沙箱内 create_chart() 捕获的图表 ──
+                        sandbox_charts = exec_result.get("charts", [])
+                        for chart_meta in sandbox_charts:
+                            chart_option = chart_meta.get("option", {})
+                            # 基础校验
+                            ok_chart, err_chart = _validate_echarts_option(chart_option)
+                            if ok_chart:
+                                yield self._sse({
+                                    "type": "visualization",
+                                    "title": chart_meta.get("title", "Untitled Chart"),
+                                    "chart_type": chart_meta.get("chart_type", "bar"),
+                                    "option": chart_option,
+                                })
+                            else:
+                                yield self._sse({
+                                    "type": "error",
+                                    "content": f"Chart validation failed: {err_chart}",
+                                })
+
                         tool_output = exec_result.get("output") or "(no output)"
                         if not exec_result["success"]:
                             tool_output = f"ERROR: {exec_result.get('error', 'Unknown')}"
@@ -435,16 +465,25 @@ class AnalystAgent(BaseAgent):
                             )
                             yield self._sse({"type": "error", "content": f"Visualization option invalid: {norm_err}"})
                             continue
+
+                        # 兼容：LLM 可能把 series/xAxis/yAxis 等放在 tool args 顶层而非 option 内
+                        for merge_key in ("series", "xAxis", "yAxis", "legend", "grid", "dataset", "tooltip", "title"):
+                            if merge_key not in normalized_option and merge_key in args:
+                                normalized_option[merge_key] = args[merge_key]
+
                         ok, err = _validate_echarts_option(normalized_option)
                         if not ok:
+                            option_keys = list(normalized_option.keys()) if isinstance(normalized_option, dict) else []
+                            err_detail = f"{err} (option_keys={option_keys}, args_keys={list(args.keys())})"
                             messages.append(
                                 {
                                     "role": "tool",
                                     "tool_call_id": tc["id"],
-                                    "content": f"ERROR: Invalid ECharts option: {err}",
+                                    "content": f"ERROR: Invalid ECharts option: {err_detail}. "
+                                               "Please use create_chart() inside execute_python_code instead.",
                                 }  # type: ignore
                             )
-                            yield self._sse({"type": "error", "content": f"Visualization option invalid: {err}"})
+                            yield self._sse({"type": "error", "content": f"Visualization option invalid: {err_detail}"})
                             continue
                         option = normalized_option
 

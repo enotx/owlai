@@ -280,6 +280,46 @@ def __restore_var(__fpath):
 {json_loader_code}
 # ── 启动心跳线程 ──────────────────────────────────────
 {heartbeat_code}
+# ── 沙箱内 create_chart() 函数 ─────────────────────────
+_captured_charts = []
+_CHART_CAPTURE_DIR = "{capture_dir_escaped}"
+def _sandbox_create_chart(__title, __chart_type, __option):
+    \"\"\"沙箱内可调用的图表创建函数，捕获 ECharts option\"\"\"
+    import json as _cjson
+    # 深拷贝并序列化 option（将 numpy/pandas 类型转为 Python 原生类型）
+    def _serialize(__obj):
+        if isinstance(__obj, dict):
+            return {{k: _serialize(v) for k, v in __obj.items()}}
+        if isinstance(__obj, (list, tuple)):
+            return [_serialize(v) for v in __obj]
+        if hasattr(__obj, 'item'):  # numpy scalar
+            return __obj.item()
+        if hasattr(__obj, 'tolist'):  # numpy array / pandas series
+            return __obj.tolist()
+        if __obj is True:
+            return True
+        if __obj is False:
+            return False
+        if __obj is None:
+            return None
+        if isinstance(__obj, (int, float, str)):
+            return __obj
+        return str(__obj)
+    _safe_option = _serialize(__option)
+    _chart_meta = {{
+        "title": str(__title),
+        "chart_type": str(__chart_type),
+        "option": _safe_option,
+    }}
+    _captured_charts.append(_chart_meta)
+    # 同时写入文件（防止进程异常丢失）
+    if _CHART_CAPTURE_DIR:
+        _chart_dir = _os.path.join(_CHART_CAPTURE_DIR, "charts")
+        _os.makedirs(_chart_dir, exist_ok=True)
+        _chart_path = _os.path.join(_chart_dir, f"chart_{{len(_captured_charts)-1}}.json")
+        with open(_chart_path, 'w', encoding='utf-8') as _cf:
+            _cjson.dump(_chart_meta, _cf, ensure_ascii=False, default=str)
+    print(f"[Chart created: {{__title}}]")
 # ── 捕获 stdout ────────────────────────────────────────
 _stdout_capture = StringIO()
 _original_stdout = sys.stdout
@@ -291,6 +331,7 @@ _namespace = {{
     'np': __np,
     'pandas': __pd,
     'numpy': __np,
+    'create_chart': _sandbox_create_chart,
 }}
 # 注入 DataFrame 变量
 {namespace_inject}
@@ -455,6 +496,7 @@ result = {{
     "error": _error,
     "dataframes": _captured_dfs,
     "persisted_vars": _persisted_vars,
+    "charts": _captured_charts,
 }}
 print(json.dumps(result, ensure_ascii=False))
     """
