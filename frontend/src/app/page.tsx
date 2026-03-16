@@ -144,10 +144,10 @@ export default function HomePage() {
         onClose={handleDatabaseWarningClose} 
       />
 
-      <OnboardingDialog 
+      {/* <OnboardingDialog 
         open={shouldShowOnboardingDialog} 
         onClose={handleOnboardingClose} 
-      />
+      /> */}
     </div>
   );
 }
