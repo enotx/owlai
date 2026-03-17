@@ -366,7 +366,7 @@ _capture_dir = "{capture_dir_escaped}"
 _PRELOADED = {preloaded_repr}
 _PRIORITY_PREFIXES = ['result', 'output', 'summary']
 _MAX_CAPTURE = 10  # 最多捕获的DataFrame个数
-_MAX_ROWS = 500
+_MAX_ROWS = 50000  # 每个DataFrame最多捕获的行数（防止巨量数据）
 _SKIP_KEYS = {{'__builtins__', 'pd', 'np', 'pandas', 'numpy'}}
 if _capture_dir:
     # 收集所有新生成的 DataFrame（排除预加载的 CSV 变量）
