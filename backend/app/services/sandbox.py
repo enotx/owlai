@@ -50,17 +50,21 @@ def _build_sandbox_script(
         ext = fpath.lower().split('.')[-1]
         
         if ext == 'csv':
-            loader_lines.append(f'{var_name} = __pd.read_csv("{escaped_path}")')
+            loader_lines.append(f'{var_name} = __pd.read_csv("{escaped_path}", encoding="utf-8-sig")')
+            loader_lines.append(f'{var_name}.columns = {var_name}.columns.str.strip()')
         
         elif ext in ('xlsx', 'xls'):
             # 加载默认 sheet（第一个）到主变量
             loader_lines.append(f'{var_name} = __pd.read_excel("{escaped_path}")')
+            loader_lines.append(f'{var_name}.columns = {var_name}.columns.str.strip()')
             # 加载所有 sheets 到字典变量
             loader_lines.append(f'{var_name}_sheets = __pd.read_excel("{escaped_path}", sheet_name=None)')
+            loader_lines.append(f'for __sheet_key in {var_name}_sheets: {var_name}_sheets[__sheet_key].columns = {var_name}_sheets[__sheet_key].columns.str.strip()')
         
         else:
             # 未知格式，尝试 CSV
-            loader_lines.append(f'{var_name} = __pd.read_csv("{escaped_path}")')
+            loader_lines.append(f'{var_name} = __pd.read_csv("{escaped_path}", encoding="utf-8-sig")')
+            loader_lines.append(f'{var_name}.columns = {var_name}.columns.str.strip()')
     
     loader_code = "\n".join(loader_lines)
     # ── 从上一轮持久化的 JSON 恢复变量（支持多种类型） ──
@@ -247,7 +251,25 @@ def __restore_var(__fpath):
     __ptype = __blob.get("__persist_type__")
     # 向后兼容：旧格式无 __persist_type__，视为 DataFrame
     if __ptype is None or __ptype == "dataframe":
-        return __pd.DataFrame(__blob["rows"], columns=__blob["columns"])
+        __cols = __blob.get("columns", [])
+        __rows = __blob.get("rows", [])
+        if __rows and isinstance(__rows[0], dict):
+            # orient='records' 格式：用 dict keys 作为列名的 fallback
+            __df = __pd.DataFrame(__rows)
+            # 如果保存了 columns 顺序，按该顺序重排
+            if __cols:
+                # 取交集，防止列名不一致
+                __valid_cols = [c for c in __cols if c in __df.columns]
+                __extra_cols = [c for c in __df.columns if c not in __cols]
+                __df = __df[__valid_cols + __extra_cols]
+        elif __cols:
+            __df = __pd.DataFrame(__rows, columns=__cols)
+        else:
+            __df = __pd.DataFrame(__rows)
+        # 防御：确保列名是字符串，不是 RangeIndex
+        if isinstance(__df.columns, __pd.RangeIndex):
+            pass  # 无法恢复列名，保持原样
+        return __df
     if __ptype == "series":
         __s = __pd.Series(__blob["data"], name=__blob.get("name"))
         __dt = __blob.get("dtype")
@@ -438,7 +460,16 @@ if _capture_dir:
             # ── DataFrame ──
             if isinstance(_v, __pd.DataFrame):
                 _slice = _v.head(_MAX_PERSIST_ROWS)
+                # 处理 MultiIndex columns：展平为字符串
+                if isinstance(_slice.columns, __pd.MultiIndex):
+                    _slice = _slice.copy()
+                    _slice.columns = ['_'.join(str(x) for x in col).strip('_') for col in _slice.columns]
                 _cols = [str(c) for c in _slice.columns.tolist()]
+                # 确保列名不是纯数字（RangeIndex 的标志）
+                if all(isinstance(c, int) or (isinstance(c, str) and c.isdigit()) for c in _slice.columns):
+                    _cols = [f"col_{{i}}" for i in range(len(_cols))]
+                    _slice = _slice.copy()
+                    _slice.columns = _cols
                 _clean = _slice.where(__pd.notnull(_slice), None)
                 _rows = json.loads(_clean.to_json(orient='records', default_handler=str))
                 _blob = {{"__persist_type__": "dataframe", "columns": _cols, "rows": _rows}}

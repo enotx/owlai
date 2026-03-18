@@ -9,13 +9,21 @@ from pathlib import Path
 # TXT 注入 prompt 的大小上限（约 12k tokens）
 TEXT_MAX_BYTES = 50 * 1024  # 50KB
 
+def _clean_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """清洗 DataFrame 列名：去除 BOM、前后空格"""
+    df.columns = df.columns.str.strip().str.lstrip("\ufeff")
+    return df
+
 
 def parse_csv_metadata(file_path: str) -> str:
     """
     读取 CSV 文件，提取元数据并返回 JSON 字符串。
     包含：columns, dtypes, shape, head(5), describe()
     """
-    df = pd.read_csv(file_path)
+
+    df = pd.read_csv(file_path, encoding="utf-8-sig")
+    _clean_dataframe_columns(df)
+
     metadata = {
         "columns": df.columns.tolist(),
         "dtypes": {col: str(dtype) for col, dtype in df.dtypes.items()},
@@ -37,6 +45,8 @@ def parse_excel_metadata(file_path: str) -> str:
     sheets_metadata = []
     for sheet_name in sheet_names:
         df = pd.read_excel(file_path, sheet_name=sheet_name)
+        _clean_dataframe_columns(df)
+
         sheet_meta = {
             "sheet_name": sheet_name,
             "columns": df.columns.tolist(),
@@ -58,7 +68,8 @@ def get_csv_preview(file_path: str, n_rows: int = 50) -> dict:
     """
     返回 CSV 前 N 行数据，供前端 Table 展示。
     """
-    df = pd.read_csv(file_path)
+    df = pd.read_csv(file_path, encoding="utf-8-sig")
+    _clean_dataframe_columns(df)
     return {
         "columns": df.columns.tolist(),
         "rows": json.loads(df.head(n_rows).to_json(orient="records", force_ascii=False)),
@@ -81,6 +92,7 @@ def get_excel_preview(file_path: str, sheet_name: str | None = None, n_rows: int
         raise ValueError(f"Sheet '{target_sheet}' not found. Available: {available_sheets}")
     
     df = pd.read_excel(file_path, sheet_name=target_sheet)
+    _clean_dataframe_columns(df)
     return {
         "columns": df.columns.tolist(),
         "rows": json.loads(df.head(n_rows).to_json(orient="records", force_ascii=False)),
@@ -94,7 +106,9 @@ def get_csv_sample_rows(file_path: str, n_rows: int = 200) -> str:
     """
     返回 CSV 前 N 行的 to_string() 表示，用于注入 Agent 上下文。
     """
-    df = pd.read_csv(file_path, nrows=n_rows)
+    df = pd.read_csv(file_path, nrows=n_rows, encoding="utf-8-sig")
+    _clean_dataframe_columns(df)
+
     return df.to_string(index=False, max_rows=n_rows, max_cols=30)
 
 
@@ -105,6 +119,8 @@ def get_excel_sample_rows(file_path: str, sheet_name: str | None = None, n_rows:
     excel_file = pd.ExcelFile(file_path)
     target_sheet = sheet_name if sheet_name else excel_file.sheet_names[0]
     df = pd.read_excel(file_path, sheet_name=target_sheet, nrows=n_rows)
+    _clean_dataframe_columns(df)
+
     return df.to_string(index=False, max_rows=n_rows, max_cols=30)
 
 
