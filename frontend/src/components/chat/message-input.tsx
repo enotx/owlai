@@ -195,23 +195,10 @@ export default function MessageInput() {
               break;
 
             case "done": {
-              // 全部完成 — 冲刷可能残留的流式文本
-              const finalState = useTaskStore.getState();
-              if (
-                finalState.streamingMessage &&
-                finalState.streamingMessage.content.trim()
-              ) {
-                addStep({
-                  id: `stream-flush-${Date.now()}`,
-                  task_id: currentTaskId!,
-                  role: "assistant",
-                  step_type: "assistant_message",
-                  content: finalState.streamingMessage.content.trim(),
-                  code: null,
-                  code_output: null,
-                  created_at: new Date().toISOString(),
-                });
-              }
+              // 全部完成 — 清除残留状态即可
+              // 不再 flush streamingMessage 为临时 Step，
+              // 因为 step_saved 事件才是消息的唯一权威来源，
+              // flush 会导致与 step_saved 重复
               clearStreaming();
               setPendingTool(null);
               break;
@@ -255,15 +242,11 @@ export default function MessageInput() {
     }
   };
 
-  /** 将当前 streamingMessage 内容冲刷为临时 Step */
+  /** 清除当前流式文本状态（不创建临时 Step） */
   function _flushStreaming() {
-    const store = useTaskStore.getState();
-    if (store.streamingMessage && store.streamingMessage.content.trim()) {
-      // 不主动添加临时 step，等 step_saved 事件
-      // 只清除 streaming 状态
-    }
     clearStreaming();
   }
+
 
   /* Ctrl/Cmd+Enter 发送，普通 Enter 换行 */
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

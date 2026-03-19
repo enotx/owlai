@@ -38,6 +38,7 @@ class PlanAgent(BaseAgent):
             text_context=text_ctx,
             variable_reference=var_ref,
             is_first_turn=(conversation_turns == 0),
+            has_datasets=bool(data_var_map),
         )
 
 
@@ -207,7 +208,26 @@ class PlanAgent(BaseAgent):
                             "time": exec_result.get("execution_time", 0),
                             "dataframes": captured_dfs,
                         })
-                        
+
+                        # ── 【新增】处理沙箱内 create_chart() 捕获的图表 ──
+                        sandbox_charts = exec_result.get("charts", [])
+                        for chart_meta in sandbox_charts:
+                            chart_option = chart_meta.get("option", {})
+                            from app.tools import validate_echarts_option
+                            ok_chart, err_chart = validate_echarts_option(chart_option)
+                            if ok_chart:
+                                yield self._sse({
+                                    "type": "visualization",
+                                    "title": chart_meta.get("title", "Untitled Chart"),
+                                    "chart_type": chart_meta.get("chart_type", "bar"),
+                                    "option": chart_option,
+                                })
+                            else:
+                                yield self._sse({
+                                    "type": "error",
+                                    "content": f"Chart validation failed: {err_chart}",
+                                })
+
                         tool_output = exec_result.get("output") or "(no output)"
                         if not exec_result["success"]:
                             tool_output = f"ERROR: {exec_result.get('error', 'Unknown')}"
@@ -219,6 +239,54 @@ class PlanAgent(BaseAgent):
                             "role": "tool",
                             "tool_call_id": tc["id"],
                             "content": tool_output,
+                        })  # type: ignore
+                    # ---------- Tool: create_visualization ----------
+                    elif tc["name"] == "create_visualization":
+                        from app.tools import (
+                            validate_echarts_option,
+                            normalize_echarts_option,
+                            merge_top_level_keys,
+                        )
+                        title = str(args.get("title", "")).strip() or "Untitled Chart"
+                        chart_type = str(args.get("chart_type", "")).strip() or "bar"
+                        raw_option = args.get("option", {})
+                        normalized_option, norm_err = normalize_echarts_option(raw_option)
+                        if normalized_option is None:
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": f"ERROR: Invalid ECharts option: {norm_err}",
+                            })  # type: ignore
+                            yield self._sse({"type": "error", "content": f"Visualization option invalid: {norm_err}"})
+                            continue
+                        normalized_option = merge_top_level_keys(normalized_option, args)
+                        ok, err = validate_echarts_option(normalized_option)
+                        if not ok:
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": f"ERROR: Invalid ECharts option: {err}. "
+                                           "Please use create_chart() inside execute_python_code instead.",
+                            })  # type: ignore
+                            yield self._sse({"type": "error", "content": f"Visualization option invalid: {err}"})
+                            continue
+                        yield self._sse({
+                            "type": "visualization",
+                            "title": title,
+                            "chart_type": chart_type,
+                            "option": normalized_option,
+                        })
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": f"OK: visualization created. title={title!r}, chart_type={chart_type!r}",
+                        })  # type: ignore
+                    # ---------- Unknown tool ----------
+                    else:
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": f"ERROR: Unknown tool '{tc['name']}'",
                         })  # type: ignore
 
                 continue  # 继续下一轮

@@ -31,8 +31,6 @@ def get_tools_for_agent(
         tools = [EXECUTE_PYTHON_CODE_TOOL, CREATE_VISUALIZATION_TOOL]
         # 有数据集时才提供独立的可视化 tool
         # （即使没有这个 tool，Agent 仍可通过 create_chart() 在沙箱内创建图表）
-        if has_datasets:
-            tools.append(CREATE_VISUALIZATION_TOOL)
         return tools
 
     elif agent_type == "task_manager":

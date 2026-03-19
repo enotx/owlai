@@ -321,6 +321,7 @@ async def _create_default_agent_configs() -> None:
         {"agent_type": "plan"},
         {"agent_type": "analyst"},
         {"agent_type": "task_manager"},
+        {"agent_type": "misc"},
     ]
     
     async with async_session() as session:

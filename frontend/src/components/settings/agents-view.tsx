@@ -8,9 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 const AGENT_LABELS: Record<string, { label: string; p_title?: string }> = {
   default: { label: "Default Agent" },
-  plan: { label: "Plan Mode", p_title: "Code <Plato>, coming soon" },
-  analyst: { label: "Analyst Mode", p_title: "Code <Kant>, coming soon" },
-  misc: { label: "Misc Agent", p_title: "Code <Russell>, for history summary" },
+  plan: { label: "Plan Mode", p_title: "Code <Plato>, clarifying the purpose and evaluating the feasibility" },
+  analyst: { label: "Analyst Mode", p_title: "Code <Kant>, analyzing and interpreting information" },
+  misc: { label: "Misc Agent", p_title: "Code <Russell>, for intent classification & history summary" },
 };
 
 export default function AgentsView() {
