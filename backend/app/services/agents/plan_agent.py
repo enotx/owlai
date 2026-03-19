@@ -8,79 +8,8 @@ import uuid
 from app.services.agents.base import BaseAgent
 from openai.types.chat import ChatCompletionMessageParam
 
-
-
-PLAN_SYSTEM_PROMPT = """\
-You are **Owl Planning Agent 🦉**, a careful analyst who helps users prepare for data analysis.
-
-## Your Mission: Prepare, Don't Rush
-
-You work in THREE PHASES. You MUST complete each phase before moving to the next.
-
-### PHASE 1: Clarify Requirements (ALWAYS START HERE)
-Before doing ANYTHING else, you must understand:
-- What business question is the user trying to answer?
-- What specific metrics or insights do they need?
-- What is the expected output format? (chart, table, report, etc.)
-- Are there any domain-specific terms that need clarification?
-
-**Ask questions** until you have clear answers. Use `execute_python_code` to explore data if needed.
-
-### PHASE 2: Assess Data Readiness
-Once requirements are clear, check:
-- Do we have all necessary datasets?
-- Are the data fields sufficient for the analysis?
-- Are there data quality issues? (missing values, inconsistencies, etc.)
-- Do we need additional data sources?
-
-**If data is insufficient**, tell the user EXACTLY what's missing and ask them to provide it.
-**DO NOT proceed to planning** if critical data is missing.
-
-### PHASE 3: Create Analysis Plan (ONLY WHEN READY)
-You can ONLY generate a plan when BOTH conditions are met:
-1. ✅ Requirements are crystal clear
-2. ✅ All necessary data is available
-
-**CRITICAL RULES**:
-- NEVER generate a plan in your first response
-- NEVER skip Phase 1 and Phase 2
-- If the user pushes you to plan prematurely, politely explain what information is still needed
-- If you're unsure about data sufficiency, ASK rather than assume
-
-## Available Datasets
-{dataset_context}
-
-## Reference Documents
-{text_context}
-
-## Variable Reference
-{variable_reference}
-
-**Remember**: A good plan is built on solid understanding. Take your time.
-
-# Exceptions:
-If the user explicitly says "just start" or "skip clarification", you may proceed to planning,
-but you should still note any assumptions you're making.
-"""
-
-# Tool定义（与AnalystAgent相同）
-PLAN_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "execute_python_code",
-            "description": "Execute Python code for exploratory analysis during planning",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "code": {"type": "string", "description": "Python code to execute"},
-                    "purpose": {"type": "string", "description": "Why you're running this code"},
-                },
-                "required": ["code", "purpose"],
-            },
-        },
-    }
-]
+from app.prompts import build_plan_system_prompt
+from app.tools import get_tools_for_agent
 
 
 class PlanAgent(BaseAgent):
@@ -103,24 +32,14 @@ class PlanAgent(BaseAgent):
         # 获取Knowledge上下文
         dataset_ctx, text_ctx, var_ref, data_var_map = await self._get_knowledge_context()
 
-        system_prompt = PLAN_SYSTEM_PROMPT.format(
+        conversation_turns = len([m for m in history if m["role"] in ("user", "assistant")])
+        system_prompt = build_plan_system_prompt(
             dataset_context=dataset_ctx,
             text_context=text_ctx,
             variable_reference=var_ref,
+            is_first_turn=(conversation_turns == 0),
         )
 
-        # 🆕 计算对话轮次（排除system消息）
-        conversation_turns = len([m for m in history if m["role"] in ("user", "assistant")])
-        
-        # 🆕 如果是第一轮对话，添加额外提醒
-        if conversation_turns == 0:
-            first_turn_reminder = (
-                "\n\n**IMPORTANT**: This is your FIRST interaction with the user. "
-                "You MUST start by asking clarifying questions. "
-                "DO NOT generate a plan in this response."
-            )
-            system_prompt += first_turn_reminder
-            
 
         
         messages: list[ChatCompletionMessageParam] = [
@@ -142,13 +61,14 @@ class PlanAgent(BaseAgent):
         # 调用LLM（支持tool calling）
         max_rounds = 5  # Plan阶段限制轮次
         
+        plan_tools = get_tools_for_agent("plan")
         for round_idx in range(max_rounds):
             try:
                 stream = await self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
-                    tools=PLAN_TOOLS,  # type: ignore
-                    tool_choice="auto",
+                    tools=plan_tools if plan_tools else None,  # type: ignore
+                    tool_choice="auto" if plan_tools else None, # type: ignore
                     stream=True,
                     temperature=0.3,
                 )

@@ -1,0 +1,76 @@
+# backend/app/tools/definitions.py
+
+"""
+所有 Tool 的 OpenAI Function Calling JSON Schema 定义。
+单一来源：Agent 层统一从这里导入，不再各自定义。
+"""
+
+EXECUTE_PYTHON_CODE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "execute_python_code",
+        "description": (
+            "Execute Python code in a sandboxed environment with pandas, numpy, "
+            "sklearn, scipy pre-installed. All uploaded datasets are pre-loaded as DataFrames. "
+            "Use print() to output results. "
+            "Use this tool to explore data, compute statistics, verify hypotheses, etc. "
+            "If you want to create a chart, call create_chart(title, chart_type, option) "
+            "inside this code block."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "Python code to execute. Use print() for output.",
+                },
+                "purpose": {
+                    "type": "string",
+                    "description": "Brief description of what this code does (1 sentence).",
+                },
+            },
+            "required": ["code", "purpose"],
+        },
+    },
+}
+
+CREATE_VISUALIZATION_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "create_visualization",
+        "description": (
+            "Create an interactive ECharts chart. "
+            "Only use this AFTER you have computed final results and the user "
+            "would benefit from a visual representation. "
+            "PREFER using create_chart() inside execute_python_code instead, "
+            "as it lets you use Python variables directly. "
+            "You MUST provide a complete ECharts option with embedded data."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Chart title (concise, descriptive)",
+                },
+                "chart_type": {
+                    "type": "string",
+                    "enum": [
+                        "bar", "line", "pie", "scatter",
+                        "radar", "heatmap", "boxplot", "funnel",
+                    ],
+                    "description": "Chart type",
+                },
+                "option": {
+                    "type": "object",
+                    "description": (
+                        "Complete ECharts option JSON with data embedded. "
+                        "Must contain at least: title, tooltip, series."
+                    ),
+                },
+            },
+            "required": ["title", "chart_type", "option"],
+            "additionalProperties": False,
+        },
+    },
+}
