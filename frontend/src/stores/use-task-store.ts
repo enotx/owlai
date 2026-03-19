@@ -129,6 +129,7 @@ interface TaskStore {
   setCurrentTaskId: (id: string | null) => void;
   addTask: (task: Task) => void;
   removeTask: (id: string) => void;
+  updateTaskTitle: (id: string, title: string) => void;
 
   // Knowledge 状态
   knowledgeList: Knowledge[];
@@ -212,6 +213,10 @@ export const useTaskStore = create<TaskStore>((set) => ({
     set((s) => ({
       tasks: s.tasks.filter((t) => t.id !== id),
       currentTaskId: s.currentTaskId === id ? null : s.currentTaskId,
+    })),
+  updateTaskTitle: (id, title) =>
+    set((s) => ({
+      tasks: s.tasks.map((t) => (t.id === id ? { ...t, title } : t)),
     })),
 
   // Knowledge

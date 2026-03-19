@@ -98,3 +98,96 @@ async def update_task_mode(
     
     await db.commit()
     await db.refresh(task)
+
+
+@router.post("/{task_id}/auto-rename", response_model=TaskResponse)
+async def auto_rename_task(task_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    自动重命名任务：根据对话历史用 misc/default agent 生成简短标题
+    整体 try/except 保护，失败时静默返回原 task
+    """
+    import logging
+    from app.models import Step
+
+    logger = logging.getLogger(__name__)
+
+    task = await db.get(Task, task_id)
+    if not task:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    try:
+        # 获取最近对话历史（最多10条 Step）
+        result = await db.execute(
+            select(Step)
+            .where(Step.task_id == task_id)
+            .order_by(Step.created_at.asc())
+            .limit(10)
+        )
+        steps = result.scalars().all()
+
+        # 拼接对话摘要
+        conversation_lines: list[str] = []
+        for step in steps:
+            if step.step_type == "user_message":
+                conversation_lines.append(f"User: {step.content[:200]}")
+            elif step.step_type == "assistant_message":
+                conversation_lines.append(f"Assistant: {step.content[:200]}")
+
+        if not conversation_lines:
+            logger.info(f"Auto-rename skipped for task {task_id}: no conversation")
+            return task
+
+        # 获取 LLM 客户端：misc → default 回退
+        from app.services.agent import _get_client_from_db
+
+        config = await _get_client_from_db(db, "misc")
+        if config is None:
+            config = await _get_client_from_db(db, "default")
+        if config is None:
+            logger.info(f"Auto-rename skipped for task {task_id}: no LLM config")
+            return task
+
+        client, model_id = config
+
+        prompt = (
+            "Based on the following conversation, generate a concise task title "
+            "(max 30 characters, no quotes, no punctuation at end).\n"
+            "The title should capture the main topic or goal.\n\n"
+            "Conversation:\n"
+            + "\n".join(conversation_lines)
+            + "\n\nReply with ONLY the title text, nothing else."
+        )
+
+        response = await client.chat.completions.create(
+            model=model_id,
+            messages=[{"role": "user", "content": prompt}],
+            reasoning_effort="minimal", # type: ignore
+            temperature=0.0,
+            max_tokens=120,
+        )
+        new_title = (response.choices[0].message.content or "").strip().strip("\"'")
+        logger.info(f"Auto-rename LLM returned: '{new_title}' for task {task_id}")
+        print("Original Response:", repr(response))
+        print("Auto-rename LLM returned:", repr(new_title))
+
+        if not new_title or len(new_title) > 50:
+            return task
+
+        # 重新获取 task 以确保 session 中对象有效，避免 stale object
+        task = await db.get(Task, task_id)
+        if task is None:
+            return task  # type: ignore
+        task.title = new_title
+        await db.commit()
+        await db.refresh(task)
+        logger.info(f"Auto-rename succeeded: task {task_id} → '{new_title}'")
+
+    except Exception as e:
+        logger.warning(f"Auto-rename failed for task {task_id}: {e}", exc_info=True)
+        # 回滚脏状态，防止后续请求受影响
+        await db.rollback()
+        # 重新获取干净的 task 对象返回
+        task = await db.get(Task, task_id)
+
+    return task

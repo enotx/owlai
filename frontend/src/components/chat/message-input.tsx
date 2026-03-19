@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SendHorizonal, Loader2 } from "lucide-react";
 
-import { streamChat } from "@/lib/api";
+import { streamChat, autoRenameTask } from "@/lib/api";
 import type { SSEEvent } from "@/lib/api";
 import { useTaskStore, Step } from "@/stores/use-task-store";
 import { useSettingsStore } from "@/stores/use-settings-store";
@@ -24,6 +24,7 @@ const DEFAULT_MODEL_VALUE = "__use_default__";
 export default function MessageInput() {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const autoRenameCalledRef = useRef(false); 
   
   const {
     currentTaskId,
@@ -110,6 +111,7 @@ export default function MessageInput() {
     if (!text.trim() || !currentTaskId || isSending) return;
     const message = text.trim();
     setText("");
+    autoRenameCalledRef.current = false;
     setIsSending(true);
 
     // 立即显示用户消息（临时，等 step_saved 替换）
@@ -195,12 +197,31 @@ export default function MessageInput() {
               break;
 
             case "done": {
-              // 全部完成 — 清除残留状态即可
-              // 不再 flush streamingMessage 为临时 Step，
-              // 因为 step_saved 事件才是消息的唯一权威来源，
-              // flush 会导致与 step_saved 重复
+              // 全部完成 — 清除残留状态
               clearStreaming();
               setPendingTool(null);
+              // 自动重命名：首次对话完成后，若 title 仍为默认模式则触发
+              if (!autoRenameCalledRef.current) {
+                autoRenameCalledRef.current = true;
+                const store = useTaskStore.getState();
+                const currentTask = store.tasks.find(
+                  (t) => t.id === currentTaskId
+                );
+                if (currentTask && /^Task \d+$/.test(currentTask.title)) {
+                  autoRenameTask(currentTaskId!)
+                    .then((res) => {
+                      const newTitle = res.data?.title;
+                      if (newTitle && newTitle !== currentTask.title) {
+                        useTaskStore
+                          .getState()
+                          .updateTaskTitle(currentTaskId!, newTitle);
+                      }
+                    })
+                    .catch((err) => {
+                      console.error("Auto-rename failed:", err);
+                    });
+                }
+              }
               break;
             }
 

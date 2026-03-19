@@ -208,12 +208,15 @@ class AgentOrchestrator:
 Respond with ONLY a JSON object, no markdown fences:
 {{"mode": "plan" or "analyst", "reason": "one-sentence explanation"}}"""
 
+
+        print("Intent classification prompt:", repr(classification_prompt))
+
         try:
             response = await client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": classification_prompt}],
                 temperature=0.0,
-                max_tokens=120,
+                max_tokens=8192,
             )
             
             content = (response.choices[0].message.content or "").strip()
@@ -228,6 +231,7 @@ Respond with ONLY a JSON object, no markdown fences:
                     mode = "analyst"
                 return mode, reason
             
+            print("Intent classification LLM response:", repr(response))
             return "analyst", "Intent classification returned unparseable response; defaulting to analyst"
         
         except Exception:

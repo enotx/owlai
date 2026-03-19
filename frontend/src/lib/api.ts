@@ -68,6 +68,12 @@ export const fetchTasks = async () => (await getApi()).get("/tasks");
 export const deleteTask = async (taskId: string) =>
   (await getApi()).delete(`/tasks/${taskId}`);
 
+export const renameTask = async (taskId: string, title: string) =>
+  (await getApi()).put(`/tasks/${taskId}`, { title });
+
+export const autoRenameTask = async (taskId: string) =>
+  (await getApi()).post(`/tasks/${taskId}/auto-rename`);
+
 // ===== Knowledge =====
 export const fetchKnowledge = async (taskId: string) =>
   (await getApi()).get("/knowledge", { params: { task_id: taskId } });
