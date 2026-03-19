@@ -168,8 +168,6 @@ async def auto_rename_task(task_id: str, db: AsyncSession = Depends(get_db)):
         )
         new_title = (response.choices[0].message.content or "").strip().strip("\"'")
         logger.info(f"Auto-rename LLM returned: '{new_title}' for task {task_id}")
-        print("Original Response:", repr(response))
-        print("Auto-rename LLM returned:", repr(new_title))
 
         if not new_title or len(new_title) > 50:
             return task

@@ -19,8 +19,8 @@ async def lifespan(app: FastAPI):
     # 移除：os.makedirs("data/uploads", exist_ok=True)
     # 改为：UPLOADS_DIR 在 config.py 中已经自动创建
     await init_db()
-    print(f"✅ Owl Backend is ready. Data directory: {UPLOADS_DIR.parent}")
-    print(f"🔧 Running in {APP_MODE} mode")
+    # print(f"✅ Owl Backend is ready. Data directory: {UPLOADS_DIR.parent}")
+    # print(f"🔧 Running in {APP_MODE} mode")
     yield
 
 app = FastAPI(title="Owl API", version="0.1.0", lifespan=lifespan)
@@ -36,7 +36,7 @@ if APP_MODE in ("desktop", "dev"):
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    print("🌐 CORS enabled for desktop/dev mode")
+    # print("🌐 CORS enabled for desktop/dev mode")
 elif APP_MODE == "docker":
     # 云端模式：严格限制来源（生产环境）
     allowed_origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
@@ -48,7 +48,7 @@ elif APP_MODE == "docker":
             allow_methods=["*"],
             allow_headers=["*"],
         )
-        print(f"🌐 CORS enabled for origins: {allowed_origins}")
+        # print(f"🌐 CORS enabled for origins: {allowed_origins}")
 
 
 # 注册路由
