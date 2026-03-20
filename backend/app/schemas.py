@@ -241,28 +241,7 @@ class SkillResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
-
     model_config = {"from_attributes": True}
-
-    @classmethod
-    def model_validate(cls, obj, **kwargs):
-        """自定义验证：将 JSON 字符串字段解析为 Python 对象"""
-        import json as _json
-        if hasattr(obj, "env_vars_json"):
-            # ORM 对象 → 转换 JSON 字段
-            data = {
-                "id": obj.id,
-                "name": obj.name,
-                "description": obj.description,
-                "prompt_markdown": obj.prompt_markdown,
-                "env_vars": _json.loads(obj.env_vars_json) if obj.env_vars_json else {},
-                "allowed_modules": _json.loads(obj.allowed_modules_json) if obj.allowed_modules_json else [],
-                "is_active": obj.is_active,
-                "created_at": obj.created_at,
-                "updated_at": obj.updated_at,
-            }
-            return super().model_validate(data, **kwargs)
-        return super().model_validate(obj, **kwargs)
 
 # ===== Visualization =====
 class VisualizationResponse(BaseModel):

@@ -7,8 +7,8 @@
  * 支持右键/按钮 Context Menu（重命名、删除）
  */
 import { useEffect, useCallback, useState, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useTaskStore } from "@/stores/use-task-store";
 import { useSettingsStore } from "@/stores/use-settings-store";
@@ -50,6 +50,7 @@ export default function TaskSidebar() {
 
   // Context Menu 状态
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   // 行内编辑状态
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
@@ -87,7 +88,7 @@ export default function TaskSidebar() {
   /* 切换 Task */
   const handleSelect = useCallback(
     async (taskId: string) => {
-      if (editingId) return; // 编辑中不切换
+      if (editingId) return;
       setCurrentTaskId(taskId);
       setPreviewData(null, []);
       try {
@@ -154,26 +155,72 @@ export default function TaskSidebar() {
     setEditingTitle("");
   };
 
+  /* 打开 Context Menu，基于按钮位置计算 fixed 坐标 */
+  const handleMenuToggle = (e: React.MouseEvent, taskId: string) => {
+    e.stopPropagation();
+    if (menuOpenId === taskId) {
+      setMenuOpenId(null);
+    } else {
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      setMenuPos({
+        top: rect.bottom + 4,
+        left: Math.max(4, rect.right - 120),
+      });
+      setMenuOpenId(taskId);
+    }
+  };
+
   const { setSettingsOpen } = useSettingsStore();
 
+  /* Context Menu 通过 Portal 渲染到 body，用 fixed 定位，不受父级 overflow 影响 */
+  const contextMenu =
+    menuOpenId &&
+    createPortal(
+      <div
+        ref={menuRef}
+        className="fixed z-50 min-w-[120px] rounded-md border bg-popover text-popover-foreground p-1 shadow-md animate-in fade-in-0 zoom-in-95"
+        style={{ top: menuPos.top, left: menuPos.left }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+          onClick={() => {
+            const task = tasks.find((t) => t.id === menuOpenId);
+            if (task) handleStartRename(task.id, task.title);
+          }}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          Rename
+        </button>
+        <button
+          className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10 transition-colors"
+          onClick={() => handleDelete(menuOpenId)}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Delete
+        </button>
+      </div>,
+      document.body
+    );
+
   return (
-    <div className="flex h-full w-full flex-col border-r bg-muted/30">
+    <div className="flex h-full w-full flex-col border-r bg-muted/30 overflow-hidden">
       {/* 头部 */}
       <div className="flex items-center gap-2 px-4 py-3">
-        <FolderOpen className="h-5 w-5 text-primary" />
-        <h2 className="text-sm font-semibold tracking-tight">Task History</h2>
+        <FolderOpen className="h-5 w-5 text-primary shrink-0" />
+        <h2 className="text-sm font-semibold tracking-tight truncate">Task History</h2>
       </div>
       <Separator />
 
       {/* Task 列表 */}
-      <ScrollArea className="flex-1 px-2 py-2">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-2">
         {!backendReady ? (
           <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             Loading tasks...
           </div>
         ) : (
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 min-w-0">
             {tasks.map((task) => {
               const isActive = currentTaskId === task.id;
               const isEditing = editingId === task.id;
@@ -183,13 +230,12 @@ export default function TaskSidebar() {
                   key={task.id}
                   onClick={() => !isEditing && handleSelect(task.id)}
                   className={cn(
-                    "group relative flex cursor-pointer items-center justify-between rounded-md px-3 py-2 text-sm transition-colors",
+                    "group flex cursor-pointer items-center rounded-md px-3 py-2 text-sm transition-colors min-w-0",
                     isActive
                       ? "bg-primary text-primary-foreground"
                       : "hover:bg-accent hover:text-accent-foreground"
                   )}
                 >
-                  {/* 标题 / 编辑输入框 */}
                   {isEditing ? (
                     <input
                       ref={editInputRef}
@@ -206,94 +252,63 @@ export default function TaskSidebar() {
                       onBlur={handleSubmitRename}
                       onClick={(e) => e.stopPropagation()}
                       className={cn(
-                        "w-full rounded px-1 py-0.5 text-sm outline-none",
+                        "min-w-0 flex-1 rounded px-1 py-0.5 text-sm outline-none",
                         isActive
                           ? "bg-primary-foreground/20 text-primary-foreground placeholder:text-primary-foreground/50"
                           : "bg-background text-foreground border border-input"
                       )}
                     />
                   ) : (
-                    <span className="truncate pr-2">{task.title}</span>
+                    <span className="min-w-0 flex-1 truncate">{task.title}</span>
                   )}
 
-                  {/* "..." 菜单按钮 */}
                   {!isEditing && (
-                    <div className="relative shrink-0">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className={cn(
-                          "h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100",
-                          menuOpenId === task.id && "opacity-100",
-                          isActive
-                            ? "hover:bg-primary-foreground/20 text-primary-foreground"
-                            : "hover:bg-accent text-muted-foreground"
-                        )}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setMenuOpenId(
-                            menuOpenId === task.id ? null : task.id
-                          );
-                        }}
-                      >
-                        <MoreHorizontal className="h-3.5 w-3.5" />
-                      </Button>
-
-                      {/* Context Menu 下拉 */}
-                      {menuOpenId === task.id && (
-                        <div
-                          ref={menuRef}
-                          className="absolute right-0 top-7 z-50 min-w-[120px] rounded-md border bg-popover text-popover-foreground p-1 shadow-md animate-in fade-in-0 zoom-in-95"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <button
-                            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
-                            onClick={() =>
-                              handleStartRename(task.id, task.title)
-                            }
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                            Rename
-                          </button>
-                          <button
-                            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10 transition-colors"
-                            onClick={() => handleDelete(task.id)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            Delete
-                          </button>
-                        </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={cn(
+                        "h-6 w-6 shrink-0 ml-1 opacity-0 transition-opacity group-hover:opacity-100",
+                        menuOpenId === task.id && "opacity-100",
+                        isActive
+                          ? "hover:bg-primary-foreground/20 text-primary-foreground"
+                          : "hover:bg-accent text-muted-foreground"
                       )}
-                    </div>
+                      onClick={(e) => handleMenuToggle(e, task.id)}
+                    >
+                      <MoreHorizontal className="h-3.5 w-3.5" />
+                    </Button>
                   )}
                 </div>
               );
             })}
           </div>
         )}
-      </ScrollArea>
+      </div>
 
       {/* 底部操作区 */}
-      <div className="px-3 pb-3 pt-1 flex flex-col gap-2">
+      <div className="px-3 pb-3 pt-1 flex flex-col gap-2 min-w-0">
         <Button
           variant="outline"
-          className="w-full justify-start gap-2"
+          className="w-full justify-start gap-2 min-w-0"
           onClick={handleCreate}
           disabled={!backendReady}
         >
-          <Plus className="h-4 w-4" />
-          New Task
+          <Plus className="h-4 w-4 shrink-0" />
+          <span className="truncate">New Task</span>
         </Button>
         <Separator />
         <Button
           variant="ghost"
-          className="w-full justify-start gap-2 text-muted-foreground"
+          className="w-full justify-start gap-2 text-muted-foreground min-w-0"
           onClick={() => setSettingsOpen(true)}
         >
-          <Settings className="h-4 w-4" />
-          Settings
+          <Settings className="h-4 w-4 shrink-0" />
+          <span className="truncate">Settings</span>
         </Button>
       </div>
+
+      {/* Context Menu Portal */}
+      {contextMenu}
     </div>
   );
 }

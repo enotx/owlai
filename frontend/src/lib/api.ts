@@ -168,9 +168,10 @@ export async function streamChat(
   message: string,
   onEvent: (event: SSEEvent) => void,
   mode?: "auto" | "plan" | "analyst",
-  modelOverride?: { provider_id: string; model_id: string }
+  modelOverride?: { provider_id: string; model_id: string },
+  externalAbortController?: AbortController
 ) {
-  const controller = new AbortController();
+  const controller = externalAbortController || new AbortController();
 
   // 允许长任务（比如代码执行）最长 2 小时
   const globalTimeout = setTimeout(() => controller.abort(), 2 * 60 * 60 * 1000);
@@ -267,10 +268,8 @@ export async function streamChat(
     }
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      onEvent({
-        type: "error",
-        content: "Request timed out (exceeded 5 minutes).",
-      });
+      // 用户主动中止时静默处理，不推送 error 事件
+      // 仅发送 done 让调用方知道流已结束
       onEvent({ type: "done", steps: [] });
     } else {
       throw err; // 让 message-input.tsx 的 catch 处理
@@ -524,3 +523,19 @@ export interface VisualizationItem {
 
 export const fetchVisualizations = async (taskId: string) =>
   (await getApi()).get<VisualizationItem[]>(`/visualizations/task/${taskId}`);
+
+// ===== Step Management (Delete / Regenerate) =====
+/**
+ * 删除指定 Step 及其之后的所有 Step
+ */
+export const deleteStepAndAfter = async (stepId: string) =>
+  (await getApi()).delete<{ deleted_ids: string[] }>(`/chat/steps/${stepId}`);
+/**
+ * 重新生成：删除指定 Step 及其之后的所有 Step，返回需要重发的用户消息
+ */
+export const regenerateFromStep = async (stepId: string) =>
+  (await getApi()).post<{
+    user_message: string;
+    task_id: string;
+    deleted_ids: string[];
+  }>(`/chat/steps/${stepId}/regenerate`);

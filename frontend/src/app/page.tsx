@@ -19,6 +19,9 @@ import { CircleCheck, CircleX, Loader2 } from "lucide-react";
 import { useBackend } from "@/contexts/backend-context";
 import { useDatabase } from "@/contexts/database-context";
 import { useOnboarding } from "@/contexts/onboarding-context";
+import { fetchProviders, fetchAgentConfigs } from "@/lib/api";
+import { useSettingsStore } from "@/stores/use-settings-store";
+
 
 /** 布局常量 */
 const LEFT_WIDTH = 200;       // 左侧固定宽度 px
@@ -64,6 +67,19 @@ export default function HomePage() {
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, [handleResize]);
+
+  // 后端就绪后，拉取 Providers 和 AgentConfigs 到全局 store
+  useEffect(() => {
+    if (backendStatus !== "connected") return;
+    const { setProviders, setAgentConfigs } = useSettingsStore.getState();
+    fetchProviders()
+      .then((res) => setProviders(res.data ?? []))
+      .catch((err) => console.error("Failed to fetch providers:", err));
+    fetchAgentConfigs()
+      .then((res) => setAgentConfigs(res.data ?? []))
+      .catch((err) => console.error("Failed to fetch agent configs:", err));
+  }, [backendStatus]);
+
 
   const handleOnboardingClose = () => {
     // 重新检测配置（如果用户通过激活码或手动配置完成）

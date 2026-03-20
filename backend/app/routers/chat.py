@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.database import get_db
-from app.models import Step
+from app.models import Step, Visualization
 from app.schemas import ChatRequest, StepResponse
 from app.services.agent import run_agent_stream
 import asyncio
@@ -202,3 +202,149 @@ async def export_step_dataframe(
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+# ── 删除 Step 及其之后的所有 Step ──────────────────────────────
+@router.delete("/steps/{step_id}")
+async def delete_step_and_after(
+    step_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    删除指定 Step 及其之后（按 created_at 排序）的所有 Step。
+    用于用户清理不理想的对话/执行结果，避免污染上下文。
+    """
+    from fastapi import HTTPException
+
+    # 1. 查找目标 Step
+    result = await db.execute(select(Step).where(Step.id == step_id))
+    target_step = result.scalar_one_or_none()
+    if not target_step:
+        raise HTTPException(status_code=404, detail="Step not found")
+
+    # 2. 查找该 Step 及其之后的所有 Step（同一 task）
+    result = await db.execute(
+        select(Step)
+        .where(
+            Step.task_id == target_step.task_id,
+            Step.created_at >= target_step.created_at,
+        )
+        .order_by(Step.created_at.asc())
+    )
+    steps_to_delete = result.scalars().all()
+
+    deleted_ids = [s.id for s in steps_to_delete]
+
+    # 3. 删除关联的 capture 文件（可选，清理磁盘）
+    for step in steps_to_delete:
+        if step.step_type == "tool_use" and step.code_output:
+            try:
+                output_data = _json.loads(step.code_output)
+                for df_meta in output_data.get("dataframes", []):
+                    capture_id = df_meta.get("capture_id", "")
+                    df_name = df_meta.get("name", "")
+                    capture_dir = os.path.join(UPLOADS_DIR, step.task_id, "captures")
+                    file_path = os.path.join(capture_dir, f"{capture_id}_{df_name}.json")
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+            except (_json.JSONDecodeError, Exception):
+                pass  # 清理失败不影响主流程
+
+    # 3.5 删除关联的 Visualization
+    step_ids_to_delete = [s.id for s in steps_to_delete]
+    if step_ids_to_delete:
+        viz_result = await db.execute(
+            select(Visualization).where(Visualization.step_id.in_(step_ids_to_delete))
+        )
+        for viz in viz_result.scalars().all():
+            await db.delete(viz)
+
+    # 4. 批量删除
+    for step in steps_to_delete:
+        await db.delete(step)
+    await db.commit()
+
+    return {"deleted_ids": deleted_ids}
+
+
+# ── 重新生成：删除 Step 并返回需要重发的用户消息 ──────────────
+@router.post("/steps/{step_id}/regenerate")
+async def regenerate_from_step(
+    step_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    找到指定 Step 之前最近的 user_message，
+    删除该 user_message 及其之后的所有 Step，
+    返回 user_message 内容供前端重新发送。
+    """
+    from fastapi import HTTPException
+
+    # 1. 查找目标 Step
+    result = await db.execute(select(Step).where(Step.id == step_id))
+    target_step = result.scalar_one_or_none()
+    if not target_step:
+        raise HTTPException(status_code=404, detail="Step not found")
+
+    task_id = target_step.task_id
+
+    # 2. 查找该 Step 之前（含自身）最近的 user_message
+    #    如果目标本身就是 user_message，则使用它
+    if target_step.step_type == "user_message":
+        anchor_step = target_step
+    else:
+        # 找到该 step 之前最近的 user_message
+        result = await db.execute(
+            select(Step)
+            .where(
+                Step.task_id == task_id,
+                Step.step_type == "user_message",
+                Step.created_at <= target_step.created_at,
+            )
+            .order_by(Step.created_at.desc())
+            .limit(1)
+        )
+        anchor_step = result.scalar_one_or_none()
+        if not anchor_step:
+            raise HTTPException(
+                status_code=400,
+                detail="No user message found before this step"
+            )
+
+    user_message = anchor_step.content
+
+    # 3. 删除 anchor_step 及其之后的所有 Step
+    result = await db.execute(
+        select(Step)
+        .where(
+            Step.task_id == task_id,
+            Step.created_at >= anchor_step.created_at,
+        )
+        .order_by(Step.created_at.asc())
+    )
+    steps_to_delete = result.scalars().all()
+    deleted_ids = [s.id for s in steps_to_delete]
+
+    # 清理 capture 文件
+    for step in steps_to_delete:
+        if step.step_type == "tool_use" and step.code_output:
+            try:
+                output_data = _json.loads(step.code_output)
+                for df_meta in output_data.get("dataframes", []):
+                    capture_id = df_meta.get("capture_id", "")
+                    df_name = df_meta.get("name", "")
+                    capture_dir = os.path.join(UPLOADS_DIR, step.task_id, "captures")
+                    file_path = os.path.join(capture_dir, f"{capture_id}_{df_name}.json")
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+            except (_json.JSONDecodeError, Exception):
+                pass
+
+    for step in steps_to_delete:
+        await db.delete(step)
+    await db.commit()
+
+    return {
+        "user_message": user_message,
+        "task_id": task_id,
+        "deleted_ids": deleted_ids,
+    }

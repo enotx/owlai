@@ -169,6 +169,12 @@ interface TaskStore {
   isSending: boolean;
   setIsSending: (v: boolean) => void;
 
+  // 等待LLM首次响应
+  isWaitingResponse: boolean;
+  setIsWaitingResponse: (v: boolean) => void;
+  // 删除 step（及其后所有）
+  removeStepsByIds: (ids: string[]) => void;
+
   // SubTask 状态
   subtasks: SubTask[];
   setSubTasks: (subtasks: SubTask[]) => void;
@@ -199,6 +205,7 @@ export const useTaskStore = create<TaskStore>((set) => ({
       streamingMessage: null,
       pendingTool: null,
       isSending: false,
+      isWaitingResponse: false,
       knowledgeList: [],
       previewData: null,
       previewColumns: [],
@@ -288,6 +295,15 @@ export const useTaskStore = create<TaskStore>((set) => ({
   // Loading
   isSending: false,
   setIsSending: (v) => set({ isSending: v }),
+
+  isWaitingResponse: false,
+  setIsWaitingResponse: (v) => set({ isWaitingResponse: v }),
+  removeStepsByIds: (ids: string[]) =>
+    set((s) => {
+      const idSet = new Set(ids);
+      return { steps: s.steps.filter((st) => !idSet.has(st.id)) };
+    }),
+
 
   // SubTask
   subtasks: [],

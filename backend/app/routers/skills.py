@@ -14,14 +14,28 @@ from app.schemas import (
     SkillResponse,
 )
 
-router = APIRouter(prefix="/skills", tags=["skills"])
+router = APIRouter(prefix="/api/skills", tags=["skills"])
 
 
 @router.get("", response_model=list[SkillResponse])
-async def list_skills(db: AsyncSession = Depends(get_db)):          # ← get_db
+async def list_skills(db: AsyncSession = Depends(get_db)):
     """获取所有 Skill"""
+    import json
     result = await db.execute(select(Skill).order_by(Skill.created_at.desc()))
-    return list(result.scalars().all())
+    return [
+        SkillResponse(
+            id=s.id,
+            name=s.name,
+            description=s.description,
+            prompt_markdown=s.prompt_markdown,
+            env_vars=json.loads(s.env_vars_json) if s.env_vars_json else {},
+            allowed_modules=json.loads(s.allowed_modules_json) if s.allowed_modules_json else [],
+            is_active=s.is_active,
+            created_at=s.created_at,
+            updated_at=s.updated_at,
+        )
+        for s in result.scalars().all()
+    ]
 
 
 @router.get("/{skill_id}", response_model=SkillResponse)
@@ -30,7 +44,18 @@ async def get_skill(skill_id: str, db: AsyncSession = Depends(get_db)):    # ←
     skill = await db.get(Skill, skill_id)
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
-    return skill
+    import json
+    return SkillResponse(
+        id=skill.id,
+        name=skill.name,
+        description=skill.description,
+        prompt_markdown=skill.prompt_markdown,
+        env_vars=json.loads(skill.env_vars_json) if skill.env_vars_json else {},
+        allowed_modules=json.loads(skill.allowed_modules_json) if skill.allowed_modules_json else [],
+        is_active=skill.is_active,
+        created_at=skill.created_at,
+        updated_at=skill.updated_at,
+    )
 
 
 @router.post("", response_model=SkillResponse, status_code=201)
@@ -56,7 +81,18 @@ async def create_skill(
     db.add(skill)
     await db.commit()
     await db.refresh(skill)
-    return skill
+    import json
+    return SkillResponse(
+        id=skill.id,
+        name=skill.name,
+        description=skill.description,
+        prompt_markdown=skill.prompt_markdown,
+        env_vars=json.loads(skill.env_vars_json) if skill.env_vars_json else {},
+        allowed_modules=json.loads(skill.allowed_modules_json) if skill.allowed_modules_json else [],
+        is_active=skill.is_active,
+        created_at=skill.created_at,
+        updated_at=skill.updated_at,
+    )
 
 
 @router.patch("/{skill_id}", response_model=SkillResponse)
@@ -94,7 +130,18 @@ async def update_skill(
 
     await db.commit()
     await db.refresh(skill)
-    return skill
+    import json
+    return SkillResponse(
+        id=skill.id,
+        name=skill.name,
+        description=skill.description,
+        prompt_markdown=skill.prompt_markdown,
+        env_vars=json.loads(skill.env_vars_json) if skill.env_vars_json else {},
+        allowed_modules=json.loads(skill.allowed_modules_json) if skill.allowed_modules_json else [],
+        is_active=skill.is_active,
+        created_at=skill.created_at,
+        updated_at=skill.updated_at,
+    )
 
 
 @router.delete("/{skill_id}", status_code=204)

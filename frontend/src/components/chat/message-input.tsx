@@ -11,7 +11,7 @@ import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { SendHorizonal, Loader2 } from "lucide-react";
+import { SendHorizonal, Square } from "lucide-react";
 
 import { streamChat, autoRenameTask } from "@/lib/api";
 import type { SSEEvent } from "@/lib/api";
@@ -25,12 +25,16 @@ export default function MessageInput() {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const autoRenameCalledRef = useRef(false); 
-  
+  // 用于中止 SSE 流
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   const {
     currentTaskId,
     addStep,
     isSending,
     setIsSending,
+    isWaitingResponse,
+    setIsWaitingResponse,
     startStreaming,
     appendStreamingToken,
     clearStreaming,
@@ -107,12 +111,31 @@ export default function MessageInput() {
     }
   }, [text]);
 
+  /** 中止当前 SSE 流 */
+  const handleAbort = () => {
+    try {
+      abortControllerRef.current?.abort();
+    } catch {
+      // AbortError expected, ignore
+    }
+    abortControllerRef.current = null;
+    clearStreaming();
+    setPendingTool(null);
+    setIsWaitingResponse(false);
+    setIsSending(false);
+  };
+
   const handleSend = async () => {
     if (!text.trim() || !currentTaskId || isSending) return;
     const message = text.trim();
     setText("");
     autoRenameCalledRef.current = false;
     setIsSending(true);
+    setIsWaitingResponse(true); // 进入等待状态
+
+    // 创建 AbortController 供中止使用
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     // 立即显示用户消息（临时，等 step_saved 替换）
     const tempUserId = `temp-user-${Date.now()}`;
@@ -142,7 +165,11 @@ export default function MessageInput() {
         (event: SSEEvent) => {
           switch (event.type) {
             case "text":
-              // 流式文本 → 追加到 streamingMessage
+              // 收到首个实际内容，退出 waiting 状态
+              if (useTaskStore.getState().isWaitingResponse) {
+                setIsWaitingResponse(false);
+              }
+
               if (!useTaskStore.getState().streamingMessage) {
                 startStreaming();
               }
@@ -152,7 +179,10 @@ export default function MessageInput() {
               break;
 
             case "tool_start":
-              // 代码即将执行 → 先把当前流式文本冲刷掉
+              // 收到 tool_start 也退出 waiting 状态
+              if (useTaskStore.getState().isWaitingResponse) {
+                setIsWaitingResponse(false);
+              }
               _flushStreaming();
               setPendingTool({
                 code: event.code || "",
@@ -228,6 +258,7 @@ export default function MessageInput() {
             case "error":
               clearStreaming();
               setPendingTool(null);
+              setIsWaitingResponse(false);
               addStep({
                 id: `error-${Date.now()}`,
                 task_id: currentTaskId!,
@@ -242,24 +273,33 @@ export default function MessageInput() {
           }
         },
         currentMode, // 传递mode
-        modelOverride // 只有显式选择时才传递
+        modelOverride, // 只有显式选择时才传递
+        controller // 传入外部 AbortController
       );
     } catch (err) {
-      console.error("Stream failed:", err);
-      clearStreaming();
-      setPendingTool(null);
-      addStep({
-        id: `error-${Date.now()}`,
-        task_id: currentTaskId,
-        role: "assistant",
-        step_type: "assistant_message",
-        content: "⚠️ 网络请求失败,请检查后端是否正常运行。",
-        code: null,
-        code_output: null,
-        created_at: new Date().toISOString(),
-      });
+      // AbortError 是用户主动中止，不需要报错
+      if (err instanceof DOMException && err.name === "AbortError") {
+        // 静默处理
+      } else {
+        console.error("Stream failed:", err);
+        clearStreaming();
+        setPendingTool(null);
+        setIsWaitingResponse(false);
+        addStep({
+          id: `error-${Date.now()}`,
+          task_id: currentTaskId,
+          role: "assistant",
+          step_type: "assistant_message",
+          content: "⚠️ 网络请求失败,请检查后端是否正常运行。",
+          code: null,
+          code_output: null,
+          created_at: new Date().toISOString(),
+        });
+      }
     } finally {
+      abortControllerRef.current = null;
       setIsSending(false);
+      setIsWaitingResponse(false);
     }
   };
 
@@ -295,18 +335,27 @@ export default function MessageInput() {
           className="min-h-[80px] max-h-[160px] resize-none border-0 pr-14 focus-visible:ring-0 focus-visible:ring-offset-0"
           rows={3}
         />
-        <Button
-          size="icon"
-          disabled={!text.trim() || !currentTaskId || isSending}
-          onClick={handleSend}
-          className="absolute bottom-2 right-2 h-8 w-8"
-        >
-          {isSending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
+        {/* 发送 / 中止按钮 */}
+        {isSending ? (
+          <Button
+            size="icon"
+            variant="destructive"
+            onClick={handleAbort}
+            className="absolute bottom-2 right-2 h-8 w-8"
+            title="Stop generating"
+          >
+            <Square className="h-3.5 w-3.5 fill-current" />
+          </Button>
+        ) : (
+          <Button
+            size="icon"
+            disabled={!text.trim() || !currentTaskId}
+            onClick={handleSend}
+            className="absolute bottom-2 right-2 h-8 w-8"
+          >
             <SendHorizonal className="h-4 w-4" />
-          )}
-        </Button>
+          </Button>
+        )}
       </div>
 
       {/* 模式选择器 + 模型选择器 + 快捷键提示 */}
