@@ -2,29 +2,85 @@
 
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useTaskStore } from "@/stores/use-task-store";
 import { uploadKnowledge } from "@/lib/api";
 import { Plus, X, FileSpreadsheet, FileText, Sheet } from "lucide-react";
 
+
 export default function KnowledgeZone() {
   const { currentTaskId, knowledgeList, addKnowledge, removeKnowledge, setPreviewData } = useTaskStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounterRef = useRef(0);
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !currentTaskId) return;
+  // 通用文件上传处理
+  const processFile = useCallback(async (file: File) => {
+    if (!currentTaskId) return;
+    const allowedExts = [".csv", ".txt", ".md", ".xlsx", ".xls"];
+    const ext = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+    if (!allowedExts.includes(ext)) {
+      console.warn(`Unsupported file type: ${ext}`);
+      return;
+    }
     try {
       const res = await uploadKnowledge(currentTaskId, file);
       addKnowledge(res.data);
     } catch (err) {
       console.error("Upload failed:", err);
     }
+  }, [currentTaskId, addKnowledge]);
+
+  // 点击上传
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await processFile(file);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
+  // 拖拽事件：进入区域
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current++;
+    if (e.dataTransfer.types.includes("Files")) {
+      setIsDragging(true);
+    }
+  }, []);
+
+  // 拖拽事件：悬停（必须 preventDefault 才能触发 drop）
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  // 拖拽事件：离开区域（用计数器防子元素闪烁）
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current--;
+    if (dragCounterRef.current === 0) {
+      setIsDragging(false);
+    }
+  }, []);
+
+  // 拖拽事件：释放文件，支持多文件依次上传
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    dragCounterRef.current = 0;
+
+    const files = Array.from(e.dataTransfer.files);
+    for (const file of files) {
+      await processFile(file);
+    }
+  }, [processFile]);
+
+  // 删除知识库项
   const handleRemove = async (id: string) => {
     try {
       const { deleteKnowledge: delApi } = await import("@/lib/api");
@@ -75,10 +131,26 @@ export default function KnowledgeZone() {
   };
 
   return (
-    <div className="rounded-lg border bg-card p-3">
+    <div
+      className={`rounded-lg border bg-card p-3 transition-colors ${
+        isDragging ? "border-primary border-dashed bg-primary/5" : ""
+      }`}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <h3 className="mb-2 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider">
         Knowledge Zone
       </h3>
+
+      {/* 拖拽中提示 */}
+      {isDragging && (
+        <div className="mb-2 flex items-center justify-center rounded border border-dashed border-primary/50 bg-primary/5 py-2 text-xs text-primary">
+          Drop files here to upload (.csv, .xlsx, .xls, .txt, .md)
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
         {knowledgeList.map((k) => (
           <Badge
