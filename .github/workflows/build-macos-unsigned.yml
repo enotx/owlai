@@ -60,10 +60,10 @@ jobs:
       
       - name: Create DMG (unsigned)
         run: |
-          APP_PATH="frontend/src-tauri/target/release/bundle/macos/Owl Data Analyzer.app"
+          APP_PATH="frontend/src-tauri/target/release/bundle/macos/Owl Data Analyst.app"
           
           if [ -d "$APP_PATH" ]; then
-            hdiutil create -volname "Owl Data Analyzer (${{ matrix.arch_name }})" \
+            hdiutil create -volname "Owl Data Analyst (${{ matrix.arch_name }})" \
               -srcfolder "$APP_PATH" \
               -ov -format UDZO \
               "Owl-Installer-${{ matrix.arch_name }}-Unsigned.dmg"
@@ -73,7 +73,7 @@ jobs:
             echo "To install on macOS:" >> INSTALL_INSTRUCTIONS.txt
             echo "1. Mount the DMG" >> INSTALL_INSTRUCTIONS.txt
             echo "2. Drag app to Applications" >> INSTALL_INSTRUCTIONS.txt
-            echo "3. Run: xattr -cr '/Applications/Owl Data Analyzer.app'" >> INSTALL_INSTRUCTIONS.txt
+            echo "3. Run: xattr -cr '/Applications/Owl Data Analyst.app'" >> INSTALL_INSTRUCTIONS.txt
             echo "4. Launch the app" >> INSTALL_INSTRUCTIONS.txt
           else
             echo "❌ App bundle not found at $APP_PATH"

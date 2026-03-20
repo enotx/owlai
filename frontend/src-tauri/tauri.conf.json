@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Owl Data Analyzer",
-  "version": "0.1.0",
-  "identifier": "com.owl.analyzer",
+  "productName": "Owl Data Analyst",
+  "version": "0.1.2",
+  "identifier": "com.owl.analyst",
   "build": {
     "frontendDist": "../out",
     "devUrl": "http://localhost:3000",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Owl Data Analyzer",
+        "title": "Owl Data Analyst",
         "width": 1400,
         "height": 900,
         "minWidth": 1200,
@@ -40,7 +40,7 @@
       "../../python_env": "./python_env"
     },
     "macOS": {
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "14.0"
     }
   }
 }
