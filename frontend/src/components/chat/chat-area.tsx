@@ -15,6 +15,7 @@ import MessageInput from "./message-input";
 import SubTaskList from "./subtask-list";
 import PlanConfirmationDialog from "./plan-confirmation";
 import EChartsView from "./echarts-view";
+import { MarkdownRenderer } from "./markdown-renderer";
 
 
 
@@ -53,18 +54,19 @@ function UserBubble({ step }: { step: Step }) {
 }
 
 // ── 单条 assistant 文本消息 ───────────────────────────────────
-function AssistantBubble({ content }: { content: string }) {
-  return (
-    <div className="flex gap-3 justify-start">
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
-        <Bot className="h-4 w-4" />
-      </div>
-      <div className="max-w-[80%] rounded-lg bg-muted px-3.5 py-2.5 text-sm leading-relaxed">
-        <p className="whitespace-pre-wrap">{content}</p>
-      </div>
-    </div>
-  );
-}
+ function AssistantBubble({ content }: { content: string }) {
+   return (
+     <div className="flex gap-3 justify-start">
+       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+         <Bot className="h-4 w-4" />
+       </div>
+       <div className="max-w-[80%] rounded-lg bg-muted px-3.5 py-2.5 text-sm leading-relaxed">
+        <MarkdownRenderer content={content} />
+       </div>
+     </div>
+   );
+ }
+
 
 // ── 代码执行块（tool_use Step）- 支持折叠/展开 ───────────────
 function ToolUseBlock({ step }: { step: Step }) {
@@ -216,21 +218,21 @@ function VisualizationBlock({ step }: { step: Step }) {
 
 
 // ── 流式消息（正在打字） ──────────────────────────────────────
-function StreamingBubble({ message }: { message: StreamingMessage }) {
-  return (
-    <div className="flex gap-3 justify-start">
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
-        <Bot className="h-4 w-4" />
-      </div>
-      <div className="max-w-[80%] rounded-lg bg-muted px-3.5 py-2.5 text-sm leading-relaxed">
-        <p className="whitespace-pre-wrap">
-          {message.content}
-          <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-foreground/60" />
-        </p>
-      </div>
-    </div>
-  );
-}
+ function StreamingBubble({ message }: { message: StreamingMessage }) {
+   return (
+     <div className="flex gap-3 justify-start">
+       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+         <Bot className="h-4 w-4" />
+       </div>
+       <div className="max-w-[80%] rounded-lg bg-muted px-3.5 py-2.5 text-sm leading-relaxed">
+        <div>
+          <MarkdownRenderer content={message.content} />
+          <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-foreground/60 align-text-bottom" />
+        </div>
+       </div>
+     </div>
+   );
+ }
 
 // ── 等待LLM首次响应的占位块 ──────────────────────────────────
 function WaitingBubble() {

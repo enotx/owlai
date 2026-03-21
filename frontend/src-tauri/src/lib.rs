@@ -10,6 +10,10 @@ use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+
 #[derive(Deserialize)]
 struct RuntimeManifest {
     runtime_python: String,
@@ -267,16 +271,35 @@ pub fn run() {
             // 统一使用文件日志
             let (stdout_file, stderr_file) = setup_backend_logging()?;
             
-            let child = Command::new(&python_exe)
-                .current_dir(&python_env_dir)
-                .arg("-u") // 强制 Python 输出不缓冲,实时写入日志
+            // let child = Command::new(&python_exe)
+            //     .current_dir(&python_env_dir)
+            //     .arg("-u") // 强制 Python 输出不缓冲,实时写入日志
+            //     .arg(&sidecar_script)
+            //     .env("PYTHONUTF8", "1")      // 强制 UTF-8 模式（解决 Windows GBK 编码问题）
+            //     .env("APP_MODE", "desktop")  // 设置应用模式
+            //     .stdout(Stdio::from(stdout_file))
+            //     .stderr(Stdio::from(stderr_file))
+            //     .spawn()
+            //     .map_err(|e| format!("Failed to start python backend: {e}"))?;
+
+            let mut cmd = Command::new(&python_exe);
+            cmd.current_dir(&python_env_dir)
+                .arg("-u")
                 .arg(&sidecar_script)
-                .env("PYTHONUTF8", "1")      // 强制 UTF-8 模式（解决 Windows GBK 编码问题）
-                .env("APP_MODE", "desktop")  // 设置应用模式
+                .env("PYTHONUTF8", "1")
+                .env("APP_MODE", "desktop")
                 .stdout(Stdio::from(stdout_file))
-                .stderr(Stdio::from(stderr_file))
+                .stderr(Stdio::from(stderr_file));
+            // Windows 下隐藏控制台窗口，避免用户误关
+            #[cfg(target_os = "windows")]
+            {
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
+            let child = cmd
                 .spawn()
                 .map_err(|e| format!("Failed to start python backend: {e}"))?;
+
 
             println!("🦉 Backend process started with PID: {}", child.id());
 
