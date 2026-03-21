@@ -28,7 +28,6 @@ router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
 
 @router.post("", response_model=KnowledgeResponse)
-@router.post("", response_model=KnowledgeResponse)
 async def upload_knowledge(
     task_id: str = Form(...),
     file: UploadFile = File(...),
@@ -45,6 +44,18 @@ async def upload_knowledge(
         file_type = "excel"
     else:
         file_type = "text"
+    # 同名文件查重：同一 Task 下不允许上传同名 Knowledge
+    existing = await db.execute(
+        select(Knowledge).where(
+            Knowledge.task_id == task_id,
+            Knowledge.name == filename,
+        )
+    )
+    if existing.scalars().first() is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A file named '{filename}' already exists in this task. Please rename or delete the existing one first.",
+        )
     task_dir = UPLOADS_DIR / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
     # 文件落盘
