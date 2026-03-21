@@ -25,14 +25,32 @@ export default function KnowledgeZone() {
       console.warn(`Unsupported file type: ${ext}`);
       return;
     }
+
+    // 前端快速查重：检查当前 knowledgeList 中是否已有同名文件
+    const duplicate = knowledgeList.find(
+      (k) => k.name.toLowerCase() === file.name.toLowerCase()
+    );
+    if (duplicate) {
+      alert(`File "${file.name}" already exists in this task. Please rename or delete the existing one first.`);
+      return;
+    }
+
     try {
       const res = await uploadKnowledge(currentTaskId, file);
       addKnowledge(res.data);
-    } catch (err) {
+    } catch (err: unknown) {
+      // 后端 409 兜底处理
+      if (err && typeof err === "object" && "response" in err) {
+        const axiosErr = err as { response?: { status?: number; data?: { detail?: string } } };
+        if (axiosErr.response?.status === 409) {
+          alert(axiosErr.response.data?.detail || `File "${file.name}" already exists.`);
+          return;
+        }
+      }
       console.error("Upload failed:", err);
     }
-  }, [currentTaskId, addKnowledge]);
-
+  }, [currentTaskId, addKnowledge, knowledgeList]);
+  
   // 点击上传
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
