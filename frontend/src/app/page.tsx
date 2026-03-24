@@ -19,8 +19,9 @@ import { CircleCheck, CircleX, Loader2 } from "lucide-react";
 import { useBackend } from "@/contexts/backend-context";
 import { useDatabase } from "@/contexts/database-context";
 import { useOnboarding } from "@/contexts/onboarding-context";
-import { fetchProviders, fetchAgentConfigs } from "@/lib/api";
+import { fetchProviders, fetchAgentConfigs, checkForUpdate, getPlatformInfo } from "@/lib/api";
 import { useSettingsStore } from "@/stores/use-settings-store";
+
 
 
 /** 布局常量 */
@@ -53,6 +54,65 @@ export default function HomePage() {
   const { shouldShowWarning: showDatabaseWarning, dismissWarning: dismissDatabaseWarning } = useDatabase();
   const { shouldShowOnboarding, skipOnboarding, recheckConfiguration } = useOnboarding();
 
+  // 更新检查相关
+  const {
+    updateStatus,
+    setUpdateStatus,
+    setUpdateInfo,
+    setSettingsOpen,
+    setSelectedSettingsItem,
+  } = useSettingsStore();
+
+  const isTauriEnv = typeof window !== "undefined" && "__TAURI__" in window;
+
+  // 启动后 5 秒自动检查更新（仅 Tauri 桌面环境）
+  useEffect(() => {
+    if (!isTauriEnv || backendStatus !== "connected") return;
+    // 仅在 idle 状态检查，避免重复
+    if (useSettingsStore.getState().updateStatus !== "idle") return;
+
+    const timer = setTimeout(async () => {
+      const store = useSettingsStore.getState();
+      store.setUpdateStatus("checking");
+
+      try {
+        // 获取版本号
+        const { getVersion } = await import("@tauri-apps/api/app");
+        const currentVersion = await getVersion();
+
+        // 获取平台信息
+        let plat = "macos";
+        let arch = "aarch64";
+        try {
+          const os = await import("@tauri-apps/plugin-os");
+          const p = await os.platform();
+          const a = await os.arch();
+          plat = p === "macos" ? "macos" : p === "windows" ? "windows" : p;
+          arch = a === "aarch64" ? "aarch64" : "x86_64";
+        } catch {
+          const info = await getPlatformInfo();
+          plat = info.platform;
+          arch = info.arch;
+        }
+
+        const result = await checkForUpdate(currentVersion, plat, arch);
+        store.setUpdateInfo(result);
+        store.setUpdateStatus(result.has_update ? "has_update" : "up_to_date");
+      } catch (err) {
+        console.error("Auto update check failed:", err);
+        // 静默失败，不影响用户体验
+        store.setUpdateStatus("idle");
+      }
+    }, 5000);
+
+    return () => clearTimeout(timer);
+  }, [isTauriEnv, backendStatus]);
+
+  // 点击 Update Badge → 打开 Settings → About
+  const handleUpdateBadgeClick = useCallback(() => {
+    setSelectedSettingsItem("about");
+    setSettingsOpen(true);
+  }, [setSelectedSettingsItem, setSettingsOpen]);
 
   const [panelWidths, setPanelWidths] = useState<{ mid: number; right: number }>(
     () => calcPanelWidths(1280)
@@ -104,25 +164,60 @@ export default function HomePage() {
           <span className="text-sm font-bold tracking-tight">🦉 Owl.AI</span>
           <span className="text-xs text-muted-foreground">An AI Data Analyst</span>
         </div>
-        <Badge
-          variant={backendStatus === "connected" ? "default" : "destructive"}
-          className="gap-1 text-[10px]"
-        >
-          {backendStatus === "checking" && (
-            <Loader2 className="h-3 w-3 animate-spin" />
+        {/* 更新状态 Badge（仅 Tauri 桌面环境） */}
+        <div className="flex items-center gap-2">
+          {isTauriEnv && updateStatus !== "idle" && (
+            <Badge
+              variant={updateStatus === "has_update" ? "destructive" : "secondary"}
+              className="gap-1 text-[10px] cursor-pointer hover:opacity-80 transition-opacity"
+              onClick={handleUpdateBadgeClick}
+            >
+              {updateStatus === "checking" && (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Checking...
+                </>
+              )}
+              {updateStatus === "has_update" && (
+                <>
+                  <CircleCheck className="h-3 w-3" />
+                  Update Available
+                </>
+              )}
+              {(updateStatus === "up_to_date" || updateStatus === "downloaded") && (
+                <>
+                  <CircleCheck className="h-3 w-3" />
+                  Up to Date
+                </>
+              )}
+              {updateStatus === "downloading" && (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Downloading...
+                </>
+              )}
+            </Badge>
           )}
-          {backendStatus === "connected" && (
-            <CircleCheck className="h-3 w-3" />
-          )}
-          {backendStatus === "disconnected" && (
-            <CircleX className="h-3 w-3" />
-          )}
-          {backendStatus === "checking"
-            ? "Connecting..."
-            : backendStatus === "connected"
-              ? "Backend Connected"
-              : "Backend Offline"}
-        </Badge>
+          <Badge
+            variant={backendStatus === "connected" ? "default" : "destructive"}
+            className="gap-1 text-[10px]"
+          >
+            {backendStatus === "checking" && (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            )}
+            {backendStatus === "connected" && (
+              <CircleCheck className="h-3 w-3" />
+            )}
+            {backendStatus === "disconnected" && (
+              <CircleX className="h-3 w-3" />
+            )}
+            {backendStatus === "checking"
+              ? "Connecting..."
+              : backendStatus === "connected"
+                ? "Backend Connected"
+                : "Backend Offline"}
+          </Badge>
+        </div>
       </header>
 
       {/* 三栏主体 */}

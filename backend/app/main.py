@@ -61,6 +61,10 @@ app.include_router(database.router)
 app.include_router(subtasks.router)
 app.include_router(skills.router)
 app.include_router(visualizations.router)
+# 仅桌面模式注册更新路由
+if APP_MODE == "desktop":
+    from app.routers import updates
+    app.include_router(updates.router)
 
 
 

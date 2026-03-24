@@ -4,8 +4,7 @@
  * Settings 状态管理：LLM Providers 配置
  */
 import { create } from "zustand";
-import type { SkillData } from "@/lib/api";
-
+import type { SkillData, UpdateInfo } from "@/lib/api";
 
 export interface LLMModel {
   id: string;
@@ -70,6 +69,19 @@ interface SettingsStore {
   skillView: "list" | "edit";
   setSkillView: (view: "list" | "edit") => void;
 
+  // 软件更新状态
+  updateStatus: "idle" | "checking" | "has_update" | "up_to_date" | "downloading" | "downloaded" | "error";
+  updateInfo: UpdateInfo | null;
+  downloadProgress: { percent: number; downloaded: number; total: number } | null;
+  downloadedFilePath: string | null;
+  setUpdateStatus: (status: SettingsStore["updateStatus"]) => void;
+  setUpdateInfo: (info: UpdateInfo | null) => void;
+  setDownloadProgress: (progress: SettingsStore["downloadProgress"]) => void;
+  setDownloadedFilePath: (path: string | null) => void;
+  // 设置 selectedItem（供外部打开指定 tab）
+  selectedSettingsItem: string;
+  setSelectedSettingsItem: (item: string) => void;
+
 }
 
 
@@ -117,5 +129,19 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
   setEditingSkill: (skill) => set({ editingSkill: skill }),
   skillView: "list",
   setSkillView: (view) => set({ skillView: view }),
+
+  // 软件更新状态
+  updateStatus: "idle",
+  updateInfo: null,
+  downloadProgress: null,
+  downloadedFilePath: null,
+  setUpdateStatus: (status) => set({ updateStatus: status }),
+  setUpdateInfo: (info) => set({ updateInfo: info }),
+  setDownloadProgress: (progress) => set({ downloadProgress: progress }),
+  setDownloadedFilePath: (path) => set({ downloadedFilePath: path }),
+
+  // Settings Dialog 当前选中项
+  selectedSettingsItem: "providers",
+  setSelectedSettingsItem: (item) => set({ selectedSettingsItem: item }),
 
 }));

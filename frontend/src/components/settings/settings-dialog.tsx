@@ -16,6 +16,7 @@ import { Separator } from "@/components/ui/separator";
 import ProvidersView from "./providers-view";
 import AgentsView from "./agents-view";
 import SkillsView from "./skills-view";
+import AboutView from "./about-view";
 
 
 
@@ -31,13 +32,15 @@ const menuItems: MenuItem[] = [
   { id: "agents", label: "Agents", category: "LLM" },
   { id: "skills", label: "Skills", category: "Extensions" },
   { id: "misc", label: "Miscellaneous", category: "Other" },
+  { id: "about", label: "About", category: "Other" },
 ];
 
 
 export default function SettingsDialog() {
-  const { isSettingsOpen, setSettingsOpen, setProviders, currentView, setCurrentView } =
-    useSettingsStore();
-  const [selectedItem, setSelectedItem] = useState<string>("providers");
+  const { isSettingsOpen, setSettingsOpen, setProviders, currentView, setCurrentView,
+          selectedSettingsItem, setSelectedSettingsItem } =
+      useSettingsStore();
+  // const [selectedItem, setSelectedItem] = useState<string>("providers");
 
   // 加载 Providers 数据
   useEffect(() => {
@@ -52,22 +55,26 @@ export default function SettingsDialog() {
   const handleClose = () => {
     setSettingsOpen(false);
     setCurrentView("list");
-    setSelectedItem("providers");
+    setSelectedSettingsItem("providers");
   };
 
   // 渲染右侧内容
   const renderContent = () => {
-    if (selectedItem === "providers") {
+    if (selectedSettingsItem === "providers") {
       return <ProvidersView />;
     }
-    if (selectedItem === "agents") {
+    if (selectedSettingsItem === "agents") {
       return <AgentsView />; 
     }
 
-    if (selectedItem === "skills") {
+    if (selectedSettingsItem === "skills") {
       return <SkillsView />;
     }
 
+    if (selectedSettingsItem === "about") {
+      return <AboutView />;
+    }
+    
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         Coming Soon
@@ -116,10 +123,10 @@ export default function SettingsDialog() {
                   {items.map((item) => (
                     <button
                       key={item.id}
-                      onClick={() => setSelectedItem(item.id)}
+                      onClick={() => setSelectedSettingsItem(item.id)}
                       className={cn(
                         "w-full text-left px-3 py-2 text-sm rounded-md transition-colors",
-                        selectedItem === item.id
+                        selectedSettingsItem === item.id
                           ? "bg-primary text-primary-foreground"
                           : "hover:bg-accent hover:text-accent-foreground"
                       )}

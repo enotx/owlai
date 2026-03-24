@@ -553,3 +553,54 @@ export const exportChat = async (
   const url = `${baseUrl}/tasks/${taskId}/export?format=${format}`;
   window.open(url, "_blank");
 };
+
+// ===== Software Updates =====
+
+export interface UpdateInfo {
+  has_update: boolean;
+  latest_version: string;
+  current_version: string;
+  release_notes?: string;
+  download_url?: string;
+  file_size?: number;
+  file_name?: string;
+  published_at?: string;
+}
+
+export interface PlatformInfo {
+  platform: string;
+  arch: string;
+}
+
+/**
+ * 从 License Server 检查更新
+ * 前端直接调用，不经过 Owl 后端
+ */
+export const checkForUpdate = async (
+  currentVersion: string,
+  platform: string,
+  arch: string
+): Promise<UpdateInfo> => {
+  const response = await axios.get<UpdateInfo>(
+    `${LICENSE_SERVER_URL}/v1/updates/check`,
+    { params: { current_version: currentVersion, platform, arch } }
+  );
+  return response.data;
+};
+
+/**
+ * 获取当前平台信息（非 Tauri 环境 fallback）
+ */
+export const getPlatformInfo = async (): Promise<PlatformInfo> => {
+  const api = await getApi();
+  const response = await api.get<PlatformInfo>("/updates/platform-info");
+  return response.data;
+};
+
+/**
+ * 触发后端安装已下载的更新包
+ */
+export const installUpdate = async (filePath: string) => {
+  const api = await getApi();
+  return api.post("/updates/install", { file_path: filePath });
+};
