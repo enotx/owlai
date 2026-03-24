@@ -58,33 +58,41 @@ jobs:
         working-directory: frontend
         run: npm run tauri:build
       
-      - name: Create DMG (unsigned)
+      - name: Find Tauri DMG & prepare artifacts
+        id: find-dmg
         run: |
-          APP_PATH="frontend/src-tauri/target/release/bundle/macos/Owl Data Analyst.app"
+          # Tauri 生成的 DMG 已包含 Applications 符号链接
+          DMG_PATH=$(find frontend/src-tauri/target/release/bundle/dmg -name "*.dmg" | head -1)
           
-          if [ -d "$APP_PATH" ]; then
-            hdiutil create -volname "Owl Data Analyst (${{ matrix.arch_name }})" \
-              -srcfolder "$APP_PATH" \
-              -ov -format UDZO \
-              "Owl-Installer-${{ matrix.arch_name }}-Unsigned.dmg"
-            
-            echo "⚠️  This is an UNSIGNED build for ${{ matrix.arch_name }} Macs" > INSTALL_INSTRUCTIONS.txt
-            echo "" >> INSTALL_INSTRUCTIONS.txt
-            echo "To install on macOS:" >> INSTALL_INSTRUCTIONS.txt
-            echo "1. Mount the DMG" >> INSTALL_INSTRUCTIONS.txt
-            echo "2. Drag app to Applications" >> INSTALL_INSTRUCTIONS.txt
-            echo "3. Run: xattr -cr '/Applications/Owl Data Analyst.app'" >> INSTALL_INSTRUCTIONS.txt
-            echo "4. Launch the app" >> INSTALL_INSTRUCTIONS.txt
-          else
-            echo "❌ App bundle not found at $APP_PATH"
+          if [ -z "$DMG_PATH" ]; then
+            echo "❌ Tauri DMG not found in bundle/dmg/"
+            find frontend/src-tauri/target/release/bundle -type f -name "*.dmg" || true
             exit 1
           fi
+          
+          echo "✅ Found Tauri DMG: $DMG_PATH"
+          
+          # 重命名为统一的产物名称
+          FINAL_NAME="Owl-Installer-${{ matrix.arch_name }}-Unsigned.dmg"
+          cp "$DMG_PATH" "$FINAL_NAME"
+          echo "dmg_path=$FINAL_NAME" >> "$GITHUB_OUTPUT"
+          
+          # 生成安装说明
+          cat > INSTALL_INSTRUCTIONS.txt << 'EOF'
+          ⚠️  This is an UNSIGNED build for ${{ matrix.arch_name }} Macs
+
+          To install on macOS:
+          1. Mount the DMG
+          2. Drag app to Applications
+          3. Run: xattr -cr '/Applications/Owl Data Analyst.app'
+          4. Launch the app
+          EOF
       
       - name: Upload unsigned DMG
         uses: actions/upload-artifact@v4
         with:
           name: Owl-macOS-${{ matrix.arch_name }}-Unsigned-${{ github.sha }}
           path: |
-            Owl-Installer-${{ matrix.arch_name }}-Unsigned.dmg
+            ${{ steps.find-dmg.outputs.dmg_path }}
             INSTALL_INSTRUCTIONS.txt
           retention-days: 7
