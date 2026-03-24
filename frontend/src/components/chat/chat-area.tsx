@@ -32,10 +32,13 @@ import {
   ChevronRight,
   Trash2,
   RotateCcw,
+  Download,
+  FileText,
+  FileCode2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CapturedDataFrame } from "@/stores/use-task-store";
-import { deleteStepAndAfter, regenerateFromStep, fetchChatHistory, streamChat } from "@/lib/api";
+import { deleteStepAndAfter, regenerateFromStep, fetchChatHistory, streamChat, exportChat } from "@/lib/api";
 import type { SSEEvent } from "@/lib/api";
 
 
@@ -456,6 +459,85 @@ function PendingToolBlock({ tool }: { tool: PendingToolExecution }) {
   );
 }
 
+// ── 导出下拉菜单 ────────────────────────────────────────────
+function ExportDropdown({ taskId, hasSteps }: { taskId: string; hasSteps: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // 点击外部关闭
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
+
+  const handleExport = async (format: "markdown" | "ipynb") => {
+    setExporting(true);
+    setOpen(false);
+    try {
+      await exportChat(taskId, format);
+    } catch (err) {
+      console.error("Export failed:", err);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  return (
+    <div className="relative inline-block" ref={dropdownRef}>
+      <button
+        onClick={() => hasSteps && setOpen(!open)}
+        disabled={!hasSteps || exporting}
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+          hasSteps
+            ? "text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+            : "text-muted-foreground/40 cursor-not-allowed"
+        )}
+        title={hasSteps ? "Export conversation" : "No conversation to export"}
+      >
+        {exporting ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Download className="h-3.5 w-3.5" />
+        )}
+        <span>Export Chat History</span>
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 mb-1 w-44 rounded-md border bg-popover p-1 shadow-md z-50">
+          <button
+            onClick={() => handleExport("markdown")}
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-accent hover:text-accent-foreground transition-colors"
+          >
+            <FileText className="h-3.5 w-3.5" />
+            <div className="text-left">
+              <div className="font-medium">Markdown</div>
+              <div className="text-muted-foreground text-[10px]">Report / Archive</div>
+            </div>
+          </button>
+          <button
+            onClick={() => handleExport("ipynb")}
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-accent hover:text-accent-foreground transition-colors"
+          >
+            <FileCode2 className="h-3.5 w-3.5" />
+            <div className="text-left">
+              <div className="font-medium">Jupyter Notebook</div>
+              <div className="text-muted-foreground text-[10px]">Reproduce / Iterate</div>
+            </div>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── 主组件 ────────────────────────────────────────────────────
 export default function ChatArea() {
   const {
@@ -728,6 +810,15 @@ export default function ChatArea() {
           <div ref={bottomRef} />
         </div>
       </ScrollArea>
+
+      {/* 导出按钮行 */}
+      {currentTaskId && (
+        <div className="shrink-0 px-4 pt-1">
+          <div className="mx-auto max-w-2xl flex justify-start">
+            <ExportDropdown taskId={currentTaskId} hasSteps={steps.length > 0} />
+          </div>
+        </div>
+      )}
 
       {/* 底部：输入框 */}
       <div className="shrink-0 border-t px-4 py-3">

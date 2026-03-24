@@ -539,3 +539,17 @@ export const regenerateFromStep = async (stepId: string) =>
     task_id: string;
     deleted_ids: string[];
   }>(`/chat/steps/${stepId}/regenerate`);
+
+
+// ===== Chat Export =====
+/**
+ * 导出对话记录为 Markdown 或 Jupyter Notebook
+ */
+export const exportChat = async (
+  taskId: string,
+  format: "markdown" | "ipynb"
+) => {
+  const baseUrl = await getBaseUrl();
+  const url = `${baseUrl}/tasks/${taskId}/export?format=${format}`;
+  window.open(url, "_blank");
+};

@@ -1,12 +1,16 @@
 # backend/app/routers/tasks.py
-"""Task 管理 API（占位实现）"""
+"""Task 管理 API"""
 
-from fastapi import APIRouter, Depends
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sqlalchemy import select
 
 from app.database import get_db
-from app.models import Task
+from app.models import Task, Step, Knowledge
 from app.schemas import TaskCreate, TaskUpdate, TaskResponse, TaskModeUpdate
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -189,3 +193,65 @@ async def auto_rename_task(task_id: str, db: AsyncSession = Depends(get_db)):
         task = await db.get(Task, task_id)
 
     return task
+
+@router.get("/{task_id}/export")
+async def export_task(
+    task_id: str,
+    format: str = Query(..., pattern="^(markdown|ipynb)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    导出对话记录
+    - format=markdown → 下载 .md 文件
+    - format=ipynb    → 下载 .ipynb 文件
+    """
+    from fastapi import HTTPException
+    from app.services.export_service import export_as_markdown, export_as_notebook
+    import json
+    # 获取 Task
+    task = await db.get(Task, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    # 获取 Steps（按时间排序）
+    result = await db.execute(
+        select(Step)
+        .where(Step.task_id == task_id)
+        .order_by(Step.created_at.asc())
+    )
+    steps = list(result.scalars().all())
+    # 获取 Knowledge
+    result = await db.execute(
+        select(Knowledge).where(Knowledge.task_id == task_id)
+    )
+    knowledge_items = list(result.scalars().all())
+    # 安全文件名：替换不可用字符
+    safe_title = "".join(
+        c if c.isalnum() or c in (" ", "-", "_") else "_"
+        for c in task.title
+    ).strip()[:50]
+    date_str = datetime.now().strftime("%Y%m%d")
+    if format == "markdown":
+        content = await export_as_markdown(task, steps, knowledge_items)
+        filename = f"{safe_title}_{date_str}.md"
+        return Response(
+            content=content.encode("utf-8"),
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{_url_encode(filename)}"
+            },
+        )
+    else:  # ipynb
+        notebook = await export_as_notebook(task, steps, knowledge_items)
+        content = json.dumps(notebook, ensure_ascii=False, indent=1)
+        filename = f"{safe_title}_{date_str}.ipynb"
+        return Response(
+            content=content.encode("utf-8"),
+            media_type="application/x-ipynb+json; charset=utf-8",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{_url_encode(filename)}"
+            },
+        )
+def _url_encode(filename: str) -> str:
+    """RFC 5987 编码文件名，支持中文"""
+    from urllib.parse import quote
+    return quote(filename, safe="")
