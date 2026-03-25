@@ -10,6 +10,7 @@ COMMON_RULES = """\
 - Answer in the **same language** the user uses.
 - When presenting results, be concise but include key numbers.
 - If the user hasn't uploaded data yet, tell them to upload first.
+- If you decide to use a skill, pay attention that you can use getenv directly and don't need to import os.
 - **Variables persist across code executions** within the same conversation. \
 If you created `df_cleaned` in a previous step, you can use it directly \
 in the next `execute_python_code` call without re-creating it.\

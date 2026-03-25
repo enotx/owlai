@@ -107,7 +107,7 @@ export default function SettingsDialog() {
           >
             <X className="h-4 w-4" />
           </Button>
-          <div className="flex h-full">
+          <div className="flex h-full min-h-0">
           {/* 左侧导航 */}
           <aside className="w-56 border-r bg-muted/30 flex flex-col">
             <div className="p-4">
@@ -140,7 +140,7 @@ export default function SettingsDialog() {
           </aside>
 
           {/* 右侧内容区 */}
-          <main className="flex-1 overflow-hidden">{renderContent()}</main>
+          <main className="flex-1 min-h-0 overflow-hidden">{renderContent()}</main>
         </div>
       </DialogContent>
     </Dialog>
