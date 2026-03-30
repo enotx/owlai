@@ -33,6 +33,7 @@ export default function MessageInput() {
     addStep,
     isSending,
     setIsSending,
+    getCurrentPendingTool,
     isWaitingResponse,
     setIsWaitingResponse,
     startStreaming,
@@ -120,7 +121,7 @@ export default function MessageInput() {
     }
     abortControllerRef.current = null;
     clearStreaming();
-    setPendingTool(null);
+    setPendingTool(currentTaskId!, null);
     setIsWaitingResponse(false);
     setIsSending(false);
   };
@@ -184,7 +185,7 @@ export default function MessageInput() {
                 setIsWaitingResponse(false);
               }
               _flushStreaming();
-              setPendingTool({
+              setPendingTool(currentTaskId!, {
                 code: event.code || "",
                 purpose: event.purpose || "",
                 status: "running",
@@ -193,7 +194,7 @@ export default function MessageInput() {
 
             case "tool_result":
               // 代码执行完成（含捕获的 DataFrame 元数据）
-              updatePendingToolResult({
+              updatePendingToolResult(currentTaskId!, {
                 success: event.success ?? false,
                 output: event.output ?? null,
                 error: event.error ?? null,
@@ -216,7 +217,7 @@ export default function MessageInput() {
               } else {
                 // 清除流式 / pending 状态，加入真实 Step
                 clearStreaming();
-                setPendingTool(null);
+                setPendingTool(currentTaskId!, null);
                 addStep(step);
               }
               break;
@@ -229,7 +230,7 @@ export default function MessageInput() {
             case "done": {
               // 全部完成 — 清除残留状态
               clearStreaming();
-              setPendingTool(null);
+              setPendingTool(currentTaskId!, null);
               // 自动重命名：首次对话完成后，若 title 仍为默认模式则触发
               if (!autoRenameCalledRef.current) {
                 autoRenameCalledRef.current = true;
@@ -257,7 +258,7 @@ export default function MessageInput() {
 
             case "error":
               clearStreaming();
-              setPendingTool(null);
+              setPendingTool(currentTaskId!, null);
               setIsWaitingResponse(false);
               addStep({
                 id: `error-${Date.now()}`,
@@ -283,7 +284,7 @@ export default function MessageInput() {
       } else {
         console.error("Stream failed:", err);
         clearStreaming();
-        setPendingTool(null);
+        setPendingTool(currentTaskId!, null);
         setIsWaitingResponse(false);
         addStep({
           id: `error-${Date.now()}`,

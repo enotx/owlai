@@ -544,7 +544,7 @@ export default function ChatArea() {
     currentTaskId,
     steps,
     streamingMessage,
-    pendingTool,
+    getCurrentPendingTool,
     isWaitingResponse,
     isSending,
     setIsSending,
@@ -558,6 +558,7 @@ export default function ChatArea() {
     currentMode,
     selectedModel,
   } = useTaskStore();
+  const pendingTool = getCurrentPendingTool();
   const bottomRef = useRef<HTMLDivElement>(null);
   /** 滚动容器引用（ScrollArea 内部的 viewport） */
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -569,6 +570,7 @@ export default function ChatArea() {
     if (!el) return true;
     return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   }, []);
+
   /** 重新生成：接收用户消息后自动重发 */
   const handleRegenerate = useCallback(async (userMessage: string, taskId: string) => {
     if (isSending) return;
@@ -609,21 +611,23 @@ export default function ChatArea() {
                 setIsWaitingResponse(false);
               }
               clearStreaming();
-              setPendingTool({
+              // 修改：传入 taskId
+              setPendingTool(taskId, {
                 code: event.code || "",
                 purpose: event.purpose || "",
                 status: "running",
               });
               break;
             case "tool_result":
-              updatePendingToolResult({
+              // 修改：传入 taskId
+              updatePendingToolResult(taskId, {
                 success: event.success ?? false,
                 output: event.output ?? null,
                 error: event.error ?? null,
-                time: event.time ?? 0,
-                dataframes: event.dataframes,
+                time: event.time ?? 0,dataframes: event.dataframes,
               });
               break;
+              
             case "step_saved": {
               const step = event.step as unknown as Step;
               if (step.step_type === "user_message") {
@@ -633,19 +637,22 @@ export default function ChatArea() {
                 });
               } else {
                 clearStreaming();
-                setPendingTool(null);
+                // 修改：传入 taskId
+                setPendingTool(taskId, null);
                 addStep(step);
               }
               break;
             }
+            
             case "done":
               clearStreaming();
-              setPendingTool(null);
+              // 修改:传入 taskId
+              setPendingTool(taskId, null);
               setIsWaitingResponse(false);
               break;
             case "error":
               clearStreaming();
-              setPendingTool(null);
+              setPendingTool(taskId, null);
               setIsWaitingResponse(false);
               addStep({
                 id: `error-${Date.now()}`,

@@ -148,10 +148,10 @@ interface TaskStore {
   appendStreamingToken: (token: string) => void;
   clearStreaming: () => void;
 
-  // 代码执行状态
-  pendingTool: PendingToolExecution | null;
-  setPendingTool: (tool: PendingToolExecution | null) => void;
-  updatePendingToolResult: (result: PendingToolExecution["result"]) => void;
+  // 代码执行状态，按 taskId 存储 pendingTool
+  pendingTools: Record<string, PendingToolExecution>;
+  setPendingTool: (taskId: string, tool: PendingToolExecution | null) => void;
+  updatePendingToolResult: (taskId: string, result: PendingToolExecution["result"]) => void;
 
   // 数据面板展示
   previewData: Record<string, unknown>[] | null;
@@ -190,9 +190,12 @@ interface TaskStore {
   // Plan确认流程
   pendingPlan: PendingPlan | null;
   setPendingPlan: (plan: PendingPlan | null) => void;
+  
+  // 添加计算属性的 getter（可选，方便使用）
+  getCurrentPendingTool: () => PendingToolExecution | null;
 }
 
-export const useTaskStore = create<TaskStore>((set) => ({
+export const useTaskStore = create<TaskStore>((set, get) => ({
   // Task
   tasks: [],
   currentTaskId: null,
@@ -203,7 +206,7 @@ export const useTaskStore = create<TaskStore>((set) => ({
       currentTaskId: id,
       steps: [],
       streamingMessage: null,
-      pendingTool: null,
+      // pendingTool: null, // 不直接重置 pendingTool，保留不同 Task 的执行状态
       isSending: false,
       isWaitingResponse: false,
       knowledgeList: [],
@@ -261,15 +264,33 @@ export const useTaskStore = create<TaskStore>((set) => ({
   clearStreaming: () => set({ streamingMessage: null }),
 
   // 代码执行
-  pendingTool: null,
-  setPendingTool: (tool) => set({ pendingTool: tool }),
-  updatePendingToolResult: (result) =>
+  pendingTools: {},
+  setPendingTool: (taskId, tool) =>
     set((s) => {
-      if (!s.pendingTool) return s;
+      const newTools = { ...s.pendingTools };
+      if (tool === null) {
+        delete newTools[taskId];
+      } else {
+        newTools[taskId] = tool;
+      }
+      return { pendingTools: newTools };
+    }),
+  updatePendingToolResult: (taskId, result) =>
+    set((s) => {
+      const tool = s.pendingTools[taskId];
+      if (!tool) return s;
       return {
-        pendingTool: { ...s.pendingTool, status: "done", result },
+        pendingTools: {
+          ...s.pendingTools,
+          [taskId]: { ...tool, status: "done", result },
+        },
       };
     }),
+  getCurrentPendingTool: () => {
+    const { currentTaskId, pendingTools } = get();
+    return currentTaskId ? pendingTools[currentTaskId] ?? null : null;
+  },
+
 
   // Data Panel
   previewData: null,
