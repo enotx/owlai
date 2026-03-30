@@ -6,7 +6,9 @@
  * 直接透传 ReadableStream，无缓冲，无跨域问题
  */
 
-const BACKEND = process.env.BACKEND_URL || "http://localhost:8000";
+// const BACKEND = process.env.BACKEND_URL || "http://localhost:8000";
+const BACKEND = process.env.INTERNAL_BACKEND_URL || "http://127.0.0.1:8000";
+
 
 export async function POST(request: Request) {
   const body = await request.json();
@@ -24,7 +26,6 @@ export async function POST(request: Request) {
     );
   }
 
-  // 透传 SSE 流，关键：不缓冲
   return new Response(upstream.body, {
     headers: {
       "Content-Type": "text/event-stream",

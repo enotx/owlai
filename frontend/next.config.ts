@@ -4,7 +4,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: "export",
+  // 只在 Tauri 打包时使用静态导出
+  output: process.env.TAURI_BUILD === "true" ? "export" : undefined,
   images: {
     unoptimized: true,
   },

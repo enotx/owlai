@@ -35,8 +35,9 @@ export async function getBaseUrl(): Promise<string> {
   }
 
   // 浏览器 / 云端模式
-  cachedBaseUrl =
-    process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api";
+  cachedBaseUrl = 
+    "/api/backend";
+    // process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api";
   return cachedBaseUrl;
 }
 
@@ -178,7 +179,12 @@ export async function streamChat(
   
   try {
     const baseUrl = await getBaseUrl();
-    const streamUrl = `${baseUrl}/chat/stream`;
+    // const streamUrl = `${baseUrl}/chat/stream`;
+    // desktop 直连 FastAPI stream，dev/docker 走 Next 代理
+    const streamUrl = isTauriDesktop()
+      ? `${baseUrl}/chat/stream`
+      : "/api/chat/stream";
+
     const body: {
       task_id: string;
       message: string;
