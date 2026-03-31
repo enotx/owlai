@@ -5,6 +5,7 @@
 from app.prompts.fragments.common_rules import COMMON_RULES
 from app.prompts.fragments.data_conventions import DATAFRAME_NAMING_CONVENTION
 from app.prompts.fragments.echarts_guide import ECHARTS_GUIDE
+from app.prompts.fragments.map_guide import MAP_GUIDE
 
 
 # ── 模板 ──────────────────────────────────────────────────────
@@ -67,7 +68,11 @@ def build_analyst_system_prompt(
         current_task: 当前 SubTask 描述（或 "[Direct analysis mode]"）
         has_datasets: 是否有数据集（决定是否注入 ECharts 指南）
     """
-    visualization_guide = ECHARTS_GUIDE if has_datasets else ""
+    # 同时注入 ECharts 和 Map 指南
+    visualization_guide = ""
+    if has_datasets:
+        visualization_guide = ECHARTS_GUIDE + "\n\n" + MAP_GUIDE
+
 
     return _ANALYST_TEMPLATE.format(
         rules=COMMON_RULES,

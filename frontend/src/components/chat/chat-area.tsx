@@ -15,6 +15,7 @@ import MessageInput from "./message-input";
 import SubTaskList from "./subtask-list";
 import PlanConfirmationDialog from "./plan-confirmation";
 import EChartsView from "./echarts-view";
+import LeafletMapView from "./leaflet-map-view";
 import { MarkdownRenderer } from "./markdown-renderer";
 
 
@@ -194,31 +195,42 @@ function VisualizationBlock({ step }: { step: Step }) {
         </div>
         <div className="max-w-[85%] w-full rounded-lg bg-muted px-3.5 py-2.5 text-sm">
           <p className="whitespace-pre-wrap">{step.content}</p>
-          <p className="mt-2 text-xs text-muted-foreground">Invalid chart payload.</p>
+          <p className="mt-2 text-xs text-muted-foreground">Invalid visualization payload.</p>
         </div>
       </div>
     );
   }
+
+  const isMap = parsed.chart_type === "map";
 
   return (
     <div className="flex gap-3 justify-start">
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
         <Bot className="h-4 w-4" />
       </div>
-      <div className="max-w-[85%] w-full space-y-2">
+      {/* min-w-0 防止 flex 子项溢出 */}
+      <div className="max-w-[85%] w-full min-w-0 space-y-2">
         <div className="rounded-lg bg-muted px-3.5 py-2.5 text-sm">
-          <p className="font-medium">📊 {parsed.title || step.content}</p>
+          <p className="font-medium">
+            {isMap ? "🗺️" : "📊"} {parsed.title || step.content}
+          </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Chart type: {parsed.chart_type}
+            {isMap ? "Interactive Map" : `Chart type: ${parsed.chart_type}`}
           </p>
         </div>
 
-        <EChartsView option={parsed.option} height={360} />
+        {/* overflow-hidden 兜底，确保可视化不溢出消息气泡 */}
+        <div className="w-full overflow-hidden rounded-md">
+          {isMap ? (
+            <LeafletMapView config={parsed.option as any} height={400} />
+          ) : (
+            <EChartsView option={parsed.option} height={360} />
+          )}
+        </div>
       </div>
     </div>
   );
 }
-
 
 // ── 流式消息（正在打字） ──────────────────────────────────────
  function StreamingBubble({ message }: { message: StreamingMessage }) {

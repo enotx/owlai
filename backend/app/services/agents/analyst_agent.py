@@ -16,6 +16,8 @@ from app.tools import (
     normalize_echarts_option,
     merge_top_level_keys,
 )
+from app.tools.visualization import validate_map_config
+
 
 
 class AnalystAgent(BaseAgent):
@@ -244,7 +246,24 @@ class AnalystAgent(BaseAgent):
                                     "type": "error",
                                     "content": f"Chart validation failed: {err_chart}",
                                 })
-
+                        # ── 【新增】处理沙箱内 create_map() 捕获的地图 ──
+                        sandbox_maps = exec_result.get("maps", [])
+                        for map_meta in sandbox_maps:
+                            map_config = map_meta.get("config", {})
+                            # 基础校验
+                            ok, err = validate_map_config(map_config)
+                            if not ok:
+                                yield self._sse({
+                                    "type": "error",
+                                    "content": f"Map validation failed: {err}",
+                                })
+                                continue
+                            yield self._sse({
+                                "type": "visualization",
+                                "title": map_meta.get("title", "Untitled Map"),
+                                "chart_type": "map",
+                                "option": map_config,
+                            })
                         tool_output = exec_result.get("output") or "(no output)"
                         if not exec_result["success"]:
                             tool_output = f"ERROR: {exec_result.get('error', 'Unknown')}"

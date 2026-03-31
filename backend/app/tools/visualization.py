@@ -80,3 +80,35 @@ def merge_top_level_keys(option: dict, args: dict) -> dict:
         if key not in option and key in args:
             option[key] = args[key]
     return option
+
+def validate_map_config(config: dict) -> tuple[bool, str]:
+    """基础校验 Map config 结构，返回 (is_valid, error_message)"""
+    if not isinstance(config, dict):
+        return False, "config must be a JSON object"
+    
+    if "center" not in config:
+        return False, "config must contain 'center' field"
+    center = config["center"]
+    if not isinstance(center, list) or len(center) != 2:
+        return False, "center must be [latitude, longitude]"
+    
+    try:
+        lat, lng = float(center[0]), float(center[1])
+        if not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
+            return False, "center coordinates out of valid range"
+    except (ValueError, TypeError):
+        return False, "center must contain numeric values"
+    
+    markers = config.get("markers", [])
+    if not isinstance(markers, list):
+        return False, "markers must be a list"
+    
+    if len(markers) > 5000:
+        return False, "markers count exceeds limit (5000)"
+    
+    for i, m in enumerate(markers):
+        if not isinstance(m, dict):
+            return False, f"markers[{i}] must be an object"
+        if "latlng" not in m:
+            return False, f"markers[{i}] must have 'latlng' field"
+    return True, ""

@@ -342,6 +342,44 @@ def _sandbox_create_chart(__title, __chart_type, __option):
         with open(_chart_path, 'w', encoding='utf-8') as _cf:
             _cjson.dump(_chart_meta, _cf, ensure_ascii=False, default=str)
     print(f"[Chart created: {{__title}}]")
+_captured_maps = []
+def _sandbox_create_map(__title, __map_config):
+    # 沙箱内可调用的地图创建函数，捕获 Leaflet 配置
+    import json as _mjson
+    # 序列化 map_config（处理 numpy/pandas 类型）
+    def _serialize(__obj):
+        if isinstance(__obj, dict):
+            return {{k: _serialize(v) for k, v in __obj.items()}}
+        if isinstance(__obj, (list, tuple)):
+            return [_serialize(v) for v in __obj]
+        if hasattr(__obj, 'item'):  # numpy scalar
+            return __obj.item()
+        if hasattr(__obj, 'tolist'):  # numpy array / pandas series
+            return __obj.tolist()
+        if __obj is True:
+            return True
+        if __obj is False:
+            return False
+        if __obj is None:
+            return None
+        if isinstance(__obj, (int, float, str)):
+            return __obj
+        return str(__obj)
+    _safe_config = _serialize(__map_config)
+    _map_meta = {{
+        "title": str(__title),
+        "config": _safe_config,
+    }}
+    _captured_maps.append(_map_meta)
+    # 写入文件（防止进程异常丢失）
+    if _CHART_CAPTURE_DIR:
+        _map_dir = _os.path.join(_CHART_CAPTURE_DIR, "maps")
+        _os.makedirs(_map_dir, exist_ok=True)
+        _map_path = _os.path.join(_map_dir, f"map_{{len(_captured_maps)-1}}.json")
+        with open(_map_path, 'w', encoding='utf-8') as _mf:
+            _mjson.dump(_map_meta, _mf, ensure_ascii=False, default=str)
+    print(f"[Map created: {{__title}}]")
+
 # ── 捕获 stdout ────────────────────────────────────────
 _stdout_capture = StringIO()
 _original_stdout = sys.stdout
@@ -354,6 +392,7 @@ _namespace = {{
     'pandas': __pd,
     'numpy': __np,
     'create_chart': _sandbox_create_chart,
+    'create_map': _sandbox_create_map,
 }}
 # 注入 DataFrame 变量
 {namespace_inject}
@@ -528,6 +567,7 @@ result = {{
     "dataframes": _captured_dfs,
     "persisted_vars": _persisted_vars,
     "charts": _captured_charts,
+    "maps": _captured_maps,
 }}
 print(json.dumps(result, ensure_ascii=False))
     """
