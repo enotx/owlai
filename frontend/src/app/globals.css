@@ -123,6 +123,52 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  /* ── Owl Theme Variables (Geek = default) ── */
+  :root {
+    --owl-sidebar-bg: var(--muted);
+    --owl-sidebar-fg: var(--foreground);
+    --owl-sidebar-muted: var(--muted-foreground);
+    --owl-sidebar-active-bg: var(--primary);
+    --owl-sidebar-active-fg: var(--primary-foreground);
+    --owl-sidebar-hover-bg: var(--accent);
+    --owl-sidebar-border: var(--border);
+    --owl-brand-fg: var(--foreground);
+    --owl-brand-sub: var(--muted-foreground);
+    --owl-btn-primary-bg: var(--primary);
+    --owl-btn-primary-fg: var(--primary-foreground);
+    --owl-topbar-bg: var(--background);
+    --owl-topbar-border: var(--border);
+    --owl-workspace-bg: var(--background);
+    --owl-dropzone-border: var(--border);
+    --owl-dropzone-bg: var(--card);
+    --owl-tab-active-border: var(--primary);
+    --owl-tab-active-fg: var(--foreground);
+    --owl-tab-inactive-fg: var(--muted-foreground);
+  }
+
+  /* ── Modern Theme Overrides ── */
+  [data-theme="modern"] {
+    --owl-sidebar-bg: oklch(0.18 0.04 260);
+    --owl-sidebar-fg: oklch(0.92 0.01 240);
+    --owl-sidebar-muted: oklch(0.65 0.02 240);
+    --owl-sidebar-active-bg: oklch(0.45 0.18 260);
+    --owl-sidebar-active-fg: oklch(0.98 0 0);
+    --owl-sidebar-hover-bg: oklch(0.24 0.04 260);
+    --owl-sidebar-border: oklch(0.28 0.04 260);
+    --owl-brand-fg: oklch(0.98 0 0);
+    --owl-brand-sub: oklch(0.7 0.02 240);
+    --owl-btn-primary-bg: oklch(0.55 0.2 260);
+    --owl-btn-primary-fg: oklch(0.98 0 0);
+    --owl-topbar-bg: oklch(0.985 0 0);
+    --owl-topbar-border: oklch(0.92 0 0);
+    --owl-workspace-bg: oklch(0.975 0.005 250);
+    --owl-dropzone-border: oklch(0.85 0.01 240);
+    --owl-dropzone-bg: oklch(0.99 0 0);
+    --owl-tab-active-border: oklch(0.55 0.2 260);
+    --owl-tab-active-fg: oklch(0.55 0.2 260);
+    --owl-tab-inactive-fg: oklch(0.55 0.01 240);
+  }
 }
 
 /* ── Markdown 渲染微调 ── */

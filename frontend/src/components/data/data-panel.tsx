@@ -6,9 +6,7 @@ import { useState, useEffect } from "react";
 import { useTaskStore } from "@/stores/use-task-store";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Download } from "lucide-react";
-import { downloadKnowledge, exportStepDataframe, fetchVisualizations, type VisualizationItem } from "@/lib/api";
-import EChartsView from "@/components/chat/echarts-view";
-
+import { downloadKnowledge, exportStepDataframe} from "@/lib/api";
 
 import {
   Table,
@@ -19,43 +17,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { TableProperties, DatabaseZap, MousePointerClick, FileText } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { DatabaseZap, MousePointerClick, FileText } from "lucide-react";
 import { previewKnowledge } from "@/lib/api";
 
 export default function DataPanel() {
   const { currentTaskId, previewData, previewColumns, previewSource, setPreviewData } = useTaskStore();
   const [selectedSheet, setSelectedSheet] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"data" | "charts">("data");
-  const [vizList, setVizList] = useState<VisualizationItem[]>([]);
-  const [selectedViz, setSelectedViz] = useState<VisualizationItem | null>(null);
 
   const hasData = previewColumns.length > 0 && previewData && previewData.length > 0;
   const isTextPreview = previewSource?.fileType === "text" && previewSource?.textContent;
-
-  // 拉取可视化列表
-  useEffect(() => {
-    if (!currentTaskId) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetchVisualizations(currentTaskId);
-        if (cancelled) return;
-        setVizList(res.data);
-        // 默认选中最新一个
-        if (res.data.length > 0) {
-          setSelectedViz(res.data[res.data.length - 1]);
-        } else {
-          setSelectedViz(null);
-        }
-      } catch (e) {
-        console.error("Failed to fetch visualizations:", e);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentTaskId]);
 
   // 切换Excel sheet
   const handleSheetChange = async (sheetName: string) => {
@@ -94,68 +64,68 @@ export default function DataPanel() {
   return (
     <div className="flex h-full flex-col border-l">
     {/* 标题栏 */}
-    <div className="flex items-center gap-2 border-b px-4 py-3">
-      <TableProperties className="h-5 w-5 text-primary" />
-      <h2 className="text-sm font-semibold tracking-tight">Data View</h2>
-
-      <div className="ml-2 flex items-center gap-1 rounded-md border bg-muted/30 p-0.5">
-        <Button
-          variant={activeTab === "data" ? "default" : "ghost"}
-          size="sm"
-          className="h-6 px-2 text-[11px]"
-          onClick={() => setActiveTab("data")}
-        >
-          Data
-        </Button>
-        <Button
-          variant={activeTab === "charts" ? "default" : "ghost"}
-          size="sm"
-          className="h-6 px-2 text-[11px]"
-          onClick={() => setActiveTab("charts")}
-        >
-          Charts
-        </Button>
+    <div className="flex items-center border-b">
+      {/* Tabs */}
+      <div className="flex">
+        {(["data", "sources", "skills"] as const).map((tab) => {
+          const labels = { data: "Data Preview", sources: "Data Sources", skills: "SOPs" };
+          const isActive = tab === "data"; // sources and skills are placeholder for now
+          return (
+            <button
+              key={tab}
+              onClick={() => {
+                // sources and skills are placeholder
+              }}
+              className="relative px-5 py-3 text-xs font-semibold uppercase tracking-wider transition-colors"
+              style={{
+                color: isActive
+                  ? "var(--owl-tab-active-fg)"
+                  : "var(--owl-tab-inactive-fg)",
+              }}
+            >
+              {labels[tab]}
+              {isActive && (
+                <div
+                  className="absolute bottom-0 left-0 right-0 h-0.5"
+                  style={{ background: "var(--owl-tab-active-border)" }}
+                />
+              )}
+            </button>
+          );
+        })}
       </div>
 
-      {/* 数据源标签 */}
-      {(hasData || isTextPreview) && previewSource && (
-        <span
-          className={cn(
-            "rounded-full px-2 py-0.5 text-[10px] font-medium",
-            previewSource.type === "step"
-              ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300"
-              : "bg-muted text-muted-foreground"
-          )}
-        >
+      {/* Export button */}
+      <div className="ml-auto flex items-center gap-1 pr-4">
+        {hasData && !isTextPreview && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 text-xs"
+            onClick={handleExport}
+          >
+            <Download className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      </div>
+    </div>
+
+
+    {/* Data source label + row count (below tabs) */}
+    {(hasData || isTextPreview) && previewSource && (
+      <div className="flex items-center gap-2 border-b px-5 py-2">
+        <span className="text-xs font-medium">
           {previewSource.type === "step"
             ? `⚡ ${previewSource.dfName}`
             : `📁 ${previewSource.name}`}
         </span>
-      )}
-      
-      {/* Export按钮 - 仅在有数据且不是文本预览时显示 */}
-      {hasData && !isTextPreview && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="ml-auto h-7 gap-1.5 text-xs"
-          onClick={handleExport}
-        >
-          <Download className="h-3.5 w-3.5" />
-          Export
-        </Button>
-      )}
-      
-      {/* 行数统计 */}
-      {hasData && (
-        <span className={cn(
-          "rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground",
-          !isTextPreview && "ml-0"  // 如果有Export按钮，不需要ml-auto
-        )}>
-          {previewData.length} rows
-        </span>
-      )}
-    </div>
+        {hasData && (
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+            {previewData.length} rows
+          </span>
+        )}
+      </div>
+    )}
 
       {/* Excel Sheet 切换器 */}
       {previewSource?.fileType === "excel" && previewSource?.availableSheets && (
@@ -182,82 +152,6 @@ export default function DataPanel() {
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
           <DatabaseZap className="h-10 w-10 opacity-30" />
           <p className="text-sm">Select a task to view data</p>
-        </div>
-      ) : activeTab === "charts" ? (
-        <div className="flex flex-1 flex-col">
-          <div className="border-b px-3 py-2 text-xs text-muted-foreground">
-            {vizList.length} charts
-          </div>
-          <div className="flex flex-1 min-h-0">
-            {/* 左侧：图表列表 */}
-            <div className="w-[220px] shrink-0 border-r">
-              <ScrollArea className="h-full">
-                <div className="p-2 space-y-1">
-                  {vizList.length === 0 ? (
-                    <div className="p-3 text-xs text-muted-foreground">
-                      No charts yet. Ask Owl to visualize results.
-                    </div>
-                  ) : (
-                    vizList
-                      .slice()
-                      .reverse()
-                      .map((v) => (
-                        <button
-                          key={v.id}
-                          className={cn(
-                            "w-full rounded-md border px-2 py-2 text-left text-xs hover:bg-muted/40",
-                            selectedViz?.id === v.id
-                              ? "border-primary bg-muted"
-                              : "border-transparent"
-                          )}
-                          onClick={() => setSelectedViz(v)}
-                        >
-                          <div className="font-medium line-clamp-2">{v.title}</div>
-                          <div className="mt-1 text-[10px] text-muted-foreground">
-                            {v.chart_type}
-                          </div>
-                        </button>
-                      ))
-                  )}
-                </div>
-              </ScrollArea>
-            </div>
-            {/* 右侧：预览 */}
-            <div className="flex-1 min-w-0">
-              <ScrollArea className="h-full">
-                <div className="p-3">
-                  {!selectedViz ? (
-                    <div className="text-xs text-muted-foreground">
-                      Select a chart to preview.
-                    </div>
-                  ) : (
-                    (() => {
-                      let option: Record<string, unknown> | null = null;
-                      try {
-                        option = JSON.parse(selectedViz.option_json);
-                      } catch {
-                        option = null;
-                      }
-                      return (
-                        <div className="space-y-2">
-                          <div className="text-sm font-semibold">
-                            {selectedViz.title}
-                          </div>
-                          {option ? (
-                            <EChartsView option={option} height={420} />
-                          ) : (
-                            <div className="text-xs text-red-600">
-                              Invalid chart option_json.
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })()
-                  )}
-                </div>
-              </ScrollArea>
-            </div>
-          </div>
         </div>
       ) : isTextPreview ? (
         /* 文本预览模式 */

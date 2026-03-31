@@ -17,8 +17,7 @@ import ProvidersView from "./providers-view";
 import AgentsView from "./agents-view";
 import SkillsView from "./skills-view";
 import AboutView from "./about-view";
-
-
+import InterfaceView from "./interface-view";
 
 type MenuItem = {
   id: string;
@@ -60,6 +59,10 @@ export default function SettingsDialog() {
 
   // 渲染右侧内容
   const renderContent = () => {
+    if (selectedSettingsItem === "interface") {
+      return <InterfaceView />;
+    }
+    
     if (selectedSettingsItem === "providers") {
       return <ProvidersView />;
     }

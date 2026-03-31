@@ -8,6 +8,7 @@ import "./globals.css";
 import { BackendProvider } from "@/contexts/backend-context";
 import { OnboardingProvider } from "@/contexts/onboarding-context";
 import { DatabaseProvider } from "@/contexts/database-context";
+import { ThemeInitializer } from "./theme-initializer";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -32,6 +33,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}
       >
+        <ThemeInitializer />
         <BackendProvider>
           <DatabaseProvider>
             <OnboardingProvider>

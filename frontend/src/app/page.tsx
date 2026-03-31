@@ -2,263 +2,453 @@
 
 "use client";
 
-/**
- * 主页面：三栏布局
- * 左侧固定 200px | 中间最小 400px | 右侧动态
- * 中+右 > 800px 时按 55:45 分配，否则右侧获得剩余空间
- */
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import TaskSidebar from "@/components/sidebar/task-sidebar";
 import ChatArea from "@/components/chat/chat-area";
 import DataPanel from "@/components/data/data-panel";
 import { Badge } from "@/components/ui/badge";
 import SettingsDialog from "@/components/settings/settings-dialog";
 import DatabaseWarningDialog from "@/components/database/database-warning-dialog";
-import OnboardingDialog from "@/components/onboarding/onboarding-dialog";
-import { CircleCheck, CircleX, Loader2 } from "lucide-react";
+import {
+  CircleCheck,
+  CircleX,
+  Loader2,
+  Search,
+  Bell,
+  User,
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+  Settings,
+  BarChart3,
+  HelpCircle,
+  TableProperties,
+} from "lucide-react";
 import { useBackend } from "@/contexts/backend-context";
 import { useDatabase } from "@/contexts/database-context";
 import { useOnboarding } from "@/contexts/onboarding-context";
-import { fetchProviders, fetchAgentConfigs, checkForUpdate, getPlatformInfo } from "@/lib/api";
+import {
+  fetchProviders,
+  fetchAgentConfigs,
+  checkForUpdate,
+  getPlatformInfo,
+} from "@/lib/api";
 import { useSettingsStore } from "@/stores/use-settings-store";
+import { useTaskStore } from "@/stores/use-task-store";
+import { cn } from "@/lib/utils";
 
+/* ══════════════════════════════════════════
+   Layout constants
+   ══════════════════════════════════════════ */
+const LEFT_DEFAULT = 240;
+const LEFT_MIN = 200;
+const LEFT_MAX = 360;
+const LEFT_COLLAPSED = 56;
 
+const RIGHT_DEFAULT = 420;
+const RIGHT_MIN = 280;
+const RIGHT_MAX = 640;
+const RIGHT_COLLAPSED = 0; // fully hidden, only chevron visible
 
-/** 布局常量 */
-const LEFT_WIDTH = 200;       // 左侧固定宽度 px
-const MID_MIN = 400;          // 中间最小宽度 px
-const RIGHT_MIN = 300;        // 右侧最小宽度 px
-const SPLIT_THRESHOLD = 800;  // 中+右超过此值时启用比例分配
+const MID_MIN = 380;
 
-/** 根据可分配宽度计算中间和右侧的宽度 */
-function calcPanelWidths(totalWidth: number): { mid: number; right: number } {
-  const available = totalWidth - LEFT_WIDTH; // 中+右可用空间
-
-  if (available >= SPLIT_THRESHOLD) {
-    // 空间充足：55:45 比例分配
-    return {
-      mid: Math.round(available * 0.55),
-      right: Math.round(available * 0.45),
-    };
-  } else {
-    // 空间不足：中间优先保底 MID_MIN，右侧获得剩余
-    const mid = Math.max(MID_MIN, available - RIGHT_MIN);
-    const right = available - mid;
-    return { mid, right };
+/* ══════════════════════════════════════════
+   localStorage helpers
+   ══════════════════════════════════════════ */
+function loadPanelState() {
+  if (typeof window === "undefined") {
+    return { leftWidth: LEFT_DEFAULT, rightWidth: RIGHT_DEFAULT, leftCollapsed: false, rightCollapsed: false };
   }
+  try {
+    const raw = localStorage.getItem("owl-panel-state");
+    if (raw) {
+      const p = JSON.parse(raw);
+      return {
+        leftWidth: Math.min(LEFT_MAX, Math.max(LEFT_MIN, p.leftWidth ?? LEFT_DEFAULT)),
+        rightWidth: Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, p.rightWidth ?? RIGHT_DEFAULT)),
+        leftCollapsed: p.leftCollapsed ?? false,
+        rightCollapsed: p.rightCollapsed ?? false,
+      };
+    }
+  } catch { /* ignore */ }
+  return { leftWidth: LEFT_DEFAULT, rightWidth: RIGHT_DEFAULT, leftCollapsed: false, rightCollapsed: false };
 }
 
+function savePanelState(state: { leftWidth: number; rightWidth: number; leftCollapsed: boolean; rightCollapsed: boolean }) {
+  try { localStorage.setItem("owl-panel-state", JSON.stringify(state)); } catch { /* ignore */ }
+}
+
+/* ══════════════════════════════════════════
+   Resize handle (drag strip)
+   ══════════════════════════════════════════ */
+function ResizeHandle({ onDragStart }: { onDragStart: (e: React.MouseEvent) => void }) {
+  return (
+    <div
+      className="group relative z-10 flex w-1.5 shrink-0 cursor-col-resize items-center justify-center transition-colors hover:bg-primary/10 active:bg-primary/20"
+      onMouseDown={onDragStart}
+    >
+      <div className="h-8 w-0.5 rounded-full bg-border transition-colors group-hover:bg-primary/40 group-active:bg-primary/60" />
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════
+   Edge chevron toggle (sits on panel border)
+   ══════════════════════════════════════════ */
+function EdgeChevron({
+  side,
+  collapsed,
+  onClick,
+}: {
+  side: "left" | "right";
+  collapsed: boolean;
+  onClick: () => void;
+}) {
+  // Left panel: collapsed → show ">" to expand, expanded → show "<" to collapse
+  // Right panel: collapsed → show "<" to expand, expanded → show ">" to collapse
+  const showRight = (side === "left" && collapsed) || (side === "right" && !collapsed);
+
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "absolute top-1/2 -translate-y-1/2 z-20",
+        "flex h-8 w-4 items-center justify-center",
+        "bg-card border shadow-sm transition-colors hover:bg-accent",
+        // Positioning: on the edge between panels
+        side === "left" ? "-right-4 rounded-r-md border-l-0" : "-left-4 rounded-l-md border-r-0"
+      )}
+      title={collapsed ? "Expand" : "Collapse"}
+    >
+      {showRight ? (
+        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+      ) : (
+        <ChevronLeft className="h-3.5 w-3.5 text-muted-foreground" />
+      )}
+    </button>
+  );
+}
+
+/* ══════════════════════════════════════════
+   Left collapsed mini sidebar
+   ══════════════════════════════════════════ */
+function CollapsedSidebar({
+  onNewTask,
+  onOpenSettings,
+}: {
+  onNewTask: () => void;
+  onOpenSettings: () => void;
+}) {
+  return (
+    <div
+      className="flex h-full w-full flex-col items-center py-4 gap-3"
+      style={{
+        background: "var(--owl-sidebar-bg)",
+        borderRight: "1px solid var(--owl-sidebar-border)",
+      }}
+    >
+      {/* Logo */}
+      <div
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+        style={{ background: "var(--owl-btn-primary-bg)" }}
+      >
+        <span className="text-sm" style={{ color: "var(--owl-btn-primary-fg)" }}>🦉</span>
+      </div>
+
+      {/* New task */}
+      <button
+        onClick={onNewTask}
+        className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:opacity-90"
+        style={{ background: "var(--owl-btn-primary-bg)", color: "var(--owl-btn-primary-fg)" }}
+        title="New Action"
+      >
+        <Plus className="h-4 w-4" />
+      </button>
+
+      {/* Task list icon */}
+      <button
+        className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+        style={{ color: "var(--owl-sidebar-muted)" }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--owl-sidebar-hover-bg)"; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+        title="Tasks"
+      >
+        <BarChart3 className="h-4 w-4" />
+      </button>
+
+      <div className="flex-1" />
+
+      {/* Settings */}
+      <button
+        onClick={onOpenSettings}
+        className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+        style={{ color: "var(--owl-sidebar-muted)" }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--owl-sidebar-hover-bg)"; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+        title="Settings"
+      >
+        <Settings className="h-4 w-4" />
+      </button>
+
+      {/* Help */}
+      <button
+        className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+        style={{ color: "var(--owl-sidebar-muted)" }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--owl-sidebar-hover-bg)"; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+        title="Help"
+      >
+        <HelpCircle className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════
+   Main page
+   ══════════════════════════════════════════ */
 export default function HomePage() {
-  // 使用 useBackend hook 替代本地状态
   const { status: backendStatus } = useBackend();
   const { shouldShowWarning: showDatabaseWarning, dismissWarning: dismissDatabaseWarning } = useDatabase();
   const { shouldShowOnboarding, skipOnboarding, recheckConfiguration } = useOnboarding();
-
-  // 更新检查相关
-  const {
-    updateStatus,
-    setUpdateStatus,
-    setUpdateInfo,
-    setSettingsOpen,
-    setSelectedSettingsItem,
-  } = useSettingsStore();
-
+  const { updateStatus, setUpdateStatus, setUpdateInfo, setSettingsOpen, setSelectedSettingsItem } = useSettingsStore();
   const isTauriEnv = typeof window !== "undefined" && "__TAURI__" in window;
 
-  // 启动后 5 秒自动检查更新（仅 Tauri 桌面环境）
+  /* ── Panel state ── */
+  const [leftWidth, setLeftWidth] = useState(LEFT_DEFAULT);
+  const [rightWidth, setRightWidth] = useState(RIGHT_DEFAULT);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [isDragging, setIsDragging] = useState<"left" | "right" | null>(null);
+
+  const stateRef = useRef({ leftWidth, rightWidth, leftCollapsed, rightCollapsed });
+  useEffect(() => {
+    stateRef.current = { leftWidth, rightWidth, leftCollapsed, rightCollapsed };
+  }, [leftWidth, rightWidth, leftCollapsed, rightCollapsed]);
+
+  // Load from localStorage
+  useEffect(() => {
+    const saved = loadPanelState();
+    setLeftWidth(saved.leftWidth);
+    setRightWidth(saved.rightWidth);
+    setLeftCollapsed(saved.leftCollapsed);
+    setRightCollapsed(saved.rightCollapsed);
+  }, []);
+
+  // Persist
+  useEffect(() => {
+    savePanelState({ leftWidth, rightWidth, leftCollapsed, rightCollapsed });
+  }, [leftWidth, rightWidth, leftCollapsed, rightCollapsed]);
+
+  /* ── Drag logic ── */
+  const handleDragStart = useCallback(
+    (side: "left" | "right") => (e: React.MouseEvent) => {
+      e.preventDefault();
+      setIsDragging(side);
+      const startX = e.clientX;
+      const startLeftW = stateRef.current.leftWidth;
+      const startRightW = stateRef.current.rightWidth;
+
+      const onMouseMove = (ev: MouseEvent) => {
+        const delta = ev.clientX - startX;
+        const totalWidth = window.innerWidth;
+
+        if (side === "left") {
+          const newLeft = Math.min(LEFT_MAX, Math.max(LEFT_MIN, startLeftW + delta));
+          const effectiveRight = stateRef.current.rightCollapsed ? 0 : stateRef.current.rightWidth;
+          if (totalWidth - newLeft - effectiveRight - 3 >= MID_MIN) {
+            setLeftWidth(newLeft);
+          }
+        } else {
+          const newRight = Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, startRightW - delta));
+          const effectiveLeft = stateRef.current.leftCollapsed ? LEFT_COLLAPSED : stateRef.current.leftWidth;
+          if (totalWidth - effectiveLeft - newRight - 3 >= MID_MIN) {
+            setRightWidth(newRight);
+          }
+        }
+      };
+
+      const onMouseUp = () => {
+        setIsDragging(null);
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+      };
+
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    },
+    []
+  );
+
+  /* ── Collapse/Expand ── */
+  const toggleLeftCollapsed = useCallback(() => setLeftCollapsed((p) => !p), []);
+  const toggleRightCollapsed = useCallback(() => setRightCollapsed((p) => !p), []);
+
+  /* ── New task from collapsed sidebar ── */
+  const handleCollapsedNewTask = useCallback(async () => {
+    const { createTask } = await import("@/lib/api");
+    const taskStore = useTaskStore.getState();
+    const title = `Task ${taskStore.tasks.length + 1}`;
+    const res = await createTask(title);
+    taskStore.addTask(res.data);
+    taskStore.setCurrentTaskId(res.data.id);
+    setLeftCollapsed(false);
+  }, []);
+
+  /* ── Effective widths ── */
+  const effectiveLeft = leftCollapsed ? LEFT_COLLAPSED : leftWidth;
+  const effectiveRight = rightCollapsed ? 0 : rightWidth;
+
+  /* ── Auto update check (Tauri) ── */
   useEffect(() => {
     if (!isTauriEnv || backendStatus !== "connected") return;
-    // 仅在 idle 状态检查，避免重复
     if (useSettingsStore.getState().updateStatus !== "idle") return;
-
     const timer = setTimeout(async () => {
       const store = useSettingsStore.getState();
       store.setUpdateStatus("checking");
-
       try {
-        // 获取版本号
         const { getVersion } = await import("@tauri-apps/api/app");
         const currentVersion = await getVersion();
-
-        // 获取平台信息
-        let plat = "macos";
-        let arch = "aarch64";
+        let plat = "macos", arch = "aarch64";
         try {
           const os = await import("@tauri-apps/plugin-os");
-          const p = await os.platform();
-          const a = await os.arch();
-          plat = p === "macos" ? "macos" : p === "windows" ? "windows" : p;
-          arch = a === "aarch64" ? "aarch64" : "x86_64";
+          plat = (await os.platform()) === "windows" ? "windows" : "macos";
+          arch = (await os.arch()) === "aarch64" ? "aarch64" : "x86_64";
         } catch {
           const info = await getPlatformInfo();
-          plat = info.platform;
-          arch = info.arch;
+          plat = info.platform; arch = info.arch;
         }
-
         const result = await checkForUpdate(currentVersion, plat, arch);
         store.setUpdateInfo(result);
         store.setUpdateStatus(result.has_update ? "has_update" : "up_to_date");
-      } catch (err) {
-        console.error("Auto update check failed:", err);
-        // 静默失败，不影响用户体验
+      } catch {
         store.setUpdateStatus("idle");
       }
     }, 5000);
-
     return () => clearTimeout(timer);
   }, [isTauriEnv, backendStatus]);
 
-  // 点击 Update Badge → 打开 Settings → About
   const handleUpdateBadgeClick = useCallback(() => {
     setSelectedSettingsItem("about");
     setSettingsOpen(true);
   }, [setSelectedSettingsItem, setSettingsOpen]);
 
-  const [panelWidths, setPanelWidths] = useState<{ mid: number; right: number }>(
-    () => calcPanelWidths(1280)
-  );
-
-  const handleResize = useCallback(() => {
-    setPanelWidths(calcPanelWidths(window.innerWidth));
-  }, []);
-
-  useEffect(() => {
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [handleResize]);
-
-  // 后端就绪后，拉取 Providers 和 AgentConfigs 到全局 store
+  /* ── Providers / AgentConfigs ── */
   useEffect(() => {
     if (backendStatus !== "connected") return;
-    const { setProviders, setAgentConfigs } = useSettingsStore.getState();
-    fetchProviders()
-      .then((res) => setProviders(res.data ?? []))
-      .catch((err) => console.error("Failed to fetch providers:", err));
-    fetchAgentConfigs()
-      .then((res) => setAgentConfigs(res.data ?? []))
-      .catch((err) => console.error("Failed to fetch agent configs:", err));
+    const s = useSettingsStore.getState();
+    fetchProviders().then((r) => s.setProviders(r.data ?? [])).catch(() => {});
+    fetchAgentConfigs().then((r) => s.setAgentConfigs(r.data ?? [])).catch(() => {});
   }, [backendStatus]);
 
-
-  const handleOnboardingClose = () => {
-    // 重新检测配置（如果用户通过激活码或手动配置完成）
-    recheckConfiguration();
-    // 标记为已跳过（临时状态，刷新页面后失效）
-    skipOnboarding();
-  };
-  const handleDatabaseWarningClose = () => {
-    dismissDatabaseWarning();
-  };
-  // 优先级控制：只有在数据库兼容且后端连接正常时才显示 Onboarding
-  const shouldShowOnboardingDialog = 
-    !showDatabaseWarning && 
-    backendStatus === "connected" && 
-    shouldShowOnboarding;
-
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
-      {/* 顶部状态条 */}
-      <header className="flex h-10 shrink-0 items-center justify-between border-b px-4">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-bold tracking-tight">🦉 Owl.AI</span>
-          <span className="text-xs text-muted-foreground">An AI Data Analyst</span>
-        </div>
-        {/* 更新状态 Badge（仅 Tauri 桌面环境） */}
-        <div className="flex items-center gap-2">
-          {isTauriEnv && updateStatus !== "idle" && (
-            <Badge
-              variant={updateStatus === "has_update" ? "destructive" : "secondary"}
-              className="gap-1 text-[10px] cursor-pointer hover:opacity-80 transition-opacity"
-              onClick={handleUpdateBadgeClick}
-            >
-              {updateStatus === "checking" && (
-                <>
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  Checking...
-                </>
-              )}
-              {updateStatus === "has_update" && (
-                <>
-                  <CircleCheck className="h-3 w-3" />
-                  Update Available
-                </>
-              )}
-              {(updateStatus === "up_to_date" || updateStatus === "downloaded") && (
-                <>
-                  <CircleCheck className="h-3 w-3" />
-                  Up to Date
-                </>
-              )}
-              {updateStatus === "downloading" && (
-                <>
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  Downloading...
-                </>
-              )}
-            </Badge>
+    <div
+      className={cn("flex h-screen w-screen overflow-hidden", isDragging && "select-none")}
+      style={{ background: "var(--owl-workspace-bg)" }}
+    >
+      {/* Drag overlay */}
+      {isDragging && <div className="fixed inset-0 z-50 cursor-col-resize" />}
+
+      {/* ═══ Left Sidebar ═══ */}
+      <aside
+        className="relative shrink-0 transition-[width] duration-200 ease-out"
+        style={{ width: effectiveLeft }}
+      >
+        {/* overflow-hidden 放在内容容器上，不裁剪 chevron */}
+        <div className="h-full w-full overflow-hidden">
+          {leftCollapsed ? (
+            <CollapsedSidebar
+              onNewTask={handleCollapsedNewTask}
+              onOpenSettings={() => setSettingsOpen(true)}
+            />
+          ) : (
+            <TaskSidebar />
           )}
-          <Badge
-            variant={backendStatus === "connected" ? "default" : "destructive"}
-            className="gap-1 text-[10px]"
-          >
-            {backendStatus === "checking" && (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            )}
-            {backendStatus === "connected" && (
-              <CircleCheck className="h-3 w-3" />
-            )}
-            {backendStatus === "disconnected" && (
-              <CircleX className="h-3 w-3" />
-            )}
-            {backendStatus === "checking"
-              ? "Connecting..."
-              : backendStatus === "connected"
-                ? "Backend Connected"
-                : "Backend Offline"}
-          </Badge>
         </div>
-      </header>
+        <EdgeChevron side="left" collapsed={leftCollapsed} onClick={toggleLeftCollapsed} />
+      </aside>
 
-      {/* 三栏主体 */}
-      <div className="flex flex-1 overflow-hidden">
 
-        {/* 左侧：Task Sidebar，固定 200px */}
-        <aside
-          className="shrink-0 overflow-hidden"
-          style={{ width: LEFT_WIDTH }}
+      {/* ═══ Left Resize Handle (only when expanded) ═══ */}
+      {!leftCollapsed && <ResizeHandle onDragStart={handleDragStart("left")} />}
+
+      {/* ═══ Center + Right ═══ */}
+      <div className="flex flex-1 flex-col overflow-hidden min-w-0">
+
+        {/* ─── Top Bar ─── */}
+        <header
+          className="flex h-14 shrink-0 items-center justify-between px-6"
+          style={{
+            background: "var(--owl-topbar-bg)",
+            borderBottom: "1px solid var(--owl-topbar-border)",
+          }}
         >
-          <TaskSidebar />
-        </aside>
+          <div
+            className="flex items-center gap-2 rounded-lg border px-3 py-1.5 w-[360px]"
+            style={{ borderColor: "var(--owl-dropzone-border)" }}
+          >
+            <Search className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm text-muted-foreground">Search workspace, assets, or logs...</span>
+          </div>
 
-        {/* 中间：Chat Area，动态宽度，保底 MID_MIN */}
-        <main
-          className="overflow-hidden"
-          style={{ width: panelWidths.mid, minWidth: MID_MIN }}
-        >
-          <ChatArea />
-        </main>
+          <div className="flex items-center gap-3">
+            {isTauriEnv && updateStatus !== "idle" && (
+              <Badge
+                variant={updateStatus === "has_update" ? "destructive" : "secondary"}
+                className="gap-1 text-[10px] cursor-pointer hover:opacity-80 transition-opacity"
+                onClick={handleUpdateBadgeClick}
+              >
+                {updateStatus === "checking" && <><Loader2 className="h-3 w-3 animate-spin" />Checking...</>}
+                {updateStatus === "has_update" && <><CircleCheck className="h-3 w-3" />Update Available</>}
+                {(updateStatus === "up_to_date" || updateStatus === "downloaded") && <><CircleCheck className="h-3 w-3" />Up to Date</>}
+                {updateStatus === "downloading" && <><Loader2 className="h-3 w-3 animate-spin" />Downloading...</>}
+              </Badge>
+            )}
+            <Badge
+              variant={backendStatus === "connected" ? "default" : "destructive"}
+              className="gap-1 text-[10px]"
+            >
+              {backendStatus === "checking" && <Loader2 className="h-3 w-3 animate-spin" />}
+              {backendStatus === "connected" && <CircleCheck className="h-3 w-3" />}
+              {backendStatus === "disconnected" && <CircleX className="h-3 w-3" />}
+              {backendStatus === "checking" ? "Connecting..." : backendStatus === "connected" ? "Connected" : "Offline"}
+            </Badge>
+            <button className="rounded-full p-2 hover:bg-accent transition-colors">
+              <Bell className="h-4 w-4 text-muted-foreground" />
+            </button>
+            <button className="h-8 w-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center">
+              <User className="h-4 w-4 text-white" />
+            </button>
+          </div>
+        </header>
 
-        {/* 右侧：Data Panel，动态宽度，保底 RIGHT_MIN */}
-        <aside
-          className="shrink-0 overflow-hidden"
-          style={{ width: panelWidths.right, minWidth: RIGHT_MIN }}
-        >
-          <DataPanel />
-        </aside>
+        {/* ─── Workspace + Data Panel ─── */}
+        <div className="flex flex-1 overflow-hidden min-w-0">
 
+          {/* Chat Area */}
+          <main className="flex-1 min-w-0 overflow-hidden">
+            <ChatArea />
+          </main>
+
+          {/* Right Resize Handle (only when expanded) */}
+          {!rightCollapsed && <ResizeHandle onDragStart={handleDragStart("right")} />}
+
+          {/* Right Data Panel */}
+          <aside
+            className="relative shrink-0 transition-[width] duration-200 ease-out"
+            style={{ width: effectiveRight }}
+          >
+            <div className="h-full w-full overflow-hidden">
+              {!rightCollapsed && <DataPanel />}
+            </div>
+            <EdgeChevron side="right" collapsed={rightCollapsed} onClick={toggleRightCollapsed} />
+          </aside>
+        </div>
       </div>
-      {/* 设置对话框 */}
-      <SettingsDialog />
-      <DatabaseWarningDialog 
-        open={showDatabaseWarning} 
-        onClose={handleDatabaseWarningClose} 
-      />
 
-      {/* <OnboardingDialog 
-        open={shouldShowOnboardingDialog} 
-        onClose={handleOnboardingClose} 
-      /> */}
+      {/* Dialogs */}
+      <SettingsDialog />
+      <DatabaseWarningDialog open={showDatabaseWarning} onClose={() => dismissDatabaseWarning()} />
     </div>
   );
 }
