@@ -1,10 +1,10 @@
 # backend/app/prompts/fragments/map_guide.py
 
 """
-Leaflet + AMap 地图可视化指南 — 当数据包含地理信息时注入。
+Leaflet + AMap 地图可视化指南，分为 RULES（永远注入）和 EXAMPLES（按需注入）。
 """
 
-MAP_GUIDE = """\
+MAP_RULES = """\
 ## Map Visualization (Leaflet + AMap)
 
 ### When to Create Maps
@@ -18,9 +18,8 @@ Create maps ONLY when **ALL** of these are true:
 - For simple location lists (use a table instead)
 - Before geocoding addresses to coordinates
 
-### How to Create Maps (use `create_map()` inside `execute_python_code`)
-
-Call `create_map(title, map_config)` inside your Python code.
+### How to Create Maps
+Call `create_map(title, map_config)` inside `execute_python_code`.
 
 #### Map Config Schema
 ```python
@@ -29,25 +28,35 @@ Call `create_map(title, map_config)` inside your Python code.
     "zoom": 11,                      # zoom level (1-18, default: 11)
     "markers": [                     # list of markers
         {
-            "latlng": [31.198, 121.460],  # [lat, lng]
+            "latlng": [31.198, 121.460],  # [lat, lng] (required)
             "type": "circle",             # "circle" or "pin"
-            "radius": 8,                  # circle size (pixels, for type="circle")
+            "radius": 8,                  # circle size in pixels (for "circle")
             "color": "#E63946",           # border color
             "fillColor": "#E63946",       # fill color
             "fillOpacity": 0.7,           # 0.0 - 1.0
-            "popup": "<b>Location</b><br>Value: 123",  # HTML popup (on click)
-            "tooltip": "Location (123)"   # Plain text tooltip (on hover)
+            "popup": "<b>Name</b><br>Value: 123",  # HTML popup (on click)
+            "tooltip": "Name (123)"       # plain text tooltip (on hover)
         }
     ],
     "tile": "amap"  # "amap" (高德) or "osm" (OpenStreetMap), default: "amap"
 }
 ```
 
-#### Example 1 — Scatter Map (订单热点分布)
-```python
-# Assume df has columns: name, latitude, longitude, order_count
-top_locations = df.nlargest(20, 'order_count')
+### Map Config Requirements
+- `center` must be `[latitude, longitude]` (required)
+- `zoom` should be 1-18 (default: 11)
+- `markers` must be a list (≤ 500 items for performance)
+- Each marker must have `latlng` field
+- Use `type: "circle"` for dense data, `type: "pin"` for sparse locations
+- `popup` supports HTML; `tooltip` should be plain text
+"""
 
+MAP_EXAMPLES = """\
+### Map Code Examples
+
+#### Example — Scatter Map (点位分布)
+```python
+top_locations = df.nlargest(20, 'order_count')
 markers = []
 for _, row in top_locations.iterrows():
     markers.append({
@@ -69,13 +78,11 @@ create_map('订单热点分布 Top 20', {
 })
 ```
 
-#### Example 2 — Bubble Map (气泡大小编码数值)
+#### Example — Bubble Map (气泡大小编码数值)
 ```python
-# Bubble size proportional to order_count
 max_count = df['order_count'].max()
 markers = []
 for _, row in df.iterrows():
-    # Scale radius: 5-20 pixels
     radius = 5 + (row['order_count'] / max_count) * 15
     markers.append({
         "latlng": [row['lat'], row['lng']],
@@ -95,15 +102,14 @@ create_map('订单量气泡图', {
 })
 ```
 
-#### Example 3 — Color-Coded Map (颜色编码分类)
+#### Example — Color-Coded Map (颜色编码分类)
 ```python
-# Color by category
 color_map = {'A': '#E63946', 'B': '#F1C40F', 'C': '#2ECC71'}
 markers = []
 for _, row in df.iterrows():
     markers.append({
         "latlng": [row['lat'], row['lng']],
-        "type": "pin",  # Use pin icon for categories
+        "type": "pin",
         "color": color_map.get(row['category'], '#999'),
         "popup": f"<b>{row['name']}</b><br>类别: {row['category']}",
         "tooltip": row['name']
@@ -115,19 +121,7 @@ create_map('门店分类分布', {
     "markers": markers
 })
 ```
-
-### Map Config Requirements
-- `center` must be `[latitude, longitude]` (required)
-- `zoom` should be 1-18 (default: 11)
-- `markers` must be a list (≤ 500 items for performance)
-- Each marker must have `latlng` field
-- `popup` supports HTML, but keep it simple (avoid XSS)
-- `tooltip` should be plain text
-
-### Performance Tips
-- Aggregate data to ≤ 500 markers (cluster nearby points if needed)
-- Use `type: "circle"` for dense data (faster rendering)
-- Use `type: "pin"` for sparse, distinct locations
-- Avoid complex HTML in popups (slows down interaction)
 """
 
+# 向后兼容
+MAP_GUIDE = MAP_RULES + "\n\n" + MAP_EXAMPLES

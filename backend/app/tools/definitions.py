@@ -16,6 +16,8 @@ EXECUTE_PYTHON_CODE_TOOL = {
             "Use this tool to explore data, compute statistics, verify hypotheses, etc. "
             "If you want to create a chart, call create_chart(title, chart_type, option) "
             "inside this code block."
+            "If you want to create a map with geographic data (lat/lng), call "
+            "create_map(title, map_config) inside this code block."
         ),
         "parameters": {
             "type": "object",

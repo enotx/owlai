@@ -3,7 +3,7 @@
 """PlanAgent 的 system prompt 模板与构建函数"""
 
 from app.prompts.fragments.common_rules import COMMON_RULES
-from app.prompts.fragments.echarts_guide import ECHARTS_GUIDE
+from app.prompts.fragments import build_visualization_guide
 
 
 
@@ -77,18 +77,11 @@ def build_plan_system_prompt(
     text_context: str,
     variable_reference: str,
     is_first_turn: bool = False,
-    has_datasets: bool = False,       
+    include_viz_examples: bool = False,
 ) -> str:
-    """
-    构建 PlanAgent 的 system prompt。
-
-    Args:
-        dataset_context: 数据集元数据
-        text_context: 文本知识内容
-        variable_reference: 变量名对照表
-        is_first_turn: 是否为第一轮对话（追加额外提醒）
-    """
-    visualization_guide = ECHARTS_GUIDE if has_datasets else ""
+    visualization_guide = build_visualization_guide(
+        include_examples=include_viz_examples,
+    )
     prompt = _PLAN_TEMPLATE.format(
         rules=COMMON_RULES,
         dataset_context=dataset_context,
@@ -96,8 +89,6 @@ def build_plan_system_prompt(
         variable_reference=variable_reference,
         visualization_guide=visualization_guide,
     )
-
     if is_first_turn:
         prompt += _FIRST_TURN_REMINDER
-
     return prompt

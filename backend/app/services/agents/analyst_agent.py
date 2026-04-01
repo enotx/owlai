@@ -51,16 +51,21 @@ class AnalystAgent(BaseAgent):
             if subtask:
                 current_task = f"**SubTask {subtask.order}: {subtask.title}**\n{subtask.description or ''}"
         
-        has_datasets = bool(data_var_map)
+        # 从 context 获取可视化示例开关（由 orchestrator 的 LLM 分类 或 关键词兜底决定）
+        include_viz_examples = context.get("include_viz_examples", False)
+        
+        # 额外兜底：如果有数据集，也倾向于包含示例
+        if not include_viz_examples and data_var_map:
+            from app.prompts.fragments import needs_viz_examples
+            include_viz_examples = needs_viz_examples(user_message, current_task)
         system_prompt = build_analyst_system_prompt(
             dataset_context=dataset_ctx,
             text_context=text_ctx,
             variable_reference=var_ref,
             skill_context=skill_ctx,
             current_task=current_task or "[Direct analysis mode]",
-            has_datasets=has_datasets,
+            include_viz_examples=include_viz_examples,
         )
-
         
         # 加载历史
         history = context.get("history_messages", [])
@@ -87,7 +92,7 @@ class AnalystAgent(BaseAgent):
         
         for round_idx in range(max_rounds):
             try:
-                agent_tools = get_tools_for_agent("analyst", has_datasets=has_datasets)
+                agent_tools = get_tools_for_agent("analyst")
                 stream = await self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,

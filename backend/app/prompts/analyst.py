@@ -4,9 +4,7 @@
 
 from app.prompts.fragments.common_rules import COMMON_RULES
 from app.prompts.fragments.data_conventions import DATAFRAME_NAMING_CONVENTION
-from app.prompts.fragments.echarts_guide import ECHARTS_GUIDE
-from app.prompts.fragments.map_guide import MAP_GUIDE
-
+from app.prompts.fragments import build_visualization_guide
 
 # ── 模板 ──────────────────────────────────────────────────────
 # 占位符: {rules}, {naming_convention}, {visualization_guide},
@@ -47,7 +45,6 @@ Work step-by-step:
 {current_task}\
 """
 
-
 def build_analyst_system_prompt(
     *,
     dataset_context: str,
@@ -55,25 +52,21 @@ def build_analyst_system_prompt(
     variable_reference: str,
     skill_context: str,
     current_task: str,
-    has_datasets: bool = False,
+    include_viz_examples: bool = False,
 ) -> str:
     """
     构建 AnalystAgent 的 system prompt。
-
     Args:
         dataset_context: 数据集元数据 + 样本行
         text_context: 文本知识内容
         variable_reference: 变量名对照表
         skill_context: 激活的 Skill 提示词
-        current_task: 当前 SubTask 描述（或 "[Direct analysis mode]"）
-        has_datasets: 是否有数据集（决定是否注入 ECharts 指南）
+        current_task: 当前 SubTask 描述
+        include_viz_examples: 是否注入完整代码示例
     """
-    # 同时注入 ECharts 和 Map 指南
-    visualization_guide = ""
-    if has_datasets:
-        visualization_guide = ECHARTS_GUIDE + "\n\n" + MAP_GUIDE
-
-
+    visualization_guide = build_visualization_guide(
+        include_examples=include_viz_examples,
+    )
     return _ANALYST_TEMPLATE.format(
         rules=COMMON_RULES,
         naming_convention=DATAFRAME_NAMING_CONVENTION,

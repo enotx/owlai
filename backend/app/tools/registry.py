@@ -14,7 +14,7 @@ from app.tools.definitions import (
 def get_tools_for_agent(
     agent_type: str,
     *,
-    has_datasets: bool = False,
+    has_datasets: bool = True,
 ) -> list[dict]:
     """
     返回指定 Agent 类型应使用的 tool 列表。

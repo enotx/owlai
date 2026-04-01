@@ -33,12 +33,13 @@ class PlanAgent(BaseAgent):
         dataset_ctx, text_ctx, var_ref, data_var_map = await self._get_knowledge_context()
 
         conversation_turns = len([m for m in history if m["role"] in ("user", "assistant")])
+        include_viz_examples = context.get("include_viz_examples", False)
         system_prompt = build_plan_system_prompt(
             dataset_context=dataset_ctx,
             text_context=text_ctx,
             variable_reference=var_ref,
             is_first_turn=(conversation_turns == 0),
-            has_datasets=bool(data_var_map),
+            include_viz_examples=include_viz_examples,
         )
 
 
@@ -209,7 +210,7 @@ class PlanAgent(BaseAgent):
                             "dataframes": captured_dfs,
                         })
 
-                        # ── 【新增】处理沙箱内 create_chart() 捕获的图表 ──
+                        # ── 处理沙箱内 create_chart() 捕获的图表 ──
                         sandbox_charts = exec_result.get("charts", [])
                         for chart_meta in sandbox_charts:
                             chart_option = chart_meta.get("option", {})
@@ -227,8 +228,26 @@ class PlanAgent(BaseAgent):
                                     "type": "error",
                                     "content": f"Chart validation failed: {err_chart}",
                                 })
-
+                        # ── 处理沙箱内 create_map() 捕获的地图 ──
+                        sandbox_maps = exec_result.get("maps", [])
+                        for map_meta in sandbox_maps:
+                            map_config = map_meta.get("config", {})
+                            from app.tools.visualization import validate_map_config
+                            ok_map, err_map = validate_map_config(map_config)
+                            if ok_map:
+                                yield self._sse({
+                                    "type": "visualization",
+                                    "title": map_meta.get("title", "Untitled Map"),
+                                    "chart_type": "map",
+                                    "option": map_config,
+                                })
+                            else:
+                                yield self._sse({
+                                    "type": "error",
+                                    "content": f"Map validation failed: {err_map}",
+                                })
                         tool_output = exec_result.get("output") or "(no output)"
+
                         if not exec_result["success"]:
                             tool_output = f"ERROR: {exec_result.get('error', 'Unknown')}"
                         

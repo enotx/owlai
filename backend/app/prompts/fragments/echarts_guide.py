@@ -1,15 +1,11 @@
 # backend/app/prompts/fragments/echarts_guide.py
 
 """
-ECharts 可视化指南 — 仅在 Task 有数据集时注入。
-设计原则：
-  1. 明确告知"何时该画图"（避免 Agent 在探索阶段就画图）
-  2. 强烈引导使用 create_chart()（沙箱内），因为可以直接用 Python 变量
-  3. 只保留精简示例 + 图表类型速查表，节省 token
+ECharts 可视化指南，分为 RULES（永远注入）和 EXAMPLES（按需注入）。
 """
 
-ECHARTS_GUIDE = """\
-## Data Visualization
+ECHARTS_RULES = """\
+## Data Visualization (ECharts)
 
 ### When to Create Charts
 Create visualizations ONLY when **ALL** of these are true:
@@ -21,13 +17,37 @@ Create visualizations ONLY when **ALL** of these are true:
 - During exploratory / data-inspection steps (use `print()` instead)
 - When the user only asked for numbers, statistics, or a table
 - Before you have actual computed results
+- When data has geographic coordinates (lat/lng) and the user wants spatial visualization — use `create_map(title, map_config)` instead (see Map Visualization section below)
 
-### How to Create Charts (use `create_chart()` inside `execute_python_code`)
-
-Call `create_chart(title, chart_type, option)` inside your Python code. \
+### How to Create Charts
+Call `create_chart(title, chart_type, option)` inside `execute_python_code`.
 This lets you use computed Python variables directly in the ECharts option.
-
 **Do NOT use matplotlib / seaborn / plotly.** Only ECharts via `create_chart()`.
+
+#### Chart Type Quick Reference
+| Data pattern | Chart type | Notes |
+|---|---|---|
+| Compare categories | `bar` | Use horizontal bar if labels are long |
+| Trend over time | `line` | Add `smooth: True` for curves |
+| Proportions | `pie` | ≤ 7 slices; group small ones as "Other" |
+| Correlation (x vs y) | `scatter` | Add regression line if needed |
+| Distribution | `boxplot` | Or `bar` histogram-style |
+| Multi-dimension compare | `radar` | ≤ 6 axes |
+| Density / matrix | `heatmap` | Needs `visualMap` component |
+| Funnel / conversion | `funnel` | Sorted descending |
+
+#### ECharts Option Requirements
+- `option` must be a **complete, self-contained** ECharts option object
+- Data must be **embedded directly** (use `.tolist()` on pandas objects)
+- Always include: `title`, `tooltip`, `series`
+- Include `legend` when there are multiple series
+- Include `xAxis` / `yAxis` for cartesian charts
+- Rotate long axis labels: `axisLabel: { rotate: 45 }`
+- Keep data volume ≤ 50 points per series; aggregate if more
+"""
+
+ECHARTS_EXAMPLES = """\
+### ECharts Code Examples
 
 #### Example — Bar Chart
 ```python
@@ -39,6 +59,7 @@ create_chart('Revenue by Region', 'bar', {
     'yAxis': {'type': 'value', 'name': 'Revenue ($)'},
     'series': [{'type': 'bar', 'data': revenue.values.tolist(), 'name': 'Revenue'}]
 })
+```
 
 #### Example — Line Chart
 ```python
@@ -64,28 +85,7 @@ create_chart('Market Share', 'pie', {
     }]
 })
 ```
-
-#### Chart Type Quick Reference
-| Data pattern | Chart type | Notes |
-|---|---|---|
-| Compare categories | `bar` | Use horizontal bar if labels are long |
-| Trend over time | `line` | Add `smooth: True` for curves |
-| Proportions | `pie` | ≤ 7 slices; group small ones as "Other" |
-| Correlation (x vs y) | `scatter` | Add regression line if needed |
-| Distribution | `boxplot` | Or `bar` histogram-style |
-| Multi-dimension compare | `radar` | ≤ 6 axes |
-| Density / matrix | `heatmap` | Needs `visualMap` component |
-| Funnel / conversion | `funnel` | Sorted descending |
-
-
-#### ECharts Option Requirements
-`option` must be a **complete, self-contained** ECharts option object
-Data must be **embedded directly** (use `.tolist()` on pandas objects)
-Always include: `title`, `tooltip`, `series`
-Include `legend` when there are multiple series
-Include `xAxis` / `yAxis` for cartesian charts
-Rotate long axis labels: `axisLabel`: { `rotate`: 45 }
-Keep data volume ≤ 50 points per series; aggregate if more
-
-
 """
+
+# 向后兼容：旧代码 import ECHARTS_GUIDE 不会报错
+ECHARTS_GUIDE = ECHARTS_RULES + "\n\n" + ECHARTS_EXAMPLES

@@ -111,6 +111,11 @@ class AgentOrchestrator:
         context["user_message"] = user_message
         
         if mode == "plan":
+            # 非 auto 模式：关键词兜底判断是否需要可视化示例
+            if "include_viz_examples" not in context:
+                from app.prompts.fragments import needs_viz_examples
+                context["include_viz_examples"] = needs_viz_examples(user_message)
+            
             try:
                 client, model = await self._get_agent_config("plan")
             except ValueError as e:
@@ -122,6 +127,11 @@ class AgentOrchestrator:
                 yield event
         
         elif mode == "analyst":
+            # 非 auto 模式：关键词兜底判断是否需要可视化示例
+            if "include_viz_examples" not in context:
+                from app.prompts.fragments import needs_viz_examples
+                context["include_viz_examples"] = needs_viz_examples(user_message)
+
             try:
                 client, model = await self._get_agent_config("analyst")
             except ValueError as e:
@@ -133,7 +143,8 @@ class AgentOrchestrator:
                 yield event
         
         elif mode == "auto":
-            target_mode, reason = await self._classify_intent(user_message)
+            target_mode, reason, viz_examples = await self._classify_intent(user_message)
+            context["include_viz_examples"] = viz_examples
             
             if target_mode == "plan":
                 yield self._sse({
@@ -165,48 +176,40 @@ class AgentOrchestrator:
         else:
             yield self._sse({"type": "error", "content": f"Unknown mode: {mode}"})
     
-    async def _classify_intent(self, user_message: str) -> tuple[str, str]:
+    async def _classify_intent(self, user_message: str) -> tuple[str, str, bool]:
         """
-        使用LLM进行意图识别，判断应使用plan还是analyst模式。
+        使用LLM进行意图识别，判断应使用plan还是analyst模式；以及是否需要可视化示例。
         
         模型选择走 _get_agent_config("misc") 的标准优先级链：
           model_override → misc DB config → default DB config → ValueError
         
+
         Returns:
-            (mode, reason) — mode: 'plan' | 'analyst'
+            (mode, reason, viz_examples)
         """
         try:
             client, model = await self._get_agent_config("misc")
         except ValueError:
             # 没有任何可用的LLM配置 → 关键词兜底
-            return self._keyword_fallback(user_message)
+            mode, reason = self._keyword_fallback(user_message)
+            return mode, reason, False
         
         # 收集上下文摘要
         context_summary = await self._get_context_summary()
         
-        classification_prompt = f"""You are a task router. Classify the user's request into one of two modes:
-
-**plan**: Complex, multi-step analysis that needs:
-- Requirement clarification or scoping
-- Breaking down into multiple sub-tasks
-- Strategic thinking about approach
-- Broad/vague questions that need discussion first
-- Requests involving multiple datasets or cross-analysis
-
-**analyst**: Straightforward analysis that can be:
-- Answered directly with 1-3 code executions
-- Clearly defined without ambiguity
-- Simple queries, calculations, visualizations, or explorations
-- Follow-up questions on previous results
-
+        classification_prompt = f"""You are a task router. Analyze the user's request and return TWO decisions:
+**1. mode** — Which agent should handle this?
+- **plan**: Complex, multi-step analysis that needs requirement clarification, breaking down into sub-tasks, strategic thinking, or involves multiple datasets.
+- **analyst**: Straightforward analysis that can be answered directly with 1-3 code executions, clearly defined without ambiguity.
+**2. viz_examples** — Does the request likely involve creating charts, maps, or other visualizations?
+- **true**: User explicitly or implicitly wants visual output (charts, plots, maps, geographic analysis, distribution diagrams, trend lines, etc.)
+- **false**: User wants numbers, tables, text answers, data exploration, or it's too early to tell.
 ## Available Context
 {context_summary}
-
 ## User Message
 {user_message}
-
 Respond with ONLY a JSON object, no markdown fences:
-{{"mode": "plan" or "analyst", "reason": "one-sentence explanation"}}"""
+{{"mode": "plan" or "analyst", "reason": "one-sentence explanation", "viz_examples": true or false}}"""
 
         try:
             response = await client.chat.completions.create(
@@ -224,14 +227,15 @@ Respond with ONLY a JSON object, no markdown fences:
                 result_data = json.loads(json_match.group())
                 mode = result_data.get("mode", "analyst")
                 reason = result_data.get("reason", "LLM classification")
+                viz_examples = bool(result_data.get("viz_examples", False))
                 if mode not in ("plan", "analyst"):
                     mode = "analyst"
-                return mode, reason
-
-            return "analyst", "Intent classification returned unparseable response; defaulting to analyst"
+                return mode, reason, viz_examples
+            return "analyst", "Intent classification returned unparseable response; defaulting to analyst", False
         
         except Exception:
-            return self._keyword_fallback(user_message)
+            mode, reason = self._keyword_fallback(user_message)
+            return mode, reason, False
     
     async def _get_context_summary(self) -> str:
         """收集当前 Task 的上下文摘要，供意图分类使用"""

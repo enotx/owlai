@@ -27,6 +27,7 @@ dependencies = [
     "scipy>=1.13.1",
     "requests>=2.32.5",
     "darts>=0.37.1",
+    "akshare>=1.18.49",
 ]
 
 
