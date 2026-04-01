@@ -53,10 +53,22 @@ jobs:
           chmod +x scripts/build-sidecar.sh
           ./scripts/build-sidecar.sh
           # 你的 detect_platform() 会自动检测当前 runner 的架构
-      
+            
+      - name: Prepare Next static export for Tauri
+        run: |
+          if [ -d "frontend/src/app/api" ]; then
+            mv frontend/src/app/api frontend/src/app/__api_backup__
+          fi
       - name: Build Tauri app (unsigned)
         working-directory: frontend
         run: npm run tauri:build
+      - name: Restore Next API routes
+        if: always()
+        run: |
+          if [ -d "frontend/src/app/__api_backup__" ]; then
+            rm -rf frontend/src/app/api
+            mv frontend/src/app/__api_backup__ frontend/src/app/api
+          fi
       
       - name: Find Tauri DMG & prepare artifacts
         id: find-dmg

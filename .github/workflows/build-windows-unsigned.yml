@@ -48,11 +48,29 @@ jobs:
           Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
           .\scripts\build-sidecar.ps1
       
+      - name: Prepare Next static export for Tauri
+        shell: pwsh
+        run: |
+          if (Test-Path "frontend/src/app/api") {
+            Rename-Item "frontend/src/app/api" "__api_backup__"
+          }
+
       - name: Build Tauri app (unsigned)
         working-directory: frontend
         shell: pwsh
         run: npm run tauri:build
-      
+
+      - name: Restore Next API routes
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path "frontend/src/app/__api_backup__") {
+            if (Test-Path "frontend/src/app/api") {
+              Remove-Item "frontend/src/app/api" -Recurse -Force
+            }
+            Rename-Item "frontend/src/app/__api_backup__" "api"
+          }      
+            
       - name: Create installation instructions
         shell: pwsh
         run: |
