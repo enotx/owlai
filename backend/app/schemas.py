@@ -217,6 +217,7 @@ class SkillCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = None
     prompt_markdown: str | None = None
+    reference_markdown: str | None = None
     env_vars: dict[str, str] = Field(default_factory=dict)
     allowed_modules: list[str] = Field(default_factory=list)
     is_active: bool = True
@@ -226,6 +227,7 @@ class SkillUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
     description: str | None = None
     prompt_markdown: str | None = None
+    reference_markdown: str | None = None
     env_vars: dict[str, str] | None = None
     allowed_modules: list[str] | None = None
     is_active: bool | None = None
@@ -236,6 +238,7 @@ class SkillResponse(BaseModel):
     name: str
     description: str | None
     prompt_markdown: str | None
+    reference_markdown: str | None
     env_vars: dict[str, str]
     allowed_modules: list[str]
     is_active: bool

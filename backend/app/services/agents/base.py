@@ -317,6 +317,13 @@ class BaseAgent(ABC):
             if modules:
                 all_modules.update(modules)
                 section += f"> **Allowed imports**: {', '.join(f'`{m}`' for m in modules)}\n"
+            # NEW: 提示 LLM 可通过 tool 获取详细参考文档
+            if skill.reference_markdown:
+                section += (
+                    f"\n> 📚 **Detailed reference available** — call "
+                    f"`get_skill_reference('{skill.name}')` when you need "
+                    f"exact API signatures, advanced usage, or troubleshooting.\n"
+                )
             prompt_parts.append(section)
         # 将 allowed_modules 打包为特殊 key，由 sandbox 层解析
         if all_modules:
@@ -324,6 +331,42 @@ class BaseAgent(ABC):
         skill_prompt = "\n---\n".join(prompt_parts)
         return skill_prompt, merged_envs
 
+    async def _lookup_skill_reference(self, skill_name: str) -> str:
+        """
+        根据 Skill 名称查询其 reference_markdown。
+        用于 get_skill_reference tool call。
+
+        Returns:
+            reference 内容，或未找到时的错误提示。
+        """
+        from app.models import Skill
+        from sqlalchemy import select
+
+        result = await self.db.execute(
+            select(Skill).where(Skill.name == skill_name, Skill.is_active == True)
+        )
+        skill = result.scalar_one_or_none()
+
+        if not skill:
+            # 提供模糊匹配建议
+            all_result = await self.db.execute(
+                select(Skill.name).where(Skill.is_active == True)
+            )
+            available = [row[0] for row in all_result.all()]
+            if available:
+                return (
+                    f"ERROR: No active skill named '{skill_name}'. "
+                    f"Available skills: {', '.join(available)}"
+                )
+            return f"ERROR: No active skill named '{skill_name}'. No skills are currently active."
+
+        if not skill.reference_markdown:
+            return (
+                f"Skill '{skill_name}' has no detailed reference documentation. "
+                f"Use the basic prompt already in your context."
+            )
+
+        return f"# Reference: {skill.name}\n\n{skill.reference_markdown}"
 
     async def _execute_code_with_heartbeat(
         self,

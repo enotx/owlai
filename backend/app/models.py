@@ -132,6 +132,7 @@ class Skill(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     prompt_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reference_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
     env_vars_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     allowed_modules_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

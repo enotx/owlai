@@ -76,3 +76,27 @@ CREATE_VISUALIZATION_TOOL = {
         },
     },
 }
+
+GET_SKILL_REFERENCE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_skill_reference",
+        "description": (
+            "Retrieve the detailed reference documentation for a specific skill. "
+            "Use this when you need exact API signatures, parameter details, "
+            "advanced usage patterns, or error handling guidance for a skill. "
+            "The skill's basic description and usage prompt are already in your context — "
+            "only call this when you need the full reference."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "skill_name": {
+                    "type": "string",
+                    "description": "Exact name of the skill (as shown in 'Available Skills' section).",
+                },
+            },
+            "required": ["skill_name"],
+        },
+    },
+}

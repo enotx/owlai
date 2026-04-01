@@ -28,6 +28,7 @@ async def list_skills(db: AsyncSession = Depends(get_db)):
             name=s.name,
             description=s.description,
             prompt_markdown=s.prompt_markdown,
+            reference_markdown=s.reference_markdown,
             env_vars=json.loads(s.env_vars_json) if s.env_vars_json else {},
             allowed_modules=json.loads(s.allowed_modules_json) if s.allowed_modules_json else [],
             is_active=s.is_active,
@@ -50,6 +51,7 @@ async def get_skill(skill_id: str, db: AsyncSession = Depends(get_db)):    # ←
         name=skill.name,
         description=skill.description,
         prompt_markdown=skill.prompt_markdown,
+        reference_markdown=skill.reference_markdown,
         env_vars=json.loads(skill.env_vars_json) if skill.env_vars_json else {},
         allowed_modules=json.loads(skill.allowed_modules_json) if skill.allowed_modules_json else [],
         is_active=skill.is_active,
@@ -74,6 +76,7 @@ async def create_skill(
         name=body.name,
         description=body.description,
         prompt_markdown=body.prompt_markdown,
+        reference_markdown=body.reference_markdown,
         env_vars_json=json.dumps(body.env_vars, ensure_ascii=False) if body.env_vars else "{}",
         allowed_modules_json=json.dumps(body.allowed_modules, ensure_ascii=False) if body.allowed_modules else "[]",
         is_active=body.is_active,
@@ -87,6 +90,7 @@ async def create_skill(
         name=skill.name,
         description=skill.description,
         prompt_markdown=skill.prompt_markdown,
+        reference_markdown=skill.reference_markdown,
         env_vars=json.loads(skill.env_vars_json) if skill.env_vars_json else {},
         allowed_modules=json.loads(skill.allowed_modules_json) if skill.allowed_modules_json else [],
         is_active=skill.is_active,
@@ -121,6 +125,8 @@ async def update_skill(
         skill.description = body.description
     if body.prompt_markdown is not None:
         skill.prompt_markdown = body.prompt_markdown
+    if body.reference_markdown is not None:              # NEW
+        skill.reference_markdown = body.reference_markdown  # NEW
     if body.env_vars is not None:
         skill.env_vars_json = json.dumps(body.env_vars, ensure_ascii=False)
     if body.allowed_modules is not None:
@@ -136,6 +142,7 @@ async def update_skill(
         name=skill.name,
         description=skill.description,
         prompt_markdown=skill.prompt_markdown,
+        reference_markdown=skill.reference_markdown,
         env_vars=json.loads(skill.env_vars_json) if skill.env_vars_json else {},
         allowed_modules=json.loads(skill.allowed_modules_json) if skill.allowed_modules_json else [],
         is_active=skill.is_active,

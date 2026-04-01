@@ -8,6 +8,7 @@
 from app.tools.definitions import (
     EXECUTE_PYTHON_CODE_TOOL,
     CREATE_VISUALIZATION_TOOL,
+    GET_SKILL_REFERENCE_TOOL,
 )
 
 
@@ -25,10 +26,16 @@ def get_tools_for_agent(
     """
     if agent_type == "plan":
         # PlanAgent 只需要探索性代码执行
-        return [EXECUTE_PYTHON_CODE_TOOL, CREATE_VISUALIZATION_TOOL]
+        return [EXECUTE_PYTHON_CODE_TOOL,
+                CREATE_VISUALIZATION_TOOL,
+                GET_SKILL_REFERENCE_TOOL,
+                ]
 
     elif agent_type == "analyst":
-        tools = [EXECUTE_PYTHON_CODE_TOOL, CREATE_VISUALIZATION_TOOL]
+        tools = [EXECUTE_PYTHON_CODE_TOOL,
+                 CREATE_VISUALIZATION_TOOL,
+                 GET_SKILL_REFERENCE_TOOL
+                ]
         # 有数据集时才提供独立的可视化 tool
         # （即使没有这个 tool，Agent 仍可通过 create_chart() 在沙箱内创建图表）
         return tools

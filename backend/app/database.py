@@ -26,9 +26,11 @@ class Base(DeclarativeBase):
 
 # ===== Schema Migration (in-app) =====
 # 使用 SQLite PRAGMA user_version 记录 schema 版本，避免外部迁移脚本依赖
-LATEST_SCHEMA_VERSION = 3
+LATEST_SCHEMA_VERSION = 4
 # v2: multi-agent (tasks.mode/plan_confirmed/current_subtask_id + subtasks + steps.subtask_id)
 # v3: visualization (visualizations table)
+# v4: skill reference_markdown (lazy-loaded reference doc)
+
 
 async def _get_user_version(conn) -> int:
     """读取 SQLite schema 版本（PRAGMA user_version）"""
@@ -162,7 +164,16 @@ async def upgrade_db_schema() -> dict:
                 applied.append("set user_version=3")
                 current = 3
 
-            # 如果未来加更多版本，这里继续 if current < 4 ...
+            # ── v4 migration: skills.reference_markdown ──
+            if current < 4:
+                skills_cols = await _get_table_columns(conn, "skills")
+                if "reference_markdown" not in skills_cols:
+                    await conn.execute(text("ALTER TABLE skills ADD COLUMN reference_markdown TEXT"))
+                    applied.append("ALTER TABLE skills ADD COLUMN reference_markdown")
+                await _set_user_version(conn, 4)
+                applied.append("set user_version=4")
+                current = 4
+            # 如果未来加更多版本，这里继续 if current < 5 ...
 
             return {
                 "success": True,

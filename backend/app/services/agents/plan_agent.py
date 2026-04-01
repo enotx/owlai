@@ -300,6 +300,17 @@ class PlanAgent(BaseAgent):
                             "tool_call_id": tc["id"],
                             "content": f"OK: visualization created. title={title!r}, chart_type={chart_type!r}",
                         })  # type: ignore
+                    # ---------- Tool: get_skill_reference ----------
+                    elif tc["name"] == "get_skill_reference":
+                        skill_name = args.get("skill_name", "")
+                        ref_content = await self._lookup_skill_reference(skill_name)
+                        if len(ref_content) > 12000:
+                            ref_content = ref_content[:12000] + "\n\n[... reference truncated]"
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": ref_content,
+                        })  # type: ignore
                     # ---------- Unknown tool ----------
                     else:
                         messages.append({

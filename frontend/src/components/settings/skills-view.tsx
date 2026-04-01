@@ -210,7 +210,11 @@ export default function SkillsView() {
                       {Object.keys(skill.env_vars).length > 1 ? "s" : ""}
                     </span>
                   )}
-
+                  {skill.reference_markdown && (
+                    <span className="flex items-center gap-1 shrink-0">
+                      📚 Reference
+                    </span>
+                  )}
                   {skill.allowed_modules.length > 0 && (
                     <span className="flex items-center gap-1 min-w-0">
                       <Package className="h-3 w-3 shrink-0" />
@@ -259,6 +263,9 @@ function SkillEditor({ skill, onBack, onSaved }: SkillEditorProps) {
   const [description, setDescription] = useState(skill?.description ?? "");
   const [promptMarkdown, setPromptMarkdown] = useState(
     skill?.prompt_markdown ?? ""
+  );
+  const [referenceMarkdown, setReferenceMarkdown] = useState(
+    skill?.reference_markdown ?? ""
   );
   const [envEntries, setEnvEntries] = useState<EnvEntry[]>(() => {
     if (skill?.env_vars && Object.keys(skill.env_vars).length > 0) {
@@ -323,6 +330,7 @@ function SkillEditor({ skill, onBack, onSaved }: SkillEditorProps) {
       name: name.trim(),
       description: description.trim() || undefined,
       prompt_markdown: promptMarkdown || undefined,
+      reference_markdown: referenceMarkdown || undefined,
       env_vars: envVars,
       allowed_modules: modules,
       is_active: isActive,
@@ -465,7 +473,42 @@ print(data.tail(10))
               className="h-[200px] w-full font-mono text-sm leading-relaxed resize-none overflow-y-auto"
             />
           </div>
+          <Separator />
 
+          {/* Reference documentation — NEW */}
+          <div>
+            <label className="text-sm font-medium mb-1.5 block">
+              Reference Documentation
+              <Badge variant="secondary" className="ml-2 text-xs font-normal">
+                Lazy-loaded
+              </Badge>
+            </label>
+            <p className="text-xs text-muted-foreground mb-2">
+              Detailed API reference, parameter specs, and advanced usage patterns.
+              This is <strong>not</strong> injected into the system prompt — the agent
+              will fetch it on-demand via a tool call when needed.
+            </p>
+            <Textarea
+              value={referenceMarkdown}
+              onChange={(e) => setReferenceMarkdown(e.target.value)}
+              placeholder={`## API Reference
+### get_stock_price(symbol: str) -> dict
+Returns current price data for the given ticker symbol.
+**Parameters:**
+- \`symbol\` (str): Ticker symbol, e.g. "AAPL"
+**Returns:** dict with keys: currentPrice, previousClose, volume, ...
+**Example:**
+\`\`\`python
+import yfinance as yf
+t = yf.Ticker("AAPL")
+price = t.info["currentPrice"]
+\`\`\`
+### Common Errors
+- \`HTTPError 429\`: Rate limited — add time.sleep(1) between calls
+- \`KeyError\`: Some fields may be missing for non-US stocks`}
+              className="h-[200px] w-full font-mono text-sm leading-relaxed resize-none overflow-y-auto"
+            />
+          </div>
           <Separator />
 
           {/* Environment variables */}
