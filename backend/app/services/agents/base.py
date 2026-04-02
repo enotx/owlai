@@ -420,3 +420,39 @@ class BaseAgent(ABC):
                 "error": f"Execution failed: {str(e)}",
                 "execution_time": 0.0,
             }
+
+
+    def _handle_hitl_request(self, args: dict) -> tuple[str, dict]:
+        """
+        处理 request_human_input 工具调用。
+        
+        Args:
+            args: 工具参数 {title, description, options}
+            
+        Returns:
+            (sse_event, tool_response_content) 元组
+            - sse_event: 发送给前端的 hitl_request SSE 事件
+            - tool_message: 返回给 LLM 的 tool 结果内容
+        """
+        title = args.get("title", "Awaiting your guidance")
+        description = args.get("description", "")
+        options = args.get("options", [])
+        
+        # 构建 SSE 事件
+        hitl_event = self._sse({
+            "type": "hitl_request",
+            "title": title,
+            "description": description,
+            "options": options,
+        })
+        
+        # 返回给 LLM 的消息（告诉它暂停）
+        tool_content = {
+            "status": "paused",
+            "message": (
+                "PAUSED: A decision card has been presented to the user. "
+                "The conversation will resume with the user's choice. "
+                "Do NOT continue generating — wait for the user's response."
+            )
+        }
+        return hitl_event, tool_content

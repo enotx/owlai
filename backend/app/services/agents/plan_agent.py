@@ -64,7 +64,10 @@ class PlanAgent(BaseAgent):
         max_rounds = 5  # Plan阶段限制轮次
         
         plan_tools = get_tools_for_agent("plan")
+        hitl_break = False
         for round_idx in range(max_rounds):
+            if hitl_break:
+                break
             try:
                 stream = await self.client.chat.completions.create(
                     model=self.model,
@@ -311,6 +314,21 @@ class PlanAgent(BaseAgent):
                             "tool_call_id": tc["id"],
                             "content": ref_content,
                         })  # type: ignore
+
+                    # ---------- Tool: request_human_input (HITL) ----------
+                    elif tc["name"] == "request_human_input":
+                        hitl_event, tool_content = self._handle_hitl_request(args)
+                        yield hitl_event
+                        
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": tool_content,
+                        })  # type: ignore
+                        
+                        hitl_break = True
+                        break
+
                     # ---------- Unknown tool ----------
                     else:
                         messages.append({
@@ -319,6 +337,8 @@ class PlanAgent(BaseAgent):
                             "content": f"ERROR: Unknown tool '{tc['name']}'",
                         })  # type: ignore
 
+                if hitl_break:
+                    break
                 continue  # 继续下一轮
             
             # 在处理纯文本回复时，检查是否包含Plan JSON

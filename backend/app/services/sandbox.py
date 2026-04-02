@@ -143,7 +143,7 @@ _ALLOWED_MODULES = {{
     'itertools', 'functools', 'operator', 'string', 're',
     'datetime', 'json', 'decimal', 'fractions', 'textwrap',
     'collections.abc', 'typing', 'numbers', 'hashlib', 'random',
-    'sklearn', 'scipy', 'time'
+    'sklearn', 'scipy', 'time', 'xgboost', 'lightgbm', 'catboost',
 }}
 # 动态追加 Skill 声明的额外模块
 _ALLOWED_MODULES.update({repr(set(extra_allowed_modules or []))})

@@ -286,7 +286,25 @@ async def _load_history_messages(
         elif s.step_type == "visualization":
             # 对 LLM 来说，可视化属于展示结果；这里作为 assistant 的简短描述即可
             messages.append({"role": "assistant", "content": f"[Visualization created] {s.content}"})
-            
+        elif s.step_type == "hitl_request":
+            # HITL 请求在 LLM 历史中表现为 assistant 的说明
+            hitl_info = ""
+            if s.code_output:
+                try:
+                    hitl_data = json.loads(s.code_output)
+                    options_text = ", ".join(
+                        f'"{opt.get("label", "")}"' for opt in hitl_data.get("options", [])
+                    )
+                    hitl_info = (
+                        f"[HITL Request] {hitl_data.get('title', '')}: "
+                        f"{hitl_data.get('description', '')} "
+                        f"Options presented: {options_text}"
+                    )
+                except json.JSONDecodeError:
+                    hitl_info = f"[HITL Request] {s.content}"
+            else:
+                hitl_info = f"[HITL Request] {s.content}"
+            messages.append({"role": "assistant", "content": hitl_info})
     return messages
 
 
@@ -300,6 +318,7 @@ async def _load_history_messages(
 # {"type": "done",        "steps": [...]}       -- 全部完成
 # {"type": "error",       "content": "..."}     -- 错误
 # {"type": "visualization","title": "...","chart_type":"bar","option": {...}}  -- 生成 ECharts 图表（需要持久化）
+# {"type": "hitl_request", "title": "...", "description": "...", "options": [...]}  -- HITL: 请求用户决策
 
 
 async def run_agent_stream(
@@ -568,7 +587,43 @@ async def run_agent_stream(
 
                             saved_steps.append(_step_to_dict(viz_step))
                             yield _sse({"type": "step_saved", "step": _step_to_dict(viz_step)})
-
+                    # hitl_request 事件：保存为 hitl_request Step
+                    elif event_type == "hitl_request":
+                        # 先保存累积的文本
+                        if accumulated_text.strip():
+                            async with async_session() as write_db:
+                                text_step = Step(
+                                    task_id=task_id,
+                                    role="assistant",
+                                    step_type="assistant_message",
+                                    content=accumulated_text.strip(),
+                                )
+                                write_db.add(text_step)
+                                await write_db.commit()
+                                await write_db.refresh(text_step)
+                                saved_steps.append(_step_to_dict(text_step))
+                                yield _sse({"type": "step_saved", "step": _step_to_dict(text_step)})
+                            accumulated_text = ""
+                        
+                        # 保存 HITL 请求 Step
+                        hitl_data = {
+                            "title": event_data.get("title", ""),
+                            "description": event_data.get("description", ""),
+                            "options": event_data.get("options", []),
+                        }
+                        async with async_session() as write_db:
+                            hitl_step = Step(
+                                task_id=task_id,
+                                role="assistant",
+                                step_type="hitl_request",
+                                content=event_data.get("description", "Awaiting your guidance"),
+                                code_output=json.dumps(hitl_data, ensure_ascii=False),
+                            )
+                            write_db.add(hitl_step)
+                            await write_db.commit()
+                            await write_db.refresh(hitl_step)
+                            saved_steps.append(_step_to_dict(hitl_step))
+                            yield _sse({"type": "step_saved", "step": _step_to_dict(hitl_step)})
                 except json.JSONDecodeError:
                     pass
             

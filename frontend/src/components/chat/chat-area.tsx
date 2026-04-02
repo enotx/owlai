@@ -9,7 +9,7 @@
 import { useEffect, useRef, useMemo, useCallback, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useTaskStore } from "@/stores/use-task-store";
-import type { Step, PendingToolExecution, StreamingMessage } from "@/stores/use-task-store";
+import type { Step, PendingToolExecution, StreamingMessage, HITLRequest} from "@/stores/use-task-store";
 import KnowledgeZone from "./knowledge-zone";
 import MessageInput from "./message-input";
 import SubTaskList from "./subtask-list";
@@ -17,7 +17,7 @@ import PlanConfirmationDialog from "./plan-confirmation";
 import EChartsView from "./echarts-view";
 import LeafletMapView from "./leaflet-map-view";
 import { MarkdownRenderer } from "./markdown-renderer";
-
+import HITLCard from "./hitl-card";
 
 
 import {
@@ -229,6 +229,46 @@ function VisualizationBlock({ step }: { step: Step }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ── HITL 决策卡片块 ──────────────────────────────────────────
+function HITLBlock({
+  step,
+  onSubmit,
+}: {
+  step: Step;
+  onSubmit?: (choice: { type: "option" | "custom"; value: string; label: string }) => void;
+}) {
+  const parsed = useMemo(() => {
+    if (!step.code_output) return null;
+    try {
+      return JSON.parse(step.code_output) as HITLRequest;
+    } catch {
+      return null;
+    }
+  }, [step.code_output]);
+
+  // 检查该 HITL 是否已有用户回复（在 steps 中查找紧随其后的 user_message）
+  const { steps } = useTaskStore();
+  const stepIndex = steps.findIndex((s) => s.id === step.id);
+  const hasReply =
+    stepIndex >= 0 &&
+    stepIndex < steps.length - 1 &&
+    steps[stepIndex + 1]?.step_type === "user_message";
+
+  if (!parsed) {
+    return <AssistantBubble content={step.content} />;
+  }
+
+  return (
+    <HITLCard
+      title={parsed.title}
+      description={parsed.description}
+      options={parsed.options}
+      resolved={hasReply}
+      onSubmit={onSubmit}
+    />
   );
 }
 
@@ -649,9 +689,21 @@ export default function ChatArea() {
                 });
               } else {
                 clearStreaming();
-                // 修改：传入 taskId
                 setPendingTool(taskId, null);
                 addStep(step);
+                
+                // 如果是 HITL 请求，设置 pendingHITL 状态
+                if (step.step_type === "hitl_request" && step.code_output) {
+                  try {
+                    const hitlData = JSON.parse(step.code_output);
+                    useTaskStore.getState().setPendingHITL({
+                      stepId: step.id,
+                      data: hitlData,
+                    });
+                  } catch {
+                    // ignore
+                  }
+                }
               }
               break;
             }
@@ -701,6 +753,29 @@ export default function ChatArea() {
       setIsWaitingResponse(false);
     }
   }, [isSending, currentMode, selectedModel, setIsSending, setIsWaitingResponse, addStep, startStreaming, appendStreamingToken, clearStreaming, setPendingTool, updatePendingToolResult]);
+
+  /** HITL 用户选择后，格式化为消息并发送 */
+  const handleHITLSubmit = useCallback(
+    (choice: { type: "option" | "custom"; value: string; label: string }) => {
+      if (!currentTaskId || isSending) return;
+
+      // 清除 pendingHITL 状态
+      useTaskStore.getState().setPendingHITL(null);
+
+      // 构建格式化消息
+      let formattedMessage: string;
+      if (choice.type === "custom") {
+        formattedMessage = `[HITL Decision] Custom: ${choice.value}`;
+      } else {
+        formattedMessage = `[HITL Decision] Selected: ${choice.label} (${choice.value})`;
+      }
+
+      // 复用 handleRegenerate 的发送逻辑（直接调用 streamChat）
+      handleRegenerate(formattedMessage, currentTaskId);
+    },
+    [currentTaskId, isSending, handleRegenerate]
+  );
+
   /** 监听滚动事件，更新 isNearBottom 标志 */
   useEffect(() => {
     const el = scrollContainerRef.current;
@@ -793,6 +868,18 @@ export default function ChatArea() {
               return (
                 <div key={step.id} className="group relative">
                   <VisualizationBlock step={step} />
+                  {!isTemp && (
+                    <div className="absolute -bottom-1 left-10">
+                      <StepActions step={step} onRegenerate={handleRegenerate} />
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            if (step.step_type === "hitl_request") {
+              return (
+                <div key={step.id} className="group relative">
+                  <HITLBlock step={step} onSubmit={handleHITLSubmit} />
                   {!isTemp && (
                     <div className="absolute -bottom-1 left-10">
                       <StepActions step={step} onRegenerate={handleRegenerate} />

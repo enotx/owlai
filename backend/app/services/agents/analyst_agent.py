@@ -90,7 +90,10 @@ class AnalystAgent(BaseAgent):
         # ReAct循环
         max_rounds = 10
         
+        hitl_break = False
         for round_idx in range(max_rounds):
+            if hitl_break:
+                break
             try:
                 agent_tools = get_tools_for_agent("analyst")
                 stream = await self.client.chat.completions.create(
@@ -354,7 +357,26 @@ class AnalystAgent(BaseAgent):
                             "tool_call_id": tc["id"],
                             "content": ref_content,
                         })  # type: ignore
+
+                    # ---------- Tool: request_human_input (HITL) ----------
+                    elif tc["name"] == "request_human_input":
+                        hitl_event, tool_content = self._handle_hitl_request(args)
+                        yield hitl_event
                         
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": tool_content,
+                        })  # type: ignore
+                        
+                        # Break inner loop (stop processing remaining tool calls)
+                        # and signal outer loop to stop
+                        hitl_break = True
+                        break
+
+                # 如果 HITL 中断，停止 ReAct 循环
+                if hitl_break:
+                    break
                 # 继续下一轮 ReAct                
                 continue
             

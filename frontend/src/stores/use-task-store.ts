@@ -29,7 +29,9 @@ export type StepType =
   | "user_message"
   | "assistant_message"
   | "tool_use"
-  | "visualization";
+  | "visualization"
+  | "hitl_request";
+
 
 export interface Step {
   id: string;
@@ -92,6 +94,23 @@ export interface SubTask {
   result: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * HITL 选项定义
+ */
+export interface HITLOption {
+  label: string;
+  value: string;
+  badge?: string;
+}
+/**
+ * HITL 请求数据
+ */
+export interface HITLRequest {
+  title: string;
+  description: string;
+  options: HITLOption[];
 }
 
 /**
@@ -191,6 +210,10 @@ interface TaskStore {
   pendingPlan: PendingPlan | null;
   setPendingPlan: (plan: PendingPlan | null) => void;
   
+  // HITL 流程
+  pendingHITL: { stepId: string; data: HITLRequest } | null;
+  setPendingHITL: (hitl: { stepId: string; data: HITLRequest } | null) => void;
+
   // 添加计算属性的 getter（可选，方便使用）
   getCurrentPendingTool: () => PendingToolExecution | null;
 }
@@ -215,6 +238,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
       previewSource: null,
       subtasks: [], // 重置SubTask
       pendingPlan: null, // 重置待确认Plan
+      pendingHITL: null, // 重置HITL
       currentMode: "auto", // 重置为默认模式
     }),
 
@@ -344,4 +368,9 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   // Pending Plan
   pendingPlan: null,
   setPendingPlan: (plan) => set({ pendingPlan: plan }),
+
+  // HITL
+  pendingHITL: null,
+  setPendingHITL: (hitl) => set({ pendingHITL: hitl }),
+
 }));

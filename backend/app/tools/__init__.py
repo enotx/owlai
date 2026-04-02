@@ -5,6 +5,7 @@
 from app.tools.definitions import (
     EXECUTE_PYTHON_CODE_TOOL,
     CREATE_VISUALIZATION_TOOL,
+    REQUEST_HUMAN_INPUT_TOOL,
 )
 from app.tools.registry import get_tools_for_agent
 from app.tools.visualization import (
@@ -16,6 +17,7 @@ from app.tools.visualization import (
 __all__ = [
     "EXECUTE_PYTHON_CODE_TOOL",
     "CREATE_VISUALIZATION_TOOL",
+    "REQUEST_HUMAN_INPUT_TOOL",
     "get_tools_for_agent",
     "validate_echarts_option",
     "normalize_echarts_option",

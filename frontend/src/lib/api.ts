@@ -138,7 +138,8 @@ export interface SSEEvent {
     | "step_saved"
     | "done"
     | "error"
-    | "heartbeat";
+    | "heartbeat"
+    | "hitl_request";
   content?: string;
   code?: string;
   purpose?: string;
@@ -158,6 +159,14 @@ export interface SSEEvent {
   option?: Record<string, unknown>;
   step?: Record<string, unknown>;
   steps?: Record<string, unknown>[];
+  // HITL fields
+  hitl_title?: string;
+  hitl_description?: string;
+  hitl_options?: Array<{
+    label: string;
+    value: string;
+    badge?: string;
+  }>;
 }
 
 /**

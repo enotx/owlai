@@ -100,3 +100,59 @@ GET_SKILL_REFERENCE_TOOL = {
         },
     },
 }
+
+REQUEST_HUMAN_INPUT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "request_human_input",
+        "description": (
+            "Pause execution and ask the user to choose from predefined options. "
+            "Use this when you encounter a situation that requires human judgment, such as:\n"
+            "- Multiple valid data cleaning strategies (e.g., fill missing values with mean vs. median vs. drop)\n"
+            "- Ambiguous join keys when merging datasets\n"
+            "- Data quality issues that need user decision\n"
+            "- Multiple valid analysis directions\n\n"
+            "DO NOT use this for simple clarification questions — just ask in text.\n"
+            "Only use when there are concrete, enumerable options to present.\n"
+            "After the user responds, you will see their choice in the conversation and should proceed accordingly."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Short title for the decision card, e.g. 'Missing Value Strategy'",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Context explaining why you need the user's input (1-2 sentences).",
+                },
+                "options": {
+                    "type": "array",
+                    "description": "2-5 concrete options for the user to choose from. Each option should be actionable.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {
+                                "type": "string",
+                                "description": "Human-readable option label, e.g. 'Fill with Mean (Average value)'",
+                            },
+                            "value": {
+                                "type": "string",
+                                "description": "Machine-readable option identifier, e.g. 'fill_mean'",
+                            },
+                            "badge": {
+                                "type": "string",
+                                "description": "Optional short badge text shown on the right, e.g. '74.2' or '-14 rows'",
+                            },
+                        },
+                        "required": ["label", "value"],
+                    },
+                    "minItems": 2,
+                    "maxItems": 5,
+                },
+            },
+            "required": ["title", "description", "options"],
+        },
+    },
+}

@@ -219,12 +219,30 @@ export default function MessageInput() {
                 clearStreaming();
                 setPendingTool(currentTaskId!, null);
                 addStep(step);
+                
+                // 如果是 HITL 请求，设置 pendingHITL 状态
+                if (step.step_type === "hitl_request" && step.code_output) {
+                  try {
+                    const hitlData = JSON.parse(step.code_output);
+                    useTaskStore.getState().setPendingHITL({
+                      stepId: step.id,
+                      data: hitlData,
+                    });
+                  } catch {
+                    // ignore parse errors
+                  }
+                }
               }
               break;
             }
 
             case "visualization":
               // 当前版本以 step_saved(visualization) 为准，这里可忽略或用于将来做即时预览
+              break;
+
+            case "hitl_request":
+              // HITL 不需要在这里特殊处理
+              // step_saved 中 step_type="hitl_request" 会触发卡片渲染
               break;
 
             case "done": {
