@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI):
     # print(f"🔧 Running in {APP_MODE} mode")
     yield
 
-app = FastAPI(title="Owl API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Owl API", version="0.1.3", lifespan=lifespan)
 
 # ── CORS 配置（根据 APP_MODE 动态调整）──────────────────────
 if APP_MODE in ("desktop", "dev"):
