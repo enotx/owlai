@@ -19,6 +19,12 @@ const themes: { id: Theme; name: string; description: string; preview: string }[
     description: "Deep navy sidebar with blue accents. A polished, professional look.",
     preview: "bg-gradient-to-br from-slate-800 to-blue-900",
   },
+  {
+    id: "eva-unit-01",
+    name: "Eva Unit-01",
+    description: "Dark tactical purple with neon green highlights, inspired by EVA-01 command panels.",
+    preview: "bg-gradient-to-br from-[#1a1029] via-[#2a1740] to-[#12081f]",
+  },
 ];
 
 export default function InterfaceView() {
@@ -36,7 +42,7 @@ export default function InterfaceView() {
           Choose a visual theme. Layout stays the same — only colors change.
         </p>
 
-        <div className="grid grid-cols-2 gap-4 max-w-lg">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 max-w-4xl">
           {themes.map((t) => (
             <button
               key={t.id}
@@ -57,21 +63,46 @@ export default function InterfaceView() {
               >
                 {/* Mini layout preview */}
                 <div className="flex h-full p-2 gap-1">
-                  <div className={cn(
-                    "w-6 rounded",
-                    t.id === "modern" ? "bg-slate-900/60" : "bg-gray-200/80"
-                  )} />
+                  <div
+                    className={cn(
+                      "w-6 rounded",
+                      t.id === "modern"
+                        ? "bg-slate-900/60"
+                        : t.id === "eva-unit-01"
+                          ? "bg-[#241235]/90"
+                          : "bg-gray-200/80"
+                    )}
+                  />
                   <div className="flex-1 flex flex-col gap-1">
-                    <div className={cn(
-                      "h-2 rounded",
-                      t.id === "modern" ? "bg-white/30" : "bg-gray-300/60"
-                    )} />
-                    <div className="flex-1 rounded bg-white/20" />
+                    <div
+                      className={cn(
+                        "h-2 rounded",
+                        t.id === "modern"
+                          ? "bg-white/30"
+                          : t.id === "eva-unit-01"
+                            ? "bg-[#b6ff00]/80"
+                            : "bg-gray-300/60"
+                      )}
+                    />
+                    <div
+                      className={cn(
+                        "flex-1 rounded",
+                        t.id === "eva-unit-01"
+                          ? "bg-[#1a0a28]/80"
+                          : "bg-white/20"
+                      )}
+                    />
                   </div>
-                  <div className={cn(
-                    "w-8 rounded",
-                    t.id === "modern" ? "bg-white/15" : "bg-gray-100/60"
-                  )} />
+                  <div
+                    className={cn(
+                      "w-8 rounded",
+                      t.id === "modern"
+                        ? "bg-white/15"
+                        : t.id === "eva-unit-01"
+                          ? "bg-[#2c163f]/90"
+                          : "bg-gray-100/60"
+                    )}
+                  />
                 </div>
               </div>
               {/* Label */}

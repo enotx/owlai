@@ -384,18 +384,43 @@ export default function HomePage() {
           }}
         >
           <div
-            className="flex items-center gap-2 rounded-lg border px-3 py-1.5 w-[360px]"
-            style={{ borderColor: "var(--owl-dropzone-border)" }}
+            className="flex items-center gap-2 rounded-xl border px-3 py-1.5 w-[360px] transition-colors"
+            style={{
+              borderColor: "var(--owl-topbar-pill-border)",
+              background: "var(--owl-topbar-search-bg)",
+              color: "var(--owl-topbar-search-fg)",
+            }}
           >
-            <Search className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm text-muted-foreground">Search workspace, assets, or logs...</span>
+            <Search
+              className="h-4 w-4"
+              style={{ color: "var(--owl-topbar-search-placeholder)" }}
+            />
+            <span
+              className="text-sm"
+              style={{ color: "var(--owl-topbar-search-placeholder)" }}
+            >
+              Search workspace, assets, or logs...
+            </span>
           </div>
-
           <div className="flex items-center gap-3">
             {isTauriEnv && updateStatus !== "idle" && (
               <Badge
-                variant={updateStatus === "has_update" ? "destructive" : "secondary"}
+                variant="outline"
                 className="gap-1 text-[10px] cursor-pointer hover:opacity-80 transition-opacity"
+                style={{
+                  background:
+                    updateStatus === "has_update"
+                      ? "var(--owl-status-warning-bg)"
+                      : "var(--owl-status-warning-bg)",
+                  borderColor:
+                    updateStatus === "has_update"
+                      ? "var(--owl-status-warning-border)"
+                      : "var(--owl-topbar-pill-border)",
+                  color:
+                    updateStatus === "has_update"
+                      ? "var(--owl-status-warning-fg)"
+                      : "var(--owl-topbar-pill-fg)",
+                }}
                 onClick={handleUpdateBadgeClick}
               >
                 {updateStatus === "checking" && <><Loader2 className="h-3 w-3 animate-spin" />Checking...</>}
@@ -405,19 +430,58 @@ export default function HomePage() {
               </Badge>
             )}
             <Badge
-              variant={backendStatus === "connected" ? "default" : "destructive"}
+              variant="outline"
               className="gap-1 text-[10px]"
+              style={{
+                background:
+                  backendStatus === "connected"
+                    ? "var(--owl-status-online-bg)"
+                    : backendStatus === "checking"
+                      ? "var(--owl-status-warning-bg)"
+                      : "var(--owl-status-offline-bg)",
+                borderColor:
+                  backendStatus === "connected"
+                    ? "var(--owl-status-online-border)"
+                    : backendStatus === "checking"
+                      ? "var(--owl-status-warning-border)"
+                      : "var(--owl-status-offline-border)",
+                color:
+                  backendStatus === "connected"
+                    ? "var(--owl-status-online-fg)"
+                    : backendStatus === "checking"
+                      ? "var(--owl-status-warning-fg)"
+                      : "var(--owl-status-offline-fg)",
+              }}
             >
               {backendStatus === "checking" && <Loader2 className="h-3 w-3 animate-spin" />}
               {backendStatus === "connected" && <CircleCheck className="h-3 w-3" />}
               {backendStatus === "disconnected" && <CircleX className="h-3 w-3" />}
               {backendStatus === "checking" ? "Connecting..." : backendStatus === "connected" ? "Connected" : "Offline"}
             </Badge>
-            <button className="rounded-full p-2 hover:bg-accent transition-colors">
-              <Bell className="h-4 w-4 text-muted-foreground" />
+            <button
+              className="rounded-full p-2 transition-colors"
+              style={{
+                background: "var(--owl-topbar-icon-bg)",
+                color: "var(--owl-topbar-icon-fg)",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.background = "var(--owl-topbar-icon-hover-bg)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.background = "var(--owl-topbar-icon-bg)";
+              }}
+            >
+              <Bell className="h-4 w-4" />
             </button>
-            <button className="h-8 w-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center">
-              <User className="h-4 w-4 text-white" />
+            <button
+              className="h-8 w-8 rounded-full flex items-center justify-center transition-colors"
+              style={{
+                background: "var(--owl-avatar-bg)",
+                color: "var(--owl-avatar-fg)",
+                boxShadow: "inset 0 0 0 1px var(--owl-topbar-pill-border)",
+              }}
+            >
+              <User className="h-4 w-4" />
             </button>
           </div>
         </header>

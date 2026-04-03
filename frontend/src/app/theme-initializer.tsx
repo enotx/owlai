@@ -3,17 +3,31 @@
 "use client";
 
 import { useEffect } from "react";
-import { useThemeStore } from "@/stores/use-theme-store";
+import { useThemeStore, type Theme } from "@/stores/use-theme-store";
 
 /**
- * 将 theme store 的值同步到 <html data-theme="...">
- * 放在 body 内部即可，通过 DOM API 操作 <html>
+ * Themes that require the `dark` class on <html>.
+ * When adding a new dark theme, just append its id here.
+ */
+const DARK_THEMES: Theme[] = ["eva-unit-01"];
+
+/**
+ * Syncs the theme store value to:
+ *   <html data-theme="...">   — drives CSS custom-property overrides
+ *   <html class="dark">       — activates Tailwind `dark:` variants
  */
 export function ThemeInitializer() {
   const theme = useThemeStore((s) => s.theme);
 
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
+    const root = document.documentElement;
+    root.setAttribute("data-theme", theme);
+
+    if (DARK_THEMES.includes(theme)) {
+      root.classList.add("dark");
+    } else {
+      root.classList.remove("dark");
+    }
   }, [theme]);
 
   return null;

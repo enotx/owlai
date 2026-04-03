@@ -145,6 +145,26 @@
     --owl-tab-active-border: var(--primary);
     --owl-tab-active-fg: var(--foreground);
     --owl-tab-inactive-fg: var(--muted-foreground);
+    --owl-topbar-search-bg: var(--card);
+    --owl-topbar-search-fg: var(--foreground);
+    --owl-topbar-search-placeholder: var(--muted-foreground);
+    --owl-topbar-pill-bg: var(--card);
+    --owl-topbar-pill-border: var(--border);
+    --owl-topbar-pill-fg: var(--foreground);
+    --owl-topbar-icon-bg: transparent;
+    --owl-topbar-icon-fg: var(--muted-foreground);
+    --owl-topbar-icon-hover-bg: var(--accent);
+    --owl-avatar-bg: var(--primary);
+    --owl-avatar-fg: var(--primary-foreground);
+    --owl-status-online-bg: color-mix(in oklab, var(--primary) 14%, var(--card));
+    --owl-status-online-border: color-mix(in oklab, var(--primary) 42%, var(--border));
+    --owl-status-online-fg: var(--foreground);
+    --owl-status-warning-bg: color-mix(in oklab, var(--secondary) 75%, var(--card));
+    --owl-status-warning-border: var(--border);
+    --owl-status-warning-fg: var(--foreground);
+    --owl-status-offline-bg: color-mix(in oklab, var(--destructive) 12%, var(--card));
+    --owl-status-offline-border: color-mix(in oklab, var(--destructive) 38%, var(--border));
+    --owl-status-offline-fg: color-mix(in oklab, var(--destructive) 72%, white);
   }
 
   /* ── Modern Theme Overrides ── */
@@ -168,6 +188,136 @@
     --owl-tab-active-border: oklch(0.55 0.2 260);
     --owl-tab-active-fg: oklch(0.55 0.2 260);
     --owl-tab-inactive-fg: oklch(0.55 0.01 240);
+    --owl-topbar-search-bg: oklch(0.99 0 0);
+    --owl-topbar-search-fg: oklch(0.2 0.01 260);
+    --owl-topbar-search-placeholder: oklch(0.55 0.01 240);
+
+    --owl-topbar-pill-bg: oklch(0.98 0 0);
+    --owl-topbar-pill-border: oklch(0.88 0.01 240);
+    --owl-topbar-pill-fg: oklch(0.22 0.01 260);
+
+    --owl-topbar-icon-bg: transparent;
+    --owl-topbar-icon-fg: oklch(0.5 0.01 240);
+    --owl-topbar-icon-hover-bg: oklch(0.95 0.01 240);
+
+    --owl-avatar-bg: oklch(0.55 0.2 260);
+    --owl-avatar-fg: oklch(0.98 0 0);
+
+    --owl-status-online-bg: oklch(0.96 0.01 250);
+    --owl-status-online-border: oklch(0.85 0.02 240);
+    --owl-status-online-fg: oklch(0.22 0.01 260);
+
+    --owl-status-warning-bg: oklch(0.96 0.01 250);
+    --owl-status-warning-border: oklch(0.88 0.01 240);
+    --owl-status-warning-fg: oklch(0.22 0.01 260);
+
+    --owl-status-offline-bg: oklch(0.95 0.02 25);
+    --owl-status-offline-border: oklch(0.78 0.08 25);
+    --owl-status-offline-fg: oklch(0.5 0.18 25);
+  }
+  /* ── Eva Unit-01 Theme Overrides ── */
+  [data-theme="eva-unit-01"] {
+    /* ─ Background system (purple-black) ─ */
+    --background:            oklch(0.14 0.03 295);
+    --foreground:            oklch(0.92 0.01 100);
+
+    --card:                  oklch(0.19 0.04 295);
+    --card-foreground:       oklch(0.92 0.01 100);
+
+    --popover:               oklch(0.19 0.04 295);
+    --popover-foreground:    oklch(0.92 0.01 100);
+
+    /* ─ Primary: neon acid green ─ */
+    --primary:               oklch(0.83 0.27 128);
+    --primary-foreground:    oklch(0.14 0.03 295);
+
+    /* ─ Neutral surfaces ─ */
+    --secondary:             oklch(0.24 0.03 295);
+    --secondary-foreground:  oklch(0.92 0.01 100);
+
+    --muted:                 oklch(0.22 0.03 295);
+    --muted-foreground:      oklch(0.60 0.02 290);
+
+    --accent:                oklch(0.24 0.04 295);
+    --accent-foreground:     oklch(0.92 0.01 100);
+
+    /* ─ Semantic ─ */
+    --destructive:           oklch(0.65 0.20 38);
+
+    /* ─ Edges ─ */
+    --border:                oklch(0.30 0.04 295);
+    --input:                 oklch(0.28 0.04 295);
+    --ring:                  oklch(0.83 0.27 128);
+
+    /* ─ Charts (EVA palette) ─ */
+    --chart-1:               oklch(0.83 0.27 128);
+    --chart-2:               oklch(0.70 0.19 38);
+    --chart-3:               oklch(0.60 0.18 290);
+    --chart-4:               oklch(0.78 0.16 90);
+    --chart-5:               oklch(0.55 0.15 325);
+
+    /* ─ Sidebar ─ */
+    --sidebar:               oklch(0.16 0.04 295);
+    --sidebar-foreground:    oklch(0.90 0.01 100);
+    --sidebar-primary:       oklch(0.83 0.27 128);
+    --sidebar-primary-foreground: oklch(0.14 0.03 295);
+    --sidebar-accent:        oklch(0.22 0.03 295);
+    --sidebar-accent-foreground:  oklch(0.90 0.01 100);
+    --sidebar-border:        oklch(0.28 0.04 295);
+    --sidebar-ring:          oklch(0.83 0.27 128);
+
+    /* ─ OWL custom tokens ─ */
+    --owl-sidebar-bg:        oklch(0.16 0.04 295);
+    --owl-sidebar-fg:        oklch(0.88 0.01 100);
+    --owl-sidebar-muted:     oklch(0.55 0.02 290);
+    --owl-sidebar-active-bg: oklch(0.83 0.27 128);
+    --owl-sidebar-active-fg: oklch(0.14 0.03 295);
+    --owl-sidebar-hover-bg:  oklch(0.22 0.04 295);
+    --owl-sidebar-border:    oklch(0.28 0.04 295);
+
+    --owl-brand-fg:          oklch(0.92 0.01 100);
+    --owl-brand-sub:         oklch(0.60 0.02 290);
+
+    --owl-btn-primary-bg:    oklch(0.83 0.27 128);
+    --owl-btn-primary-fg:    oklch(0.14 0.03 295);
+
+    --owl-topbar-bg:         oklch(0.16 0.035 295);
+    --owl-topbar-border:     oklch(0.28 0.04 295);
+
+    --owl-workspace-bg:      oklch(0.14 0.03 295);
+
+    --owl-dropzone-border:   oklch(0.35 0.06 128);
+    --owl-dropzone-bg:       oklch(0.18 0.04 295);
+
+    --owl-tab-active-border: oklch(0.83 0.27 128);
+    --owl-tab-active-fg:     oklch(0.83 0.27 128);
+    --owl-tab-inactive-fg:   oklch(0.55 0.02 290);
+    --owl-topbar-search-bg:         oklch(0.18 0.035 295);
+    --owl-topbar-search-fg:         oklch(0.90 0.01 100);
+    --owl-topbar-search-placeholder: oklch(0.58 0.02 290);
+
+    --owl-topbar-pill-bg:           oklch(0.17 0.035 295);
+    --owl-topbar-pill-border:       oklch(0.30 0.05 295);
+    --owl-topbar-pill-fg:           oklch(0.90 0.01 100);
+
+    --owl-topbar-icon-bg:           transparent;
+    --owl-topbar-icon-fg:           oklch(0.62 0.02 290);
+    --owl-topbar-icon-hover-bg:     oklch(0.23 0.045 295);
+
+    --owl-avatar-bg:                oklch(0.83 0.27 128);
+    --owl-avatar-fg:                oklch(0.14 0.03 295);
+
+    --owl-status-online-bg:         oklch(0.19 0.045 295);
+    --owl-status-online-border:     oklch(0.44 0.09 128);
+    --owl-status-online-fg:         oklch(0.84 0.24 128);
+
+    --owl-status-warning-bg:        oklch(0.20 0.045 295);
+    --owl-status-warning-border:    oklch(0.48 0.11 38);
+    --owl-status-warning-fg:        oklch(0.78 0.16 38);
+
+    --owl-status-offline-bg:        oklch(0.20 0.045 295);
+    --owl-status-offline-border:    oklch(0.46 0.12 28);
+    --owl-status-offline-fg:        oklch(0.72 0.18 28);
   }
 }
 
