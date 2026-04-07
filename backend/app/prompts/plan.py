@@ -54,6 +54,8 @@ You can ONLY generate a plan when BOTH conditions are met:
 
 ## Variable Reference
 {variable_reference}
+
+## Visualization Guidelines
 {visualization_guide}
 
 

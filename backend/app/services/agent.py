@@ -605,12 +605,18 @@ async def run_agent_stream(
                                 yield _sse({"type": "step_saved", "step": _step_to_dict(text_step)})
                             accumulated_text = ""
                         
-                        # 保存 HITL 请求 Step
+                        # 保存 HITL 请求 Step（包括 pipeline_confirmation 扩展字段）
                         hitl_data = {
                             "title": event_data.get("title", ""),
                             "description": event_data.get("description", ""),
                             "options": event_data.get("options", []),
                         }
+                        # Preserve extra fields for pipeline_confirmation
+                        if event_data.get("hitl_type"):
+                            hitl_data["hitl_type"] = event_data["hitl_type"]
+                        if event_data.get("pipeline"):
+                            hitl_data["pipeline"] = event_data["pipeline"]
+
                         async with async_session() as write_db:
                             hitl_step = Step(
                                 task_id=task_id,

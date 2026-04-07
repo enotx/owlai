@@ -259,3 +259,67 @@ class VisualizationResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+# ===== DuckDB Table =====
+class DuckDBTableResponse(BaseModel):
+    id: str
+    table_name: str
+    display_name: str
+    description: str | None
+    table_schema_json: str
+    row_count: int
+    source_type: str
+    source_config: str | None
+    pipeline_id: str | None
+    data_updated_at: datetime | None
+    latest_data_date: str | None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DuckDBTablePreviewResponse(BaseModel):
+    columns: list[str]
+    rows: list[dict]
+    total_rows: int
+
+
+# ===== Data Pipeline =====
+class DataPipelineCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: str | None = None
+    source_type: str
+    source_config: str = "{}"
+    transform_code: str
+    transform_description: str | None = None
+    target_table_name: str = Field(..., min_length=1, max_length=255)
+    write_strategy: str = Field(default="replace", pattern="^(replace|append|upsert)$")
+    upsert_key: str | None = None
+    output_schema: str | None = None
+    is_auto: bool = False
+
+
+class DataPipelineResponse(BaseModel):
+    id: str
+    name: str
+    description: str | None
+    source_task_id: str | None
+    source_type: str
+    source_config: str
+    transform_code: str
+    transform_description: str | None
+    target_table_name: str
+    write_strategy: str
+    upsert_key: str | None
+    output_schema: str | None
+    is_auto: bool
+    status: str
+    last_run_at: datetime | None
+    last_run_status: str | None
+    last_run_error: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}

@@ -152,3 +152,84 @@ class Visualization(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
     task: Mapped["Task"] = relationship(back_populates="visualizations")
+
+class DuckDBTable(Base):
+    """DuckDB 仓库中的表元数据（注册在 SQLite 中）"""
+    __tablename__ = "duckdb_tables"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    table_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)  # DuckDB 实际表名
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Schema 快照
+    table_schema_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")  # JSON: [{"name":"col","type":"VARCHAR"},...]
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # 数据血缘 & 依赖
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False, default="unknown")
+    # "csv_upload" | "api" | "datasource" | "pipeline" | "manual" | "unknown"
+    source_config: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON: 依赖描述
+    pipeline_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("data_pipelines.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # 数据时效
+    data_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    latest_data_date: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    # 状态
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="ready")
+    # "ready" | "stale" | "refreshing" | "error"
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    # 关系
+    pipeline: Mapped["DataPipeline | None"] = relationship(back_populates="target_table", foreign_keys=[pipeline_id])
+
+
+class DataPipeline(Base):
+    """数据管道定义"""
+    __tablename__ = "data_pipelines"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # 来源追踪
+    source_task_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # Pipeline 定义
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    # "api" | "csv" | "upload" | "datasource"
+    source_config: Mapped[str] = mapped_column(Text, nullable=False, default="{}")  # JSON
+    transform_code: Mapped[str] = mapped_column(Text, nullable=False)
+    transform_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # 目标
+    target_table_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    write_strategy: Mapped[str] = mapped_column(String(20), nullable=False, default="replace")
+    # "replace" | "append" | "upsert"
+    upsert_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    output_schema: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
+
+    # 执行特性
+    is_auto: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # 状态
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    # "draft" | "active" | "paused" | "error"
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_run_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    last_run_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    # 关系
+    target_table: Mapped["DuckDBTable | None"] = relationship(
+        back_populates="pipeline", foreign_keys="[DuckDBTable.pipeline_id]"
+    )

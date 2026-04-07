@@ -10,8 +10,10 @@ from app.database import init_db
 from app.schemas import HealthResponse
 from app.routers import tasks, knowledge, chat, execute, \
                         llm, database, subtasks, skills, \
-                        visualizations
+                        visualizations, warehouse
 from app.config import UPLOADS_DIR, APP_MODE
+
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -61,6 +63,8 @@ app.include_router(database.router)
 app.include_router(subtasks.router)
 app.include_router(skills.router)
 app.include_router(visualizations.router)
+app.include_router(warehouse.router)
+
 # 仅桌面模式注册更新路由
 if APP_MODE == "desktop":
     from app.routers import updates

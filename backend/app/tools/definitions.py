@@ -156,3 +156,104 @@ REQUEST_HUMAN_INPUT_TOOL = {
         },
     },
 }
+
+MATERIALIZE_TO_DUCKDB_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "materialize_to_duckdb",
+        "description": (
+            "Persist a DataFrame from the sandbox into the local DuckDB warehouse. "
+            "The DataFrame must exist as a variable in the sandbox (from a previous "
+            "execute_python_code call). After materialization, the table is registered "
+            "as a data asset and can be queried by future tasks.\n\n"
+            "IMPORTANT RULES:\n"
+            "1. Before calling this, you MUST have already produced the DataFrame via execute_python_code.\n"
+            "2. For FIRST-TIME writes to a new table, you SHOULD call request_human_input first "
+            "to confirm the table name and write strategy with the user.\n"
+            "3. The variable must be a pandas DataFrame in the sandbox namespace."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "dataframe_variable": {
+                    "type": "string",
+                    "description": (
+                        "Name of the DataFrame variable in the sandbox. "
+                        "Must match a variable from a previous execute_python_code call "
+                        "(e.g. 'df_clean', 'result_merged')."
+                    ),
+                },
+                "table_name": {
+                    "type": "string",
+                    "description": (
+                        "Target table name in DuckDB. Use snake_case, lowercase. "
+                        "e.g. 'stock_daily_prices', 'cleaned_sales_data'."
+                    ),
+                },
+                "display_name": {
+                    "type": "string",
+                    "description": "Human-friendly display name, e.g. 'Daily Stock Prices'.",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Brief description of what this table contains and its business meaning.",
+                },
+                "write_strategy": {
+                    "type": "string",
+                    "enum": ["replace", "append", "upsert"],
+                    "description": (
+                        "How to write: 'replace' drops and recreates, "
+                        "'append' adds rows, 'upsert' updates matching rows by key."
+                    ),
+                },
+                "upsert_key": {
+                    "type": "string",
+                    "description": "Column name to use as the key for upsert. Required only if write_strategy='upsert'.",
+                },
+                "source_type": {
+                    "type": "string",
+                    "enum": ["csv_upload", "api", "datasource", "manual", "unknown"],
+                    "description": (
+                        "Origin of the data: 'csv_upload' for user-uploaded files, "
+                        "'api' for data fetched from web APIs, "
+                        "'datasource' for data from connected databases, "
+                        "'manual' for user-entered or manually curated data."
+                    ),
+                },
+                "source_config": {
+                    "type": "string",
+                    "description": (
+                        "JSON string describing the data source details. "
+                        "For API: {\"url\": \"...\", \"params\": {...}}. "
+                        "For CSV: {\"filename\": \"...\"}. Optional."
+                    ),
+                },
+            },
+            "required": [
+                "dataframe_variable",
+                "table_name",
+                "display_name",
+                "description",
+                "write_strategy",
+                "source_type",
+            ],
+        },
+    },
+}
+
+
+LIST_DUCKDB_TABLES_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "list_duckdb_tables",
+        "description": (
+            "List all tables currently in the local DuckDB warehouse. "
+            "Use this to check what data already exists before creating new tables, "
+            "to avoid duplicates or to find tables for querying."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+}

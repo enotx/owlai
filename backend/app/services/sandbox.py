@@ -676,15 +676,17 @@ async def execute_code_in_sandbox(
         tmp_file.write(script_content)
         tmp_file.flush()
         tmp_file.close()
-        # ── 【新增】构建沙箱进程的环境变量（最小化 + 动态注入） ──
-        sandbox_env: dict[str, str] | None = None
+        # 始终构建 sandbox_env 以注入 WAREHOUSE_PATH
+        sandbox_env = {}
+        # 保留必要的系统路径变量
+        for key in ("PATH", "PYTHONPATH", "SYSTEMROOT", "HOME", "LANG", "LC_ALL"):
+            if key in os.environ:
+                sandbox_env[key] = os.environ[key]
+        # 注入 DuckDB 仓库路径
+        from app.config import WAREHOUSE_PATH
+        sandbox_env["WAREHOUSE_PATH"] = str(WAREHOUSE_PATH)
+        # 注入 Skill 环境变量（如 TALOS_USER, TALOS_TOKEN）
         if clean_envs:
-            sandbox_env = {}
-            # 保留必要的系统路径变量
-            for key in ("PATH", "PYTHONPATH", "SYSTEMROOT", "HOME", "LANG", "LC_ALL"):
-                if key in os.environ:
-                    sandbox_env[key] = os.environ[key]
-            # 这里！把 Skill 的环境变量（如 TALOS_USER, TALOS_TOKEN）注入
             sandbox_env.update(clean_envs)
         # 在子进程中执行
         proc = await asyncio.create_subprocess_exec(

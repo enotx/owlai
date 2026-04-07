@@ -7,6 +7,7 @@ import { useTaskStore } from "@/stores/use-task-store";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Download } from "lucide-react";
 import { downloadKnowledge, exportStepDataframe} from "@/lib/api";
+import DataSourcesTab from "./data-sources-tab";
 
 import {
   Table,
@@ -23,6 +24,8 @@ import { previewKnowledge } from "@/lib/api";
 export default function DataPanel() {
   const { currentTaskId, previewData, previewColumns, previewSource, setPreviewData } = useTaskStore();
   const [selectedSheet, setSelectedSheet] = useState<string | null>(null);
+  type DataPanelTab = "data" | "sources" | "skills";
+  const [activeTab, setActiveTab] = useState<DataPanelTab>("data");
 
   const hasData = previewColumns.length > 0 && previewData && previewData.length > 0;
   const isTextPreview = previewSource?.fileType === "text" && previewSource?.textContent;
@@ -69,13 +72,11 @@ export default function DataPanel() {
       <div className="flex">
         {(["data", "sources", "skills"] as const).map((tab) => {
           const labels = { data: "Data Preview", sources: "Data Sources", skills: "SOPs" };
-          const isActive = tab === "data"; // sources and skills are placeholder for now
+          const isActive = tab === activeTab;
           return (
             <button
               key={tab}
-              onClick={() => {
-                // sources and skills are placeholder
-              }}
+              onClick={() => setActiveTab(tab)}
               className="relative px-5 py-3 text-xs font-semibold uppercase tracking-wider transition-colors"
               style={{
                 color: isActive
@@ -126,88 +127,104 @@ export default function DataPanel() {
         )}
       </div>
     )}
-
-      {/* Excel Sheet 切换器 */}
-      {previewSource?.fileType === "excel" && previewSource?.availableSheets && (
-        <div className="flex items-center gap-2 border-b px-4 py-2 bg-muted/30">
-          <span className="text-xs text-muted-foreground">Sheet:</span>
-          <div className="flex gap-1">
-            {previewSource.availableSheets.map((sheet) => (
-              <Button
-                key={sheet}
-                variant={sheet === (selectedSheet || previewSource.currentSheet) ? "default" : "outline"}
-                size="sm"
-                className="h-6 text-xs"
-                onClick={() => handleSheetChange(sheet)}
-              >
-                {sheet}
-              </Button>
-            ))}
-          </div>
-        </div>
+      {/* Tab content */}
+      {activeTab === "data" && (
+        <>
+          {/* Excel Sheet switcher */}
+          {previewSource?.fileType === "excel" && previewSource?.availableSheets && (
+            <div className="flex items-center gap-2 border-b px-4 py-2 bg-muted/30">
+              <span className="text-xs text-muted-foreground">Sheet:</span>
+              <div className="flex gap-1">
+                {previewSource.availableSheets.map((sheet) => (
+                  <Button
+                    key={sheet}
+                    variant={sheet === (selectedSheet || previewSource.currentSheet) ? "default" : "outline"}
+                    size="sm"
+                    className="h-6 text-xs"
+                    onClick={() => handleSheetChange(sheet)}
+                  >
+                    {sheet}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* Content area */}
+          {!currentTaskId ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
+              <DatabaseZap className="h-10 w-10 opacity-30" />
+              <p className="text-sm">Select a task to view data</p>
+            </div>
+          ) : isTextPreview ? (
+            <ScrollArea className="flex-1">
+              <div className="p-4">
+                <div className="rounded-lg border bg-muted/30 p-4">
+                  <div className="flex items-center gap-2 mb-3 pb-2 border-b">
+                    <FileText className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-xs font-medium text-muted-foreground">Text Content</span>
+                  </div>
+                  <pre className="text-xs leading-relaxed whitespace-pre-wrap break-words font-mono">
+                    {previewSource.textContent}
+                  </pre>
+                </div>
+              </div>
+            </ScrollArea>
+          ) : !hasData ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
+              <MousePointerClick className="h-10 w-10 opacity-30" />
+              <p className="text-sm">Click a file in Knowledge or Execution Section to preview</p>
+            </div>
+          ) : (
+            <ScrollArea className="flex-1">
+              <div className="min-w-max">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      {previewColumns.map((col) => (
+                        <TableHead
+                          key={col}
+                          className="h-9 whitespace-nowrap px-3 text-xs font-semibold"
+                        >
+                          {col}
+                        </TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {previewData.map((row, idx) => (
+                      <TableRow key={idx} className="hover:bg-muted/30">
+                        {previewColumns.map((col) => (
+                          <TableCell
+                            key={col}
+                            className="whitespace-nowrap px-3 py-2 text-xs tabular-nums"
+                          >
+                            {row[col] != null ? String(row[col]) : ""}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
+          )}
+        </>
       )}
 
-      {/* 内容区域 */}
-      {!currentTaskId ? (
+      {activeTab === "sources" && (
+        <DataSourcesTab />
+      )}
+
+      {activeTab === "skills" && (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
-          <DatabaseZap className="h-10 w-10 opacity-30" />
-          <p className="text-sm">Select a task to view data</p>
+          <FileText className="h-10 w-10 opacity-30" />
+          <p className="text-sm font-medium">SOPs — Coming Soon</p>
+          <p className="text-xs text-center max-w-[240px]">
+            Use <code className="bg-muted px-1 rounded text-[11px]">/sop</code> in chat
+            to extract Standard Operating Procedures from your analysis.
+          </p>
         </div>
-      ) : isTextPreview ? (
-        /* 文本预览模式 */
-        <ScrollArea className="flex-1">
-          <div className="p-4">
-            <div className="rounded-lg border bg-muted/30 p-4">
-              <div className="flex items-center gap-2 mb-3 pb-2 border-b">
-                <FileText className="h-4 w-4 text-muted-foreground" />
-                <span className="text-xs font-medium text-muted-foreground">Text Content</span>
-              </div>
-              <pre className="text-xs leading-relaxed whitespace-pre-wrap break-words font-mono">
-                {previewSource.textContent}
-              </pre>
-            </div>
-          </div>
-        </ScrollArea>
-      ) : !hasData ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
-          <MousePointerClick className="h-10 w-10 opacity-30" />
-          <p className="text-sm">Click a file in Knowledge or Execution Section to preview</p>
-        </div>
-      ) : (
-        /* 表格预览模式 */
-        <ScrollArea className="flex-1">
-          <div className="min-w-max">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-muted/50 hover:bg-muted/50">
-                  {previewColumns.map((col) => (
-                    <TableHead
-                      key={col}
-                      className="h-9 whitespace-nowrap px-3 text-xs font-semibold"
-                    >
-                      {col}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {previewData.map((row, idx) => (
-                  <TableRow key={idx} className="hover:bg-muted/30">
-                    {previewColumns.map((col) => (
-                      <TableCell
-                        key={col}
-                        className="whitespace-nowrap px-3 py-2 text-xs tabular-nums"
-                      >
-                        {row[col] != null ? String(row[col]) : ""}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-          <ScrollBar orientation="horizontal" />
-        </ScrollArea>
       )}
     </div>
   );

@@ -186,7 +186,59 @@ class BaseAgent(ABC):
                     text_parts.append(f"### 📄 {k.name}\n{content}")
                 except Exception:
                     pass
-        
+
+            # ── DuckDB 表引用处理 ────────────────────────────
+            elif k.type == "duckdb_table" and k.metadata_json:
+                try:
+                    meta = json.loads(k.metadata_json)
+                    tbl_name = meta.get("table_name", k.name)
+                    display = meta.get("display_name", tbl_name)
+                    desc = meta.get("description", "")
+                    schema = meta.get("schema", [])
+                    row_count = meta.get("row_count", 0)
+                    src_type = meta.get("source_type", "unknown")
+                    updated = meta.get("data_updated_at", "unknown")
+                    sample = meta.get("sample_rows", [])
+
+                    section = f"### 📊 [DuckDB] {display}  →  table: `{tbl_name}`\n"
+                    section += f"- **Source**: {src_type}\n"
+                    section += f"- **Rows**: {row_count:,}\n"
+                    section += f"- **Last updated**: {updated}\n"
+                    if desc:
+                        section += f"- **Description**: {desc}\n"
+                    if schema:
+                        col_info = ", ".join(
+                            f"`{c['name']}` ({c['type']})" for c in schema[:15]
+                        )
+                        if len(schema) > 15:
+                            col_info += f", ... ({len(schema)} total)"
+                        section += f"- **Columns**: {col_info}\n"
+                    if sample:
+                        import pandas as pd
+                        try:
+                            sample_df = pd.DataFrame(sample)
+                            sample_str = sample_df.to_string(index=False, max_rows=5)
+                            if len(sample_str) > 2000:
+                                sample_str = sample_str[:2000] + "\n... [truncated]"
+                            section += f"- **Sample rows**:\n```\n{sample_str}\n```\n"
+                        except Exception:
+                            pass
+
+                    section += (
+                        f"\n> **Query this table**: In execute_python_code, use:\n"
+                        f"> ```python\n"
+                        f"> import duckdb\n"
+                        f"> con = duckdb.connect(getenv('WAREHOUSE_PATH'), read_only=True)\n"
+                        f"> df = con.execute(\"SELECT * FROM {tbl_name} LIMIT 100\").fetchdf()\n"
+                        f"> con.close()\n"
+                        f"> ```\n"
+                    )
+
+                    dataset_parts.append(section)
+                except (json.JSONDecodeError, Exception):
+                    pass
+
+
         dataset_context = "\n".join(dataset_parts) if dataset_parts else "[No datasets uploaded yet.]"
         text_context = "\n\n".join(text_parts) if text_parts else "[No reference documents.]"
         

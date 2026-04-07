@@ -18,6 +18,8 @@ import EChartsView from "./echarts-view";
 import LeafletMapView from "./leaflet-map-view";
 import { MarkdownRenderer } from "./markdown-renderer";
 import HITLCard from "./hitl-card";
+import PipelineConfirmationCard from "./pipeline-confirmation-card";
+import type { ConfirmedPipelineConfig } from "./pipeline-confirmation-card";
 
 
 import {
@@ -236,9 +238,13 @@ function VisualizationBlock({ step }: { step: Step }) {
 function HITLBlock({
   step,
   onSubmit,
+  onPipelineConfirm,
+  onPipelineCancel,
 }: {
   step: Step;
   onSubmit?: (choice: { type: "option" | "custom"; value: string; label: string }) => void;
+  onPipelineConfirm?: (config: ConfirmedPipelineConfig) => void;
+  onPipelineCancel?: () => void;
 }) {
   const parsed = useMemo(() => {
     if (!step.code_output) return null;
@@ -249,7 +255,6 @@ function HITLBlock({
     }
   }, [step.code_output]);
 
-  // 检查该 HITL 是否已有用户回复（在 steps 中查找紧随其后的 user_message）
   const { steps } = useTaskStore();
   const stepIndex = steps.findIndex((s) => s.id === step.id);
   const hasReply =
@@ -261,6 +266,19 @@ function HITLBlock({
     return <AssistantBubble content={step.content} />;
   }
 
+  // Pipeline Confirmation routing
+  if (parsed.hitl_type === "pipeline_confirmation" && parsed.pipeline) {
+    return (
+      <PipelineConfirmationCard
+        pipeline={parsed.pipeline}
+        resolved={hasReply}
+        onConfirm={onPipelineConfirm}
+        onCancel={onPipelineCancel}
+      />
+    );
+  }
+
+  // Default HITL card
   return (
     <HITLCard
       title={parsed.title}
@@ -776,6 +794,25 @@ export default function ChatArea() {
     [currentTaskId, isSending, handleRegenerate]
   );
 
+  /** Pipeline 确认后，格式化为消息发送 */
+  const handlePipelineConfirm = useCallback(
+    (config: ConfirmedPipelineConfig) => {
+      if (!currentTaskId || isSending) return;
+      useTaskStore.getState().setPendingHITL(null);
+      const formattedMessage = `[Pipeline Confirm] ${JSON.stringify(config)}`;
+      handleRegenerate(formattedMessage, currentTaskId);
+    },
+    [currentTaskId, isSending, handleRegenerate]
+  );
+  /** Pipeline 取消 */
+  const handlePipelineCancel = useCallback(() => {
+    if (!currentTaskId || isSending) return;
+    useTaskStore.getState().setPendingHITL(null);
+    const formattedMessage = `[Pipeline Confirm] {"cancelled": true}`;
+    handleRegenerate(formattedMessage, currentTaskId);
+  }, [currentTaskId, isSending, handleRegenerate]);
+
+
   /** 监听滚动事件，更新 isNearBottom 标志 */
   useEffect(() => {
     const el = scrollContainerRef.current;
@@ -879,6 +916,12 @@ export default function ChatArea() {
             if (step.step_type === "hitl_request") {
               return (
                 <div key={step.id} className="group relative">
+                  <HITLBlock
+                    step={step}
+                    onSubmit={handleHITLSubmit}
+                    onPipelineConfirm={handlePipelineConfirm}
+                    onPipelineCancel={handlePipelineCancel}
+                  />
                   <HITLBlock step={step} onSubmit={handleHITLSubmit} />
                   {!isTemp && (
                     <div className="absolute -bottom-1 left-10">

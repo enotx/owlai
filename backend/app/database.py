@@ -26,7 +26,7 @@ class Base(DeclarativeBase):
 
 # ===== Schema Migration (in-app) =====
 # 使用 SQLite PRAGMA user_version 记录 schema 版本，避免外部迁移脚本依赖
-LATEST_SCHEMA_VERSION = 4
+LATEST_SCHEMA_VERSION = 5
 # v2: multi-agent (tasks.mode/plan_confirmed/current_subtask_id + subtasks + steps.subtask_id)
 # v3: visualization (visualizations table)
 # v4: skill reference_markdown (lazy-loaded reference doc)
@@ -173,8 +173,67 @@ async def upgrade_db_schema() -> dict:
                 await _set_user_version(conn, 4)
                 applied.append("set user_version=4")
                 current = 4
-            # 如果未来加更多版本，这里继续 if current < 5 ...
 
+            # ── v5 migration: duckdb_tables + data_pipelines ──
+            if current < 5:
+                # data_pipelines 表（需先创建，因为 duckdb_tables 引用它）
+                if not await _table_exists(conn, "data_pipelines"):
+                    await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS data_pipelines (
+                        id VARCHAR(36) PRIMARY KEY,
+                        name VARCHAR(255) NOT NULL,
+                        description TEXT,
+                        source_task_id VARCHAR(36),
+                        source_type VARCHAR(50) NOT NULL,
+                        source_config TEXT NOT NULL DEFAULT '{}',
+                        transform_code TEXT NOT NULL,
+                        transform_description TEXT,
+                        target_table_name VARCHAR(255) NOT NULL,
+                        write_strategy VARCHAR(20) NOT NULL DEFAULT 'replace',
+                        upsert_key VARCHAR(255),
+                        output_schema TEXT,
+                        is_auto BOOLEAN NOT NULL DEFAULT 0,
+                        status VARCHAR(20) NOT NULL DEFAULT 'draft',
+                        last_run_at DATETIME,
+                        last_run_status VARCHAR(20),
+                        last_run_error TEXT,
+                        created_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
+                        updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
+                        FOREIGN KEY(source_task_id) REFERENCES tasks(id) ON DELETE SET NULL
+                    )
+                    """))
+                    applied.append("CREATE TABLE data_pipelines")
+
+                # duckdb_tables 表
+                if not await _table_exists(conn, "duckdb_tables"):
+                    await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS duckdb_tables (
+                        id VARCHAR(36) PRIMARY KEY,
+                        table_name VARCHAR(255) NOT NULL UNIQUE,
+                        display_name VARCHAR(255) NOT NULL,
+                        description TEXT,
+                        table_schema_json TEXT NOT NULL DEFAULT '[]',
+                        row_count INTEGER NOT NULL DEFAULT 0,
+                        source_type VARCHAR(50) NOT NULL DEFAULT 'unknown',
+                        source_config TEXT,
+                        pipeline_id VARCHAR(36),
+                        data_updated_at DATETIME,
+                        latest_data_date VARCHAR(50),
+                        status VARCHAR(20) NOT NULL DEFAULT 'ready',
+                        created_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
+                        updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
+                        FOREIGN KEY(pipeline_id) REFERENCES data_pipelines(id) ON DELETE SET NULL
+                    )
+                    """))
+                    await conn.execute(text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS ix_duckdb_tables_table_name ON duckdb_tables(table_name)"
+                    ))
+                    applied.append("CREATE TABLE duckdb_tables + index")
+
+                await _set_user_version(conn, 5)
+                applied.append("set user_version=5")
+                current = 5
+                
             return {
                 "success": True,
                 "from_version": from_version,

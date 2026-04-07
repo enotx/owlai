@@ -60,3 +60,8 @@ UPLOADS_DIR = DATA_DIR / "uploads"
 UPLOADS_DIR.mkdir(exist_ok=True)
 TEMP_DIR = DATA_DIR / "temp"
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+# ── DuckDB 本地数据仓库 ──────────────────────────────────────
+WAREHOUSE_DIR = DATA_DIR / "warehouse"
+WAREHOUSE_DIR.mkdir(parents=True, exist_ok=True)
+WAREHOUSE_PATH = WAREHOUSE_DIR / "warehouse.duckdb"

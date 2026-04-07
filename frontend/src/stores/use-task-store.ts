@@ -111,6 +111,22 @@ export interface HITLRequest {
   title: string;
   description: string;
   options: HITLOption[];
+  hitl_type?: "default" | "pipeline_confirmation";
+  pipeline?: PipelineProposal;
+}
+
+export interface PipelineProposal {
+  table_name: string;
+  display_name: string;
+  description: string;
+  source_type: string;
+  source_config: Record<string, unknown>;
+  transform_code: string;
+  transform_description?: string;
+  write_strategy: string;
+  schema: Array<{ name: string; type: string }>;
+  row_count: number;
+  sample_rows: Record<string, unknown>[];
 }
 
 /**
@@ -213,7 +229,7 @@ interface TaskStore {
   // HITL 流程
   pendingHITL: { stepId: string; data: HITLRequest } | null;
   setPendingHITL: (hitl: { stepId: string; data: HITLRequest } | null) => void;
-
+  
   // 添加计算属性的 getter（可选，方便使用）
   getCurrentPendingTool: () => PendingToolExecution | null;
 }

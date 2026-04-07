@@ -2,6 +2,7 @@
 
 """AnalystAgent - 负责执行具体分析任务"""
 
+from datetime import datetime
 from typing import AsyncGenerator, Any
 import json
 import uuid
@@ -58,6 +59,10 @@ class AnalystAgent(BaseAgent):
         if not include_viz_examples and data_var_map:
             from app.prompts.fragments import needs_viz_examples
             include_viz_examples = needs_viz_examples(user_message, current_task)
+
+        # 获取 DuckDB 仓库上下文
+        warehouse_context = await self._build_warehouse_context()
+
         system_prompt = build_analyst_system_prompt(
             dataset_context=dataset_ctx,
             text_context=text_ctx,
@@ -65,6 +70,7 @@ class AnalystAgent(BaseAgent):
             skill_context=skill_ctx,
             current_task=current_task or "[Direct analysis mode]",
             include_viz_examples=include_viz_examples,
+            warehouse_context=warehouse_context,
         )
         
         # 加载历史
@@ -363,6 +369,28 @@ class AnalystAgent(BaseAgent):
                             "content": ref_content,
                         })  # type: ignore
 
+                    # ---------- Tool: materialize_to_duckdb ----------
+                    elif tc["name"] == "materialize_to_duckdb":
+                        result_content = await self._handle_materialize_to_duckdb(
+                            args=args,
+                            persistent_vars=persistent_vars,
+                            capture_dir=os.path.join(UPLOADS_DIR, self.task_id, "captures"),
+                        )
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": result_content,
+                        })  # type: ignore
+
+                    # ---------- Tool: list_duckdb_tables ----------
+                    elif tc["name"] == "list_duckdb_tables":
+                        result_content = await self._handle_list_duckdb_tables()
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": result_content,
+                        })  # type: ignore
+
                     # ---------- Tool: request_human_input (HITL) ----------
                     elif tc["name"] == "request_human_input":
                         hitl_event, tool_content = self._handle_hitl_request(args)
@@ -390,3 +418,248 @@ class AnalystAgent(BaseAgent):
                 break
         
         yield self._sse({"type": "done"})
+
+    async def _handle_materialize_to_duckdb(
+        self,
+        args: dict,
+        persistent_vars: dict[str, str],
+        capture_dir: str,
+    ) -> str:
+        """
+        处理 materialize_to_duckdb 工具调用。
+        从 persist/ 目录读取 DataFrame，写入 DuckDB，注册元数据。
+        """
+        import pandas as pd
+        import pyarrow.parquet as pq
+        from app.services import warehouse as wh
+        from app.models import DuckDBTable
+        from app.database import async_session
+        from sqlalchemy import select
+
+        var_name = args.get("dataframe_variable", "")
+        table_name = args.get("table_name", "")
+        display_name = args.get("display_name", table_name)
+        description = args.get("description", "")
+        strategy = args.get("write_strategy", "replace")
+        upsert_key = args.get("upsert_key")
+        source_type = args.get("source_type", "unknown")
+        source_config = args.get("source_config")
+
+        # 1. 验证表名
+        valid, err = wh.validate_table_name(table_name)
+        if not valid:
+            return f"ERROR: {err}"
+
+        # 2. 从 persist/ 目录找到 DataFrame
+        persist_dir = os.path.join(capture_dir, "persist")
+        df = None
+
+        # 优先查找 parquet
+        parquet_path = os.path.join(persist_dir, f"{var_name}.parquet")
+        json_path = os.path.join(persist_dir, f"{var_name}.json")
+
+        if os.path.exists(parquet_path):
+            try:
+                table = pq.read_table(parquet_path)
+                meta = table.schema.metadata or {}
+                # 不能物化 Series，只能物化 DataFrame
+                if meta.get(b"__persist_type__") == b"series":
+                    return (
+                        f"ERROR: '{var_name}' is a Series, not a DataFrame. "
+                        "Convert it to DataFrame first: df = series.to_frame()"
+                    )
+                df = table.to_pandas()
+            except Exception as e:
+                return f"ERROR: Failed to read '{var_name}' from persist: {str(e)}"
+
+        elif os.path.exists(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    blob = json.load(f)
+                ptype = blob.get("__persist_type__")
+                if ptype not in (None, "dataframe"):
+                    return (
+                        f"ERROR: '{var_name}' is type '{ptype}', not a DataFrame. "
+                        "Only DataFrames can be materialized to DuckDB."
+                    )
+                cols = blob.get("columns", [])
+                rows = blob.get("rows", [])
+                df = pd.DataFrame(rows, columns=cols) if cols else pd.DataFrame(rows)
+            except Exception as e:
+                return f"ERROR: Failed to read '{var_name}' from persist: {str(e)}"
+
+        # 也在 persistent_vars 映射中查找
+        elif var_name in persistent_vars:
+            fpath = persistent_vars[var_name]
+            try:
+                if fpath.endswith(".parquet"):
+                    table = pq.read_table(fpath)
+                    df = table.to_pandas()
+                else:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        blob = json.load(f)
+                    cols = blob.get("columns", [])
+                    rows = blob.get("rows", [])
+                    df = pd.DataFrame(rows, columns=cols) if cols else pd.DataFrame(rows)
+            except Exception as e:
+                return f"ERROR: Failed to read '{var_name}': {str(e)}"
+
+        if df is None:
+            available = list(persistent_vars.keys()) if persistent_vars else []
+            # 也扫描 persist/ 目录
+            if os.path.isdir(persist_dir):
+                import glob
+                for fp in glob.glob(os.path.join(persist_dir, "*.parquet")):
+                    n = os.path.splitext(os.path.basename(fp))[0]
+                    if n not in available:
+                        available.append(n)
+                for fp in glob.glob(os.path.join(persist_dir, "*.json")):
+                    n = os.path.splitext(os.path.basename(fp))[0]
+                    if n not in available:
+                        available.append(n)
+            return (
+                f"ERROR: DataFrame variable '{var_name}' not found in sandbox. "
+                f"Available variables: {available}. "
+                "Make sure you created this variable in a previous execute_python_code call."
+            )
+
+        if df.empty:
+            return "ERROR: DataFrame is empty (0 rows). Nothing to materialize."
+
+        # 3. 写入 DuckDB
+        try:
+            result = await wh.async_write_dataframe(df, table_name, strategy, upsert_key)
+        except Exception as e:
+            return f"ERROR: DuckDB write failed: {str(e)}"
+
+        # 4. 注册/更新元数据到 SQLite
+        try:
+            async with async_session() as meta_db:
+                existing = await meta_db.execute(
+                    select(DuckDBTable).where(DuckDBTable.table_name == table_name)
+                )
+                table_meta = existing.scalar_one_or_none()
+
+                table_schema_json = json.dumps(result["schema"], ensure_ascii=False)
+                now = datetime.now()
+
+                if table_meta:
+                    table_meta.display_name = display_name
+                    table_meta.description = description
+                    table_meta.table_schema_json = table_schema_json
+                    table_meta.row_count = result["total_rows"]
+                    table_meta.source_type = source_type
+                    table_meta.source_config = source_config
+                    table_meta.data_updated_at = now
+                    table_meta.status = "ready"
+                else:
+                    table_meta = DuckDBTable(
+                        table_name=table_name,
+                        display_name=display_name,
+                        description=description,
+                        table_schema_json=table_schema_json,
+                        row_count=result["total_rows"],
+                        source_type=source_type,
+                        source_config=source_config,
+                        data_updated_at=now,
+                        status="ready",
+                    )
+                    meta_db.add(table_meta)
+
+                await meta_db.commit()
+        except Exception as e:
+            # 写入 DuckDB 成功但元数据注册失败 — 不致命，只打日志
+            import logging
+            logging.getLogger(__name__).error(f"DuckDB metadata registration failed: {e}")
+
+        # 5. 返回成功信息
+        col_info = ", ".join(f"{s['name']} ({s['type']})" for s in result["schema"][:10])
+        if len(result["schema"]) > 10:
+            col_info += f", ... ({len(result['schema'])} total)"
+
+        return (
+            f"Successfully materialized {result['rows_written']:,} rows into "
+            f"DuckDB table '{table_name}' (strategy: {strategy}).\n"
+            f"Total rows in table: {result['total_rows']:,}\n"
+            f"Columns: {col_info}\n\n"
+            f"The table is now registered as a data asset and can be queried in future tasks."
+        )
+
+    async def _handle_list_duckdb_tables(self) -> str:
+        """处理 list_duckdb_tables 工具调用"""
+        from app.services import warehouse as wh
+
+        try:
+            tables = await wh.async_list_tables()
+        except Exception as e:
+            return f"ERROR: Failed to list tables: {str(e)}"
+
+        if not tables:
+            return "No tables found in the local DuckDB warehouse. The warehouse is empty."
+
+        lines = ["Tables in local DuckDB warehouse:\n"]
+        for t in tables:
+            col_info = ", ".join(f"{s['name']} ({s['type']})" for s in t["schema"][:8])
+            if len(t["schema"]) > 8:
+                col_info += f", ... ({len(t['schema'])} total)"
+            lines.append(
+                f"- **{t['table_name']}** ({t['row_count']:,} rows)\n"
+                f"  Columns: {col_info}"
+            )
+        return "\n".join(lines)
+
+    async def _build_warehouse_context(self) -> str:
+        """构建 DuckDB 仓库的上下文信息，注入到 system prompt"""
+        from app.models import DuckDBTable
+        from sqlalchemy import select
+
+        result = await self.db.execute(
+            select(DuckDBTable)
+            .where(DuckDBTable.status != "error")
+            .order_by(DuckDBTable.updated_at.desc())
+            .limit(20)
+        )
+        tables = list(result.scalars().all())
+
+        if not tables:
+            return (
+                "The local DuckDB warehouse is empty. You can use `materialize_to_duckdb` "
+                "to save cleaned DataFrames as persistent tables.\n\n"
+                "To query DuckDB tables in code, use:\n"
+                "```python\n"
+                "import duckdb\n"
+                "con = duckdb.connect(getenv('WAREHOUSE_PATH'), read_only=True)\n"
+                "df = con.execute('SELECT * FROM table_name').fetchdf()\n"
+                "con.close()\n"
+                "```"
+            )
+
+        lines = [
+            "The following tables exist in the local DuckDB warehouse. "
+            "You can query them using `duckdb.connect(getenv('WAREHOUSE_PATH'))` "
+            "inside `execute_python_code`.\n"
+        ]
+        for t in tables:
+            try:
+                schema = json.loads(t.table_schema_json) if t.table_schema_json else []
+            except (json.JSONDecodeError, TypeError):
+                schema = []
+            col_preview = ", ".join(f"`{s['name']}` ({s['type']})" for s in schema[:8])
+            if len(schema) > 8:
+                col_preview += f", ... ({len(schema)} cols)"
+
+            updated = t.data_updated_at.strftime("%Y-%m-%d %H:%M") if t.data_updated_at else "unknown"
+            lines.append(
+                f"- **{t.table_name}** — {t.display_name} "
+                f"({t.row_count:,} rows, source: {t.source_type}, updated: {updated})\n"
+                f"  Columns: {col_preview}"
+            )
+            if t.description:
+                lines.append(f"  Description: {t.description}")
+
+        lines.append(
+            "\n**To persist new data**: Use `materialize_to_duckdb` tool. "
+            "For FIRST-TIME writes, confirm with the user via `request_human_input` first."
+        )
+
+        return "\n".join(lines)

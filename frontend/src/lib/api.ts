@@ -622,3 +622,47 @@ export const installUpdate = async (filePath: string) => {
   const api = await getApi();
   return api.post("/updates/install", { file_path: filePath });
 };
+
+// ===== DuckDB Warehouse =====
+export interface DuckDBTableItem {
+  id: string;
+  table_name: string;
+  display_name: string;
+  description: string | null;
+  table_schema_json: string;
+  row_count: number;
+  source_type: string;
+  source_config: string | null;
+  pipeline_id: string | null;
+  data_updated_at: string | null;
+  latest_data_date: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+export const fetchDuckDBTables = async () =>
+  (await getApi()).get<DuckDBTableItem[]>("/warehouse/tables");
+export const previewDuckDBTable = async (
+  tableId: string,
+  limit: number = 50
+) =>
+  (await getApi()).get<{
+    columns: string[];
+    rows: Record<string, unknown>[];
+    total_rows: number;
+  }>(`/warehouse/tables/${tableId}/preview`, { params: { limit } });
+export const deleteDuckDBTable = async (tableId: string) =>
+  (await getApi()).delete(`/warehouse/tables/${tableId}`);
+export const addTableToContext = async (tableId: string, taskId: string) =>
+  (await getApi()).post<{ status: string; knowledge_id: string }>(
+    `/warehouse/tables/${tableId}/add-to-context`,
+    null,
+    { params: { task_id: taskId } }
+  );
+export const removeTableFromContext = async (
+  tableId: string,
+  taskId: string
+) =>
+  (await getApi()).post(`/warehouse/tables/${tableId}/remove-from-context`, null, {
+    params: { task_id: taskId },
+  });

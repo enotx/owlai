@@ -38,6 +38,9 @@ Work step-by-step:
 ## Variable Reference
 {variable_reference}
 
+## Local Data Warehouse (DuckDB)
+{warehouse_context}
+
 ## Available Skills
 {skill_context}
 
@@ -53,6 +56,7 @@ def build_analyst_system_prompt(
     skill_context: str,
     current_task: str,
     include_viz_examples: bool = False,
+    warehouse_context: str = "",
 ) -> str:
     """
     构建 AnalystAgent 的 system prompt。
@@ -76,4 +80,5 @@ def build_analyst_system_prompt(
         variable_reference=variable_reference,
         skill_context=skill_context,
         current_task=current_task,
+        warehouse_context=warehouse_context,
     )

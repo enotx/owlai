@@ -1,32 +1,51 @@
 // frontend/src/components/chat/message-input.tsx
-
 "use client";
-
-/**
- * 消息输入框 + 发送按钮 + Mode/Model 选择器
- * 支持用户切换执行模式（Auto/Plan/Analyst）和显式指定模型
- */
 import * as React from "react";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { SendHorizonal, Square } from "lucide-react";
-
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { SendHorizonal, Square, Database, FileText } from "lucide-react";
 import { streamChat, autoRenameTask } from "@/lib/api";
 import type { SSEEvent } from "@/lib/api";
 import { useTaskStore, Step } from "@/stores/use-task-store";
 import { useSettingsStore } from "@/stores/use-settings-store";
-
-// 特殊值，表示"使用默认配置"（避免空字符串导致 Radix UI 报错）
+import { cn } from "@/lib/utils";
+// ── Slash Command Definitions ─────────────────────────────
+const SLASH_COMMANDS = [
+  {
+    command: "/derive",
+    label: "Derive a Data Source",
+    description: "Extract pipeline and save results to Data Warehouse",
+    icon: Database,
+    group: "Extract",
+  },
+  {
+    command: "/sop",
+    label: "Extract an SOP",
+    description: "Extract a Standard Operating Procedure from this task",
+    icon: FileText,
+    group: "Extract",
+  },
+] as const;
+type SlashCommand = (typeof SLASH_COMMANDS)[number];
 const DEFAULT_MODEL_VALUE = "__use_default__";
-
 export default function MessageInput() {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const autoRenameCalledRef = useRef(false); 
-  // 用于中止 SSE 流
+  const autoRenameCalledRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  // Slash command state
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [slashFilter, setSlashFilter] = useState("");
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+  const slashMenuRef = useRef<HTMLDivElement>(null);
 
   const {
     currentTaskId,
@@ -45,11 +64,12 @@ export default function MessageInput() {
     setCurrentMode,
     selectedModel,
     setSelectedModel,
+    steps,
   } = useTaskStore();
-  
+
   const { providers, agentConfigs } = useSettingsStore();
 
-  // 构建可选模型列表（所有 Provider 的所有 Model）
+  // Build available models list
   const availableModels = providers.flatMap((provider) =>
     provider.models.map((model) => ({
       value: `${provider.id}:${model.id}`,
@@ -59,51 +79,79 @@ export default function MessageInput() {
     }))
   );
 
-  /**
-   * 获取当前模式的默认配置
-   * 将前端的 mode 映射到后端的 agent_type
-   */
+  // Filter slash commands based on typed text
+  const filteredCommands = useMemo(() => {
+    if (!slashFilter) return [...SLASH_COMMANDS];
+    const lower = slashFilter.toLowerCase();
+    return SLASH_COMMANDS.filter(
+      (cmd) =>
+        cmd.command.slice(1).toLowerCase().startsWith(lower) ||
+        cmd.label.toLowerCase().includes(lower)
+    );
+  }, [slashFilter]);
+
+  // Detect active slash command in text (for badge display)
+  const activeCommand = useMemo(() => {
+    const trimmed = text.trimStart();
+    for (const cmd of SLASH_COMMANDS) {
+      if (
+        trimmed.startsWith(cmd.command + " ") ||
+        trimmed === cmd.command
+      ) {
+        return cmd;
+      }
+    }
+    return null;
+  }, [text]);
+
+  // Check if the task has any successful code executions (for /derive availability)
+  const hasCodeExecutions = useMemo(() => {
+    return steps.some(
+      (s) =>
+        s.step_type === "tool_use" &&
+        s.code_output &&
+        (() => {
+          try {
+            return JSON.parse(s.code_output).success === true;
+          } catch {
+            return false;
+          }
+        })()
+    );
+  }, [steps]);
+
   const getDefaultModelForMode = (mode: string) => {
     const agentTypeMap: Record<string, string> = {
       auto: "default",
       plan: "plan",
       analyst: "analyst",
     };
-    
     const agentType = agentTypeMap[mode] || "default";
     const config = agentConfigs.find((c) => c.agent_type === agentType);
-    
     if (!config || !config.provider_id || !config.model_id) return null;
-    return {
-      providerId: config.provider_id,
-      modelId: config.model_id,
-    };
+    return { providerId: config.provider_id, modelId: config.model_id };
   };
 
-  /**
-   * 获取显示的模型名称
-   * 优先显示用户显式选择的模型，否则显示当前模式的默认配置
-   */
   const getDisplayModel = () => {
-    // 如果用户显式选择了模型，显示用户选择的
     if (selectedModel) {
       const found = availableModels.find(
-        (m) => m.providerId === selectedModel.providerId && m.modelId === selectedModel.modelId
+        (m) =>
+          m.providerId === selectedModel.providerId &&
+          m.modelId === selectedModel.modelId
       );
       return found ? found.label : "Unknown";
     }
-    
-    // 否则显示当前模式的默认配置
     const defaultModel = getDefaultModelForMode(currentMode);
     if (!defaultModel) return "Not configured";
-    
     const found = availableModels.find(
-      (m) => m.providerId === defaultModel.providerId && m.modelId === defaultModel.modelId
+      (m) =>
+        m.providerId === defaultModel.providerId &&
+        m.modelId === defaultModel.modelId
     );
     return found ? found.label : "Unknown";
   };
 
-  /* 自动调整 textarea 高度 */
+  // Auto-resize textarea
   useEffect(() => {
     const el = textareaRef.current;
     if (el) {
@@ -112,12 +160,66 @@ export default function MessageInput() {
     }
   }, [text]);
 
-  /** 中止当前 SSE 流 */
+  // Close slash menu on click outside
+  useEffect(() => {
+    if (!showSlashMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        slashMenuRef.current &&
+        !slashMenuRef.current.contains(e.target as Node)
+      ) {
+        setShowSlashMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showSlashMenu]);
+
+  // ── Slash command detection ─────────────────────────────
+  const handleTextChange = (value: string) => {
+    setText(value);
+
+    const cursorPos = textareaRef.current?.selectionStart ?? value.length;
+    const textBeforeCursor = value.slice(0, cursorPos);
+
+    // Only trigger at the very start of input: /xxx
+    const slashMatch = textBeforeCursor.match(/^\/(\w*)$/);
+
+    if (slashMatch) {
+      setSlashFilter(slashMatch[1]);
+      setShowSlashMenu(true);
+      setSlashSelectedIndex(0);
+    } else {
+      setShowSlashMenu(false);
+    }
+  };
+
+  const selectSlashCommand = (cmd: SlashCommand) => {
+    setText(cmd.command + " ");
+    setShowSlashMenu(false);
+    textareaRef.current?.focus();
+  };
+
+  /** Handle clicking the Extract button (external trigger) */
+  const handleExtractClick = (cmd: SlashCommand) => {
+    setText(cmd.command + " ");
+    setShowSlashMenu(false);
+    // Focus and place cursor at end
+    setTimeout(() => {
+      const el = textareaRef.current;
+      if (el) {
+        el.focus();
+        el.selectionStart = el.selectionEnd = el.value.length;
+      }
+    }, 0);
+  };
+
+  // ── Abort ───────────────────────────────────────────────
   const handleAbort = () => {
     try {
       abortControllerRef.current?.abort();
     } catch {
-      // AbortError expected, ignore
+      // AbortError expected
     }
     abortControllerRef.current = null;
     clearStreaming();
@@ -126,19 +228,18 @@ export default function MessageInput() {
     setIsSending(false);
   };
 
+  // ── Send ────────────────────────────────────────────────
   const handleSend = async () => {
     if (!text.trim() || !currentTaskId || isSending) return;
     const message = text.trim();
     setText("");
     autoRenameCalledRef.current = false;
     setIsSending(true);
-    setIsWaitingResponse(true); // 进入等待状态
+    setIsWaitingResponse(true);
 
-    // 创建 AbortController 供中止使用
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    // 立即显示用户消息（临时，等 step_saved 替换）
     const tempUserId = `temp-user-${Date.now()}`;
     addStep({
       id: tempUserId,
@@ -152,7 +253,6 @@ export default function MessageInput() {
     });
 
     try {
-      // 只有在用户显式选择模型时才传递 model_override
       const modelOverride = selectedModel
         ? {
             provider_id: selectedModel.providerId,
@@ -166,11 +266,9 @@ export default function MessageInput() {
         (event: SSEEvent) => {
           switch (event.type) {
             case "text":
-              // 收到首个实际内容，退出 waiting 状态
               if (useTaskStore.getState().isWaitingResponse) {
                 setIsWaitingResponse(false);
               }
-
               if (!useTaskStore.getState().streamingMessage) {
                 startStreaming();
               }
@@ -180,7 +278,6 @@ export default function MessageInput() {
               break;
 
             case "tool_start":
-              // 收到 tool_start 也退出 waiting 状态
               if (useTaskStore.getState().isWaitingResponse) {
                 setIsWaitingResponse(false);
               }
@@ -193,7 +290,6 @@ export default function MessageInput() {
               break;
 
             case "tool_result":
-              // 代码执行完成（含捕获的 DataFrame 元数据）
               updatePendingToolResult(currentTaskId!, {
                 success: event.success ?? false,
                 output: event.output ?? null,
@@ -204,10 +300,7 @@ export default function MessageInput() {
               break;
 
             case "step_saved": {
-              // 一个 Step 已持久化 → 加入 steps 列表
               const step = event.step as unknown as Step;
-
-              // 如果是 user_message，替换临时条目
               if (step.step_type === "user_message") {
                 const store = useTaskStore.getState();
                 const updatedSteps = store.steps.map((s) =>
@@ -215,12 +308,10 @@ export default function MessageInput() {
                 );
                 useTaskStore.setState({ steps: updatedSteps });
               } else {
-                // 清除流式 / pending 状态，加入真实 Step
                 clearStreaming();
                 setPendingTool(currentTaskId!, null);
                 addStep(step);
-                
-                // 如果是 HITL 请求，设置 pendingHITL 状态
+
                 if (step.step_type === "hitl_request" && step.code_output) {
                   try {
                     const hitlData = JSON.parse(step.code_output);
@@ -229,7 +320,7 @@ export default function MessageInput() {
                       data: hitlData,
                     });
                   } catch {
-                    // ignore parse errors
+                    // ignore
                   }
                 }
               }
@@ -237,19 +328,14 @@ export default function MessageInput() {
             }
 
             case "visualization":
-              // 当前版本以 step_saved(visualization) 为准，这里可忽略或用于将来做即时预览
               break;
 
             case "hitl_request":
-              // HITL 不需要在这里特殊处理
-              // step_saved 中 step_type="hitl_request" 会触发卡片渲染
               break;
 
             case "done": {
-              // 全部完成 — 清除残留状态
               clearStreaming();
               setPendingTool(currentTaskId!, null);
-              // 自动重命名：首次对话完成后，若 title 仍为默认模式则触发
               if (!autoRenameCalledRef.current) {
                 autoRenameCalledRef.current = true;
                 const store = useTaskStore.getState();
@@ -291,14 +377,13 @@ export default function MessageInput() {
               break;
           }
         },
-        currentMode, // 传递mode
-        modelOverride, // 只有显式选择时才传递
-        controller // 传入外部 AbortController
+        currentMode,
+        modelOverride,
+        controller
       );
     } catch (err) {
-      // AbortError 是用户主动中止，不需要报错
       if (err instanceof DOMException && err.name === "AbortError") {
-        // 静默处理
+        // silent
       } else {
         console.error("Stream failed:", err);
         clearStreaming();
@@ -322,14 +407,39 @@ export default function MessageInput() {
     }
   };
 
-  /** 清除当前流式文本状态（不创建临时 Step） */
   function _flushStreaming() {
     clearStreaming();
   }
 
-
-  /* Ctrl/Cmd+Enter 发送，普通 Enter 换行 */
+  // ── Keyboard handling ───────────────────────────────────
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Slash menu navigation
+    if (showSlashMenu && filteredCommands.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashSelectedIndex((i) =>
+          Math.min(i + 1, filteredCommands.length - 1)
+        );
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashSelectedIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        selectSlashCommand(filteredCommands[slashSelectedIndex]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setShowSlashMenu(false);
+        return;
+      }
+    }
+
+    // Ctrl/Cmd+Enter to send
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       handleSend();
@@ -338,23 +448,76 @@ export default function MessageInput() {
 
   return (
     <div className="space-y-2">
-      {/* 输入框 + 发送按钮 */}
+      {/* Input box + send button */}
       <div className="relative rounded-lg border bg-card shadow-sm focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-1">
+        {/* Active command badge (overlaid on textarea) */}
+        {activeCommand && (
+          <div className="absolute top-2 left-3 z-10 pointer-events-none">
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium",
+                "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+              )}
+            >
+              <activeCommand.icon className="h-3 w-3" />
+              {activeCommand.command}
+            </span>
+          </div>
+        )}
+
+        {/* Slash command popover */}
+        {showSlashMenu && filteredCommands.length > 0 && (
+          <div
+            ref={slashMenuRef}
+            className="absolute bottom-full left-0 mb-1 w-80 rounded-lg border bg-popover p-1 shadow-lg z-50"
+          >
+            {/* Group header */}
+            <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Extract
+            </div>
+            {filteredCommands.map((cmd, idx) => (
+              <button
+                key={cmd.command}
+                className={cn(
+                  "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+                  idx === slashSelectedIndex
+                    ? "bg-accent text-accent-foreground"
+                    : "hover:bg-muted"
+                )}
+                onMouseEnter={() => setSlashSelectedIndex(idx)}
+                onClick={() => selectSlashCommand(cmd)}
+              >
+                <cmd.icon className="h-4 w-4 text-muted-foreground shrink-0" />
+                <div className="text-left min-w-0">
+                  <div className="font-medium text-xs">{cmd.command}</div>
+                  <div className="text-[11px] text-muted-foreground truncate">
+                    {cmd.description}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+
         <Textarea
           ref={textareaRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => handleTextChange(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={
             currentTaskId
-              ? "Ask Owl to analyze your data..."
+              ? "Ask Owl to analyze your data… (type / for commands)"
               : "Select or create a task first"
           }
           disabled={!currentTaskId || isSending}
-          className="min-h-[80px] max-h-[160px] resize-none border-0 pr-14 focus-visible:ring-0 focus-visible:ring-offset-0"
+          className={cn(
+            "min-h-[80px] max-h-[160px] resize-none border-0 pr-14 focus-visible:ring-0 focus-visible:ring-offset-0",
+            activeCommand && "pt-8" // push text down when badge is shown
+          )}
           rows={3}
         />
-        {/* 发送 / 中止按钮 */}
+
+        {/* Send / abort button */}
         {isSending ? (
           <Button
             size="icon"
@@ -377,12 +540,14 @@ export default function MessageInput() {
         )}
       </div>
 
-      {/* 模式选择器 + 模型选择器 + 快捷键提示 */}
+      {/* Mode selector + Model selector + Extract buttons + shortcut hint */}
       <div className="flex items-center gap-2">
-        {/* 模式选择器 */}
+        {/* Mode selector */}
         <Select
           value={currentMode}
-          onValueChange={(value: "auto" | "plan" | "analyst") => setCurrentMode(value)}
+          onValueChange={(value: "auto" | "plan" | "analyst") =>
+            setCurrentMode(value)
+          }
           disabled={isSending}
         >
           <SelectTrigger className="h-7 w-[120px] text-xs">
@@ -395,7 +560,7 @@ export default function MessageInput() {
           </SelectContent>
         </Select>
 
-        {/* 模型选择器 */}
+        {/* Model selector */}
         <Select
           value={
             selectedModel
@@ -425,13 +590,41 @@ export default function MessageInput() {
           </SelectContent>
         </Select>
 
-        {/* 快捷键提示 */}
+        {/* Extract buttons (mouse trigger for slash commands) */}
+        {currentTaskId && !isSending && (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() =>
+                handleExtractClick(
+                  SLASH_COMMANDS.find((c) => c.command === "/derive")!
+                )
+              }
+              disabled={!hasCodeExecutions}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors border",
+                hasCodeExecutions
+                  ? "text-emerald-700 border-emerald-200 bg-emerald-50 hover:bg-emerald-100 dark:text-emerald-300 dark:border-emerald-800 dark:bg-emerald-950 dark:hover:bg-emerald-900"
+                  : "text-muted-foreground/40 border-transparent cursor-not-allowed"
+              )}
+              title={
+                hasCodeExecutions
+                  ? "Derive a Data Source from this task"
+                  : "Run some analysis first"
+              }
+            >
+              <Database className="h-3 w-3" />
+              /derive
+            </button>
+          </div>
+        )}
+
+        {/* Shortcut hint */}
         <span className="ml-auto text-[10px] text-muted-foreground">
           {typeof navigator !== "undefined" &&
           /Mac|iPod|iPhone|iPad/.test(navigator.platform)
             ? "⌘"
             : "Ctrl"}
-          +Enter to send
+          +Enter
         </span>
       </div>
     </div>
