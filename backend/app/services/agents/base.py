@@ -195,19 +195,52 @@ class BaseAgent(ABC):
         import glob
         persist_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "persist")
         persisted_var_parts: list[str] = []
+        # 收集已处理的变量名（同名时 .parquet 优先于 .json）
+        _seen_vars: set[str] = set()
         if os.path.isdir(persist_dir):
-            for fpath in sorted(glob.glob(os.path.join(persist_dir, "*.json"))):
+            # 先扫描 Parquet，再扫描 JSON（保证 parquet 优先）
+            _all_files = sorted(glob.glob(os.path.join(persist_dir, "*.parquet"))) + \
+                         sorted(glob.glob(os.path.join(persist_dir, "*.json")))
+            for fpath in _all_files:
                 vname = os.path.splitext(os.path.basename(fpath))[0]
-                # 跳过已被 Knowledge 数据集覆盖的同名变量
-                if vname in data_var_map:
+                if vname in data_var_map or vname in _seen_vars:
                     continue
-                # 读取 JSON 头部，生成摘要
+                _seen_vars.add(vname)
+
+                # ── Parquet 文件：用 pyarrow 读取元数据（不加载全部数据） ──
+                if fpath.endswith(".parquet"):
+                    try:
+                        import pyarrow.parquet as pq
+                        pf = pq.ParquetFile(fpath)
+                        schema = pf.schema_arrow
+                        num_rows = pf.metadata.num_rows
+                        meta = schema.metadata or {}
+                        persist_type = meta.get(b'__persist_type__', b'').decode('utf-8')
+
+                        if persist_type == "series":
+                            sname = meta.get(b'__series_name__', b'').decode('utf-8') or '?'
+                            col_type = str(schema.field(0).type) if schema else '?'
+                            persisted_var_parts.append(
+                                f"- `{vname}` — Series(name={sname!r}, dtype={col_type}, len={num_rows})"
+                            )
+                        else:
+                            col_names = [schema.field(i).name for i in range(len(schema))]
+                            col_preview = ", ".join(f"`{c}`" for c in col_names[:8])
+                            if len(col_names) > 8:
+                                col_preview += f", ... ({len(col_names)} cols)"
+                            persisted_var_parts.append(
+                                f"- `{vname}` — DataFrame ({num_rows} rows) [{col_preview}]"
+                            )
+                    except Exception:
+                        persisted_var_parts.append(f"- `{vname}` — (unable to read parquet)")
+                    continue
+
+                # ── JSON 文件（向后兼容旧版持久化） ──
                 try:
                     with open(fpath, "r", encoding="utf-8") as f:
                         blob = json.load(f)
                     ptype = blob.get("__persist_type__")
-                    
-                    # 向后兼容：无 __persist_type__ 视为 DataFrame
+
                     if ptype is None or ptype == "dataframe":
                         cols = blob.get("columns", [])
                         rows = blob.get("rows", [])
@@ -239,7 +272,6 @@ class BaseAgent(ABC):
                     elif ptype == "value":
                         val = blob.get("value")
                         type_name = type(val).__name__
-                        # 为容器类型显示长度
                         if isinstance(val, (list, dict)):
                             val_preview = repr(val)
                             if len(val_preview) > 80:
@@ -257,7 +289,7 @@ class BaseAgent(ABC):
                         )
                 except Exception:
                     persisted_var_parts.append(f"- `{vname}` — (unable to read)")
-        
+
         # 合并 variable_reference
         if var_ref_parts or persisted_var_parts:
             all_var_parts = []
@@ -392,7 +424,7 @@ class BaseAgent(ABC):
                 data_var_map=data_var_map,
                 capture_dir=capture_dir,
                 injected_envs=skill_envs,
-                json_var_map=persistent_vars,
+                persisted_var_map=persistent_vars,
             )
         )
         

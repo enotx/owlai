@@ -33,8 +33,8 @@ def _build_sandbox_script(
     data_var_map: dict[str, str],
     capture_dir: str | None = None,
     extra_allowed_modules: list[str] | None = None,
-    json_var_map: dict[str, str] | None = None,  # 上一轮持久化的 DataFrame {var_name: json_path}
-    heartbeat_file: str | None = None,  # 新增：心跳文件路径
+    persisted_var_map: dict[str, str] | None = None,  # 上一轮持久化的变量 {var_name: .parquet/.json path}
+    heartbeat_file: str | None = None,
 ) -> str:
     """
     构建在子进程中执行的 Python 脚本。
@@ -70,8 +70,8 @@ def _build_sandbox_script(
     # ── 从上一轮持久化的 JSON 恢复变量（支持多种类型） ──
     json_loader_lines = []
     json_var_names: set[str] = set()
-    if json_var_map:
-        for var_name, json_path in json_var_map.items():
+    if persisted_var_map:
+        for var_name, json_path in persisted_var_map.items():
             escaped = json_path.replace("\\", "\\\\")
             json_loader_lines.append(
                 f'{var_name} = __restore_var("{escaped}")'
@@ -144,6 +144,7 @@ _ALLOWED_MODULES = {{
     'datetime', 'json', 'decimal', 'fractions', 'textwrap',
     'collections.abc', 'typing', 'numbers', 'hashlib', 'random',
     'sklearn', 'scipy', 'time', 'xgboost', 'lightgbm', 'catboost',
+    'duckdb', 'pyarrow'
 }}
 # 动态追加 Skill 声明的额外模块
 _ALLOWED_MODULES.update({repr(set(extra_allowed_modules or []))})
@@ -244,21 +245,35 @@ _safe_builtins['UnicodeEncodeError'] = UnicodeEncodeError
 import pandas as __pd
 import numpy as __np
 import json as __json_mod
+import pyarrow as __pa
+import pyarrow.parquet as __pq
 # ── 通用变量恢复函数 ────────────────────────────────────
 def __restore_var(__fpath):
+    # ── Parquet 格式（新版） ─────────────────────────────
+    if __fpath.endswith(".parquet"):
+        _table = __pq.read_table(__fpath)
+        _meta = _table.schema.metadata or {{}}
+        # 判断是否为 Series（写入时打了标记）
+        if _meta.get(b'__persist_type__') == b'series':
+            _df = _table.to_pandas()
+            _sname_bytes = _meta.get(b'__series_name__', b'')
+            _sname = _sname_bytes.decode('utf-8') if _sname_bytes else None
+            return _df.iloc[:, 0].rename(_sname or None)
+        # 普通 DataFrame
+        return _table.to_pandas()
+
+    # ── JSON 格式（向后兼容旧版持久化文件） ──────────────
     with open(__fpath, "r", encoding="utf-8") as __rf:
         __blob = __json_mod.load(__rf)
     __ptype = __blob.get("__persist_type__")
+
     # 向后兼容：旧格式无 __persist_type__，视为 DataFrame
     if __ptype is None or __ptype == "dataframe":
         __cols = __blob.get("columns", [])
         __rows = __blob.get("rows", [])
         if __rows and isinstance(__rows[0], dict):
-            # orient='records' 格式：用 dict keys 作为列名的 fallback
             __df = __pd.DataFrame(__rows)
-            # 如果保存了 columns 顺序，按该顺序重排
             if __cols:
-                # 取交集，防止列名不一致
                 __valid_cols = [c for c in __cols if c in __df.columns]
                 __extra_cols = [c for c in __df.columns if c not in __cols]
                 __df = __df[__valid_cols + __extra_cols]
@@ -266,9 +281,6 @@ def __restore_var(__fpath):
             __df = __pd.DataFrame(__rows, columns=__cols)
         else:
             __df = __pd.DataFrame(__rows)
-        # 防御：确保列名是字符串，不是 RangeIndex
-        if isinstance(__df.columns, __pd.RangeIndex):
-            pass  # 无法恢复列名，保持原样
         return __df
     if __ptype == "series":
         __s = __pd.Series(__blob["data"], name=__blob.get("name"))
@@ -294,8 +306,8 @@ def __restore_var(__fpath):
             return __np.dtype(__dt).type(__blob["value"])
         except Exception:
             return __blob["value"]
-    # __ptype == "value" 或未知类型
     return __blob.get("value")
+
 # ── 加载 CSV 数据 ──────────────────────────────────────
 {loader_code}
 # ── 恢复上一轮持久化的 DataFrame ──────────────────────
@@ -480,10 +492,13 @@ if _capture_dir:
                 # 捕获失败不影响主结果
                 pass
 # ── 持久化所有新变量到 persist/ 目录（供下一轮复用） ──────
+# DataFrame / Series → Parquet（高速、类型保真）
+# ndarray / scalar / 基础类型 → JSON（体积极小，无需 Parquet）
 _persisted_vars = {{}}
 _MAX_PERSIST = 30
 _MAX_PERSIST_ROWS = 200000
-_MAX_VALUE_SIZE = 500000  # 序列化后 JSON 字符串最大字符数
+_MAX_PARQUET_SIZE = 50 * 1024 * 1024   # 单个 Parquet 文件上限 50 MB
+_MAX_JSON_VALUE_SIZE = 500000           # JSON 序列化后字符串上限
 if _capture_dir:
     _persist_dir = _os.path.join(_capture_dir, "persist")
     _os.makedirs(_persist_dir, exist_ok=True)
@@ -493,71 +508,87 @@ if _capture_dir:
             break
         if _k.startswith('_') or _k in _SKIP_KEYS or _k in _PRELOADED:
             continue
-        _ppath = _os.path.join(_persist_dir, _k + ".json")
         try:
-            _blob = None
-            # ── DataFrame ──
+            # ── DataFrame → Parquet ─────────────────────
             if isinstance(_v, __pd.DataFrame):
                 _slice = _v.head(_MAX_PERSIST_ROWS)
-                # 处理 MultiIndex columns：展平为字符串
+                # MultiIndex columns → 展平
                 if isinstance(_slice.columns, __pd.MultiIndex):
                     _slice = _slice.copy()
                     _slice.columns = ['_'.join(str(x) for x in col).strip('_') for col in _slice.columns]
-                _cols = [str(c) for c in _slice.columns.tolist()]
-                # 确保列名不是纯数字（RangeIndex 的标志）
-                if all(isinstance(c, int) or (isinstance(c, str) and c.isdigit()) for c in _slice.columns):
-                    _cols = [f"col_{{i}}" for i in range(len(_cols))]
-                    _slice = _slice.copy()
-                    _slice.columns = _cols
-                _clean = _slice.where(__pd.notnull(_slice), None)
-                _rows = json.loads(_clean.to_json(orient='records', default_handler=str))
-                _blob = {{"__persist_type__": "dataframe", "columns": _cols, "rows": _rows}}
-            # ── Series ──
+                # 确保列名是字符串（Parquet 要求）
+                _slice = _slice.copy()
+                _slice.columns = [str(c) for c in _slice.columns]
+                _ppath = _os.path.join(_persist_dir, _k + ".parquet")
+                _slice.to_parquet(_ppath, engine='pyarrow', index=False)
+                if _os.path.getsize(_ppath) <= _MAX_PARQUET_SIZE:
+                    _persisted_vars[_k] = _ppath
+                    _persist_count += 1
+                else:
+                    _os.unlink(_ppath)
+            # ── Series → Parquet（带元数据标记） ─────────
             elif isinstance(_v, __pd.Series):
                 _slice = _v.head(_MAX_PERSIST_ROWS)
-                _clean = _slice.where(__pd.notnull(_slice), None)
-                _data = json.loads(_clean.to_json(default_handler=str))
-                # to_json on Series returns index-keyed dict, convert to list
-                _data_list = list(_data.values()) if isinstance(_data, dict) else _data
-                _blob = {{
-                    "__persist_type__": "series",
-                    "data": _data_list,
-                    "name": str(_v.name) if _v.name is not None else None,
-                    "dtype": str(_v.dtype),
-                }}
-            # ── numpy ndarray ──
+                _col_name = str(_slice.name) if _slice.name is not None else "__series__"
+                _tmp_df = _slice.to_frame(name=_col_name)
+                _table = __pa.Table.from_pandas(_tmp_df, preserve_index=False)
+                # 在 schema metadata 中写入类型标记，恢复时可区分 Series 与 DataFrame
+                _existing_meta = _table.schema.metadata or {{}}
+                _existing_meta[b'__persist_type__'] = b'series'
+                _existing_meta[b'__series_name__'] = _col_name.encode('utf-8')
+                _table = _table.replace_schema_metadata(_existing_meta)
+                _ppath = _os.path.join(_persist_dir, _k + ".parquet")
+                __pq.write_table(_table, _ppath)
+                if _os.path.getsize(_ppath) <= _MAX_PARQUET_SIZE:
+                    _persisted_vars[_k] = _ppath
+                    _persist_count += 1
+                else:
+                    _os.unlink(_ppath)
+            # ── numpy ndarray → JSON（体积通常极小） ─────
             elif isinstance(_v, __np.ndarray):
                 if _v.size > _MAX_PERSIST_ROWS:
-                    _v = _v.flat[:_MAX_PERSIST_ROWS]
-                    _v = __np.array(_v)
+                    _v = __np.array(_v.flat[:_MAX_PERSIST_ROWS])
                 _blob = {{
                     "__persist_type__": "ndarray",
                     "data": _v.tolist(),
                     "dtype": str(_v.dtype),
                     "shape": list(_v.shape),
                 }}
-            # ── numpy scalar ──
+                _json_str = json.dumps(_blob, ensure_ascii=False, default=str)
+                if len(_json_str) <= _MAX_JSON_VALUE_SIZE:
+                    _ppath = _os.path.join(_persist_dir, _k + ".json")
+                    with open(_ppath, 'w', encoding='utf-8') as _pf:
+                        _pf.write(_json_str)
+                    _persisted_vars[_k] = _ppath
+                    _persist_count += 1
+            # ── numpy scalar → JSON ─────────────────────
             elif isinstance(_v, __np.generic):
                 _blob = {{
                     "__persist_type__": "numpy_scalar",
                     "value": _v.item(),
                     "dtype": str(_v.dtype),
                 }}
-            # ── Python 基础类型（int, float, str, bool, None, list, dict, tuple, set） ──
-            elif isinstance(_v, (int, float, str, bool, list, dict, tuple, set, type(None))):
-                # tuple / set 转 list（JSON 不支持）
-                _serializable = list(_v) if isinstance(_v, (tuple, set)) else _v
-                _blob = {{"__persist_type__": "value", "value": _serializable}}
-            # ── 其他类型：跳过 ──
-            else:
-                continue
-            if _blob is not None:
                 _json_str = json.dumps(_blob, ensure_ascii=False, default=str)
-                if len(_json_str) <= _MAX_VALUE_SIZE:
+                if len(_json_str) <= _MAX_JSON_VALUE_SIZE:
+                    _ppath = _os.path.join(_persist_dir, _k + ".json")
                     with open(_ppath, 'w', encoding='utf-8') as _pf:
                         _pf.write(_json_str)
                     _persisted_vars[_k] = _ppath
                     _persist_count += 1
+            # ── Python 基础类型 → JSON ───────────────────
+            elif isinstance(_v, (int, float, str, bool, list, dict, tuple, set, type(None))):
+                _serializable = list(_v) if isinstance(_v, (tuple, set)) else _v
+                _blob = {{"__persist_type__": "value", "value": _serializable}}
+                _json_str = json.dumps(_blob, ensure_ascii=False, default=str)
+                if len(_json_str) <= _MAX_JSON_VALUE_SIZE:
+                    _ppath = _os.path.join(_persist_dir, _k + ".json")
+                    with open(_ppath, 'w', encoding='utf-8') as _pf:
+                        _pf.write(_json_str)
+                    _persisted_vars[_k] = _ppath
+                    _persist_count += 1
+            # ── 其他类型：跳过 ──────────────────────────
+            else:
+                continue
         except Exception:
             pass
 result = {{
@@ -579,7 +610,7 @@ async def execute_code_in_sandbox(
     timeout: int = SANDBOX_TOTAL_TIMEOUT,
     capture_dir: str | None = None,
     injected_envs: dict[str, str] | None = None,
-    json_var_map: dict[str, str] | None = None,  # 上一轮持久化的中间变量
+    persisted_var_map: dict[str, str] | None = None,  # 上一轮持久化的变量 (.parquet/.json)
 ) -> dict[str, Any]:
     """
     在子进程中安全执行代码。增加支持心跳机制。
@@ -634,7 +665,7 @@ async def execute_code_in_sandbox(
     )
 
     # ── 构建沙箱脚本（原有位置，增加 extra_modules 参数） ──
-    script_content = _build_sandbox_script(code, data_var_map, capture_dir, extra_modules, json_var_map, heartbeat_file)
+    script_content = _build_sandbox_script(code, data_var_map, capture_dir, extra_modules, persisted_var_map, heartbeat_file)
     
     tmp_file = None
     start_time = time.monotonic()

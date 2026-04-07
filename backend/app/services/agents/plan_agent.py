@@ -50,13 +50,17 @@ class PlanAgent(BaseAgent):
             {"role": "user", "content": user_message},
         ]
         
-        # 跨轮次持久化的中间变量 {var_name: json_file_path}
+        # 跨轮次持久化的中间变量 {var_name: .parquet/.json path}
         persistent_vars: dict[str, str] = {}
         
         # 从 persist/ 目录恢复之前对话轮次的变量
+        # .parquet 优先于 .json（升级过渡期可能共存）
         persist_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "persist")
         if os.path.isdir(persist_dir):
             for fpath in glob.glob(os.path.join(persist_dir, "*.json")):
+                var_name = os.path.splitext(os.path.basename(fpath))[0]
+                persistent_vars[var_name] = fpath
+            for fpath in glob.glob(os.path.join(persist_dir, "*.parquet")):
                 var_name = os.path.splitext(os.path.basename(fpath))[0]
                 persistent_vars[var_name] = fpath
         

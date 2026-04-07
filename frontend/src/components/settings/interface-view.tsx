@@ -22,7 +22,7 @@ const themes: { id: Theme; name: string; description: string; preview: string }[
   {
     id: "eva-unit-01",
     name: "Eva Unit-01",
-    description: "Dark tactical purple with neon green highlights, inspired by EVA-01 command panels.",
+    description: "Dark tactical purple with neon green highlights, inspired by EVA Unit-01.",
     preview: "bg-gradient-to-br from-[#1a1029] via-[#2a1740] to-[#12081f]",
   },
 ];
