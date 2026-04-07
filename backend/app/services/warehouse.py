@@ -123,7 +123,7 @@ def write_dataframe(
         con.close()
 
 
-def query(sql: str, limit: int = 10000) -> pd.DataFrame:
+def query(sql: str, limit: int = 100000) -> pd.DataFrame:
     """只读查询 DuckDB 仓库"""
     db_path = str(WAREHOUSE_PATH)
     con = duckdb.connect(db_path, read_only=True)
@@ -244,7 +244,7 @@ async def async_write_dataframe(
     return await asyncio.to_thread(write_dataframe, df, table_name, strategy, upsert_key)
 
 
-async def async_query(sql: str, limit: int = 10000) -> pd.DataFrame:
+async def async_query(sql: str, limit: int = 100000) -> pd.DataFrame:
     """异步包装：在线程池中执行 DuckDB 查询"""
     return await asyncio.to_thread(query, sql, limit)
 

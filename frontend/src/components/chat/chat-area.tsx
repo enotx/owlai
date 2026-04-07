@@ -922,7 +922,6 @@ export default function ChatArea() {
                     onPipelineConfirm={handlePipelineConfirm}
                     onPipelineCancel={handlePipelineCancel}
                   />
-                  <HITLBlock step={step} onSubmit={handleHITLSubmit} />
                   {!isTemp && (
                     <div className="absolute -bottom-1 left-10">
                       <StepActions step={step} onRegenerate={handleRegenerate} />
