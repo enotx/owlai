@@ -391,7 +391,7 @@ class BaseAgent(ABC):
                 env_dict = {}
             if env_dict:
                 env_keys = ", ".join(f"`{k}`" for k in env_dict.keys())
-                section += f"\n> **Available env vars** (use `getenv('KEY')`): {env_keys}\n"
+                section += f"\n> **Available env vars** (use `_safe_getenv('KEY')`): {env_keys}\n"
                 merged_envs.update(env_dict)
             # 收集额外模块
             try:

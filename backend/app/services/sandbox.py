@@ -166,7 +166,7 @@ for _k in dir(_builtins_mod):
     if _k not in _BLOCKED and not _k.startswith('_'):
         _safe_builtins[_k] = getattr(_builtins_mod, _k)
 _safe_builtins['__import__'] = _safe_import
-# 提供受限的环境变量读取能力（仅限 Skill 注入的变量）
+# 提供受限的环境变量读取能力（不直接暴露 os.environ，防止滥用）
 def _safe_getenv(key, default=None):
     return _os.environ.get(key, default)
 _safe_builtins['getenv'] = _safe_getenv
