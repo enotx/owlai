@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type FilterTab = "all" | "ad-hoc" | "automation";
+type FilterTab = "all" | "ad-hoc" | "routine";
 
 export default function TaskSidebar() {
   const {
@@ -177,7 +177,7 @@ export default function TaskSidebar() {
   const filterTabs: { id: FilterTab; label: string }[] = [
     { id: "all", label: "All" },
     { id: "ad-hoc", label: "Ad-hoc" },
-    { id: "automation", label: "Automation" },
+    { id: "routine", label: "Routine" },
   ];
 
   /* Context Menu Portal */
@@ -382,7 +382,7 @@ export default function TaskSidebar() {
               );
             })}
 
-            {/* ─── Automation placeholder ─── */}
+            {/* ─── Routine placeholder ─── */}
             {activeFilter !== "ad-hoc" && (
               <div className="mt-4">
                 <div className="px-2 pb-2">
@@ -390,7 +390,7 @@ export default function TaskSidebar() {
                     className="text-[10px] font-bold uppercase tracking-wider"
                     style={{ color: "var(--owl-sidebar-muted)" }}
                   >
-                    Automation
+                    Routine
                   </span>
                 </div>
                 <div

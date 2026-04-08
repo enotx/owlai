@@ -16,6 +16,8 @@ import re
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 import duckdb
 import pandas as pd
 
@@ -267,3 +269,54 @@ async def async_drop_table(table_name: str) -> bool:
 async def async_table_exists(table_name: str) -> bool:
     """异步包装"""
     return await asyncio.to_thread(table_exists, table_name)
+
+
+async def update_table_metadata(
+    table_name: str,
+    db: AsyncSession | None = None,
+    **kwargs: Any,
+) -> bool:
+    """
+    更新 DuckDBTable 元数据字段。
+
+    可更新字段: display_name, description, row_count, table_schema_json,
+    source_type, source_config, pipeline_id, data_updated_at,
+    latest_data_date, query_transform_code, status
+
+    Args:
+        table_name: DuckDB 表名
+        db: 异步会话（如果为 None，会自动创建）
+        **kwargs: 要更新的字段
+
+    Returns:
+        是否成功找到并更新
+    """
+    from app.models import DuckDBTable
+    from sqlalchemy import select as sa_select
+
+    async def _do_update(session: AsyncSession) -> bool:
+        result = await session.execute(
+            sa_select(DuckDBTable).where(DuckDBTable.table_name == table_name)
+        )
+        table = result.scalar_one_or_none()
+        if table is None:
+            return False
+
+        allowed_fields = {
+            "display_name", "description", "row_count", "table_schema_json",
+            "source_type", "source_config", "pipeline_id", "data_updated_at",
+            "latest_data_date", "status",
+        }
+        for key, value in kwargs.items():
+            if key in allowed_fields:
+                setattr(table, key, value)
+
+        await session.commit()
+        return True
+
+    if db is not None:
+        return await _do_update(db)
+    else:
+        from app.database import async_session
+        async with async_session() as session:
+            return await _do_update(session)

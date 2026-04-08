@@ -299,6 +299,7 @@ class DataPipelineCreate(BaseModel):
     upsert_key: str | None = None
     output_schema: str | None = None
     is_auto: bool = False
+    freshness_policy: str = Field(default='{"type": "none"}')
 
 
 class DataPipelineResponse(BaseModel):
@@ -315,6 +316,7 @@ class DataPipelineResponse(BaseModel):
     upsert_key: str | None
     output_schema: str | None
     is_auto: bool
+    freshness_policy_json: str
     status: str
     last_run_at: datetime | None
     last_run_status: str | None

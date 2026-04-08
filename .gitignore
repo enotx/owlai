@@ -27,6 +27,7 @@ python_env/
 .DS_Store
 
 # Misc
+temp/
 scripts/activation_code_demo.txt
 .VSCodeCounter/
 .vscode/

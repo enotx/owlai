@@ -26,10 +26,12 @@ class Base(DeclarativeBase):
 
 # ===== Schema Migration (in-app) =====
 # 使用 SQLite PRAGMA user_version 记录 schema 版本，避免外部迁移脚本依赖
-LATEST_SCHEMA_VERSION = 5
+LATEST_SCHEMA_VERSION = 6
 # v2: multi-agent (tasks.mode/plan_confirmed/current_subtask_id + subtasks + steps.subtask_id)
 # v3: visualization (visualizations table)
 # v4: skill reference_markdown (lazy-loaded reference doc)
+# v5: duckdb_tables + data_pipelines
+# v6: data_pipelines.freshness_policy_json + duckdb_tables.query_transform_code
 
 
 async def _get_user_version(conn) -> int:
@@ -233,7 +235,20 @@ async def upgrade_db_schema() -> dict:
                 await _set_user_version(conn, 5)
                 applied.append("set user_version=5")
                 current = 5
-                
+
+            # ── v6 migration: freshness_policy + query_transform_code ──
+            if current < 6:
+                # data_pipelines 补 freshness_policy_json
+                dp_cols = await _get_table_columns(conn, "data_pipelines")
+                if "freshness_policy_json" not in dp_cols:
+                    await conn.execute(text(
+                        '''ALTER TABLE data_pipelines ADD COLUMN freshness_policy_json TEXT NOT NULL DEFAULT '{"max_staleness_hours": 24}' '''
+                    ))
+                    applied.append("ALTER TABLE data_pipelines ADD COLUMN freshness_policy_json")
+
+                await _set_user_version(conn, 6)
+                applied.append("set user_version=6")
+                current = 6
             return {
                 "success": True,
                 "from_version": from_version,

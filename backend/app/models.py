@@ -219,6 +219,11 @@ class DataPipeline(Base):
     # 执行特性
     is_auto: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
+    # 新鲜度策略（默认 24h）
+    freshness_policy_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default='{"max_staleness_hours": 24}'
+    )
+
     # 状态
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
     # "draft" | "active" | "paused" | "error"

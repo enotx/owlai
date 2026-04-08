@@ -6,6 +6,7 @@ DuckDB 仓库 & Data Pipeline REST API。
 提供：
 - DuckDB 表的列表/预览/删除/添加到上下文
 - Data Pipeline 的 CRUD 和手动执行
+- 表新鲜度检查与刷新
 """
 
 import json
@@ -162,6 +163,88 @@ async def remove_table_from_context(
     return {"status": "removed"}
 
 
+# ━━━ Table Freshness & Refresh ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@router.get("/tables/{table_id}/freshness")
+async def check_table_freshness_endpoint(
+    table_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """检查指定表的数据新鲜度"""
+    from app.services.freshness import check_table_freshness
+
+    result = await db.execute(select(DuckDBTable).where(DuckDBTable.id == table_id))
+    table_meta = result.scalar_one_or_none()
+    if not table_meta:
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    freshness = await check_table_freshness(table_meta.table_name, db)
+    return {
+        "table_name": table_meta.table_name,
+        "is_fresh": freshness.is_fresh,
+        "reason": freshness.reason,
+        "staleness_hours": freshness.staleness_hours,
+        "max_staleness_hours": freshness.max_staleness_hours,
+        "latest_data_date": freshness.latest_data_date,
+        "can_refresh": freshness.can_refresh,
+    }
+
+
+@router.post("/tables/{table_id}/refresh")
+async def refresh_table_endpoint(
+    table_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """手动触发表数据刷新（执行关联的 Pipeline）"""
+    from app.services.pipeline_executor import execute_pipeline
+
+    result = await db.execute(select(DuckDBTable).where(DuckDBTable.id == table_id))
+    table_meta = result.scalar_one_or_none()
+    if not table_meta:
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    if not table_meta.pipeline_id:
+        raise HTTPException(status_code=400, detail="Table has no associated pipeline")
+
+    p_result = await db.execute(
+        select(DataPipeline).where(DataPipeline.id == table_meta.pipeline_id)
+    )
+    pipeline = p_result.scalar_one_or_none()
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Associated pipeline not found")
+
+    exec_result = await execute_pipeline(pipeline, table_meta, db)
+
+    return {
+        "success": exec_result.success,
+        "message": exec_result.message,
+        "rows_written": exec_result.rows_written,
+        "total_rows": exec_result.total_rows,
+        "latest_data_date": exec_result.latest_data_date,
+        "execution_time": exec_result.execution_time,
+        "error": exec_result.error,
+    }
+
+
+@router.get("/tables/stale")
+async def list_stale_tables(db: AsyncSession = Depends(get_db)):
+    """列出所有过期的 auto-refresh 表"""
+    from app.services.freshness import check_stale_tables
+
+    stale = await check_stale_tables(db)
+    return {
+        table_name: {
+            "is_fresh": fr.is_fresh,
+            "reason": fr.reason,
+            "staleness_hours": fr.staleness_hours,
+            "max_staleness_hours": fr.max_staleness_hours,
+            "latest_data_date": fr.latest_data_date,
+        }
+        for table_name, fr in stale.items()
+    }
+
+
+
 # ━━━ Data Pipelines ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @router.get("/pipelines", response_model=list[DataPipelineResponse])
@@ -188,6 +271,7 @@ async def create_pipeline(body: DataPipelineCreate, db: AsyncSession = Depends(g
         upsert_key=body.upsert_key,
         output_schema=body.output_schema,
         is_auto=body.is_auto,
+        freshness_policy_json=body.freshness_policy,
         status="active",
     )
     db.add(pipeline)
@@ -215,3 +299,50 @@ async def delete_pipeline(pipeline_id: str, db: AsyncSession = Depends(get_db)):
     await db.delete(pipeline)
     await db.commit()
     return {"status": "deleted"}
+
+
+@router.post("/pipelines/{pipeline_id}/execute")
+async def execute_pipeline_endpoint(
+    pipeline_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """手动执行指定 Pipeline"""
+    from app.services.pipeline_executor import execute_pipeline
+
+    p_result = await db.execute(
+        select(DataPipeline).where(DataPipeline.id == pipeline_id)
+    )
+    pipeline = p_result.scalar_one_or_none()
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    # 查找目标表，不存在则创建元数据占位
+    t_result = await db.execute(
+        select(DuckDBTable).where(DuckDBTable.table_name == pipeline.target_table_name)
+    )
+    table_meta = t_result.scalar_one_or_none()
+
+    if not table_meta:
+        table_meta = DuckDBTable(
+            table_name=pipeline.target_table_name,
+            display_name=pipeline.name,
+            description=pipeline.description,
+            source_type=pipeline.source_type,
+            pipeline_id=pipeline.id,
+            status="refreshing",
+        )
+        db.add(table_meta)
+        await db.commit()
+        await db.refresh(table_meta)
+
+    exec_result = await execute_pipeline(pipeline, table_meta, db)
+
+    return {
+        "success": exec_result.success,
+        "message": exec_result.message,
+        "rows_written": exec_result.rows_written,
+        "total_rows": exec_result.total_rows,
+        "latest_data_date": exec_result.latest_data_date,
+        "execution_time": exec_result.execution_time,
+        "error": exec_result.error,
+    }
