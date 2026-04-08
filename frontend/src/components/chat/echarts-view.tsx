@@ -22,10 +22,101 @@ function getChartTitle(option: EChartsOption): string {
   return "chart";
 }
 
-// ─── 布局修正（保留标题，legend/toolbox 移到底部） ───
+// ─── 布局修正（仅对单 grid 简单图表生效，多 grid 复杂图表保持原样） ───
 function normalizeOption(rawOption: EChartsOption): EChartsOption {
   const option = structuredClone(rawOption) as Record<string, unknown>;
 
+  const isMultiGrid =
+    Array.isArray(option.grid) && (option.grid as unknown[]).length > 1;
+
+  // ══════════════════════════════════════════════════════
+  // 多 Grid 布局（K线+MACD+RSI 等多面板图表）
+  // 只调整 title / legend 位置，保留 grid/axis 原始布局
+  // ══════════════════════════════════════════════════════
+  if (isMultiGrid) {
+    // ── 标题：主标题固定顶部居中 ──
+    if (Array.isArray(option.title)) {
+      const titles = option.title as Record<string, unknown>[];
+      if (titles.length > 0) {
+        titles[0] = { ...titles[0], top: 4, left: "center" };
+      }
+    } else if (option.title && typeof option.title === "object") {
+      option.title = {
+        ...(option.title as Record<string, unknown>),
+        top: 4,
+        left: "center",
+      };
+    }
+    // ── 压缩 grid 布局，为底部腾出空间 ──
+    const grids = option.grid as Record<string, unknown>[];
+    const BOTTOM_RESERVE = 25; // 底部保留 20% 给 x轴标签 + legend
+    const parsed = grids.map((g) => ({
+      top: parseFloat(String(g.top ?? "0").replace("%", "")),
+      height: parseFloat(String(g.height ?? "0").replace("%", "")),
+    }));
+    const startOffset = parsed[0]?.top || 8;
+    const maxBottom = Math.max(
+      ...parsed.map((p) => p.top + p.height)
+    );
+    const usedSpace = maxBottom - startOffset;
+    const targetSpace = 100 - BOTTOM_RESERVE - startOffset;
+    if (usedSpace > 0 && targetSpace < usedSpace) {
+      const scale = targetSpace / usedSpace;
+      option.grid = grids.map((g, i) => ({
+        ...g,
+        top: `${(startOffset + (parsed[i].top - startOffset) * scale).toFixed(1)}%`,
+        height: `${(parsed[i].height * scale).toFixed(1)}%`,
+      }));
+      // 同步压缩子面板标题位置（title 数组中 index ≥ 1 的条目）
+      if (Array.isArray(option.title)) {
+        const titles = option.title as Record<string, unknown>[];
+        for (let i = 1; i < titles.length; i++) {
+          const t = titles[i];
+          if (t && typeof t === "object" && t.top != null) {
+            const oldTop = parseFloat(
+              String(t.top).replace("%", "")
+            );
+            if (!isNaN(oldTop) && oldTop >= startOffset) {
+              const newTop =
+                startOffset + (oldTop - startOffset) * scale;
+              titles[i] = { ...t, top: `${newTop.toFixed(1)}%` };
+            }
+          }
+        }
+      }
+    }
+    // ── legend 移到底部 ──
+    if (option.legend) {
+      const patchLegend = (leg: Record<string, unknown>) => {
+        const patched = {
+          ...leg,
+          bottom: 0,
+          left: "center",
+          orient: leg.orient || "horizontal",
+          type: "scroll" as const, // 图例过多时可滚动
+          textStyle: { fontSize: 11, ...(typeof leg.textStyle === "object" ? leg.textStyle : {}) },
+        };
+        delete patched.top;
+        return patched;
+      };
+      if (Array.isArray(option.legend)) {
+        option.legend = (
+          option.legend as Record<string, unknown>[]
+        ).map((item) =>
+          item && typeof item === "object" ? patchLegend(item) : item
+        );
+      } else if (typeof option.legend === "object") {
+        option.legend = patchLegend(
+          option.legend as Record<string, unknown>
+        );
+      }
+    }
+    return option;
+  }
+
+  // ══════════════════════════════════════════════════════
+  // 单 Grid 布局（普通柱状图/折线图/饼图等）
+  // ══════════════════════════════════════════════════════
   if (
     option.title &&
     typeof option.title === "object" &&
@@ -47,7 +138,7 @@ function normalizeOption(rawOption: EChartsOption): EChartsOption {
       right: 20,
       containLabel: true,
     };
-  } else {
+  } else if (!option.grid) {
     option.grid = {
       top: 80,
       bottom: 40,
@@ -104,25 +195,37 @@ function generateStandaloneHTML(
   option: EChartsOption,
   title: string
 ): string {
-  // 对独立页面做轻量布局调整（不需要和嵌入式一样激进）
   const htmlOption = structuredClone(option) as Record<string, unknown>;
 
-  // 独立页面自适应，移除硬编码宽高
-  if (
-    htmlOption.grid &&
-    typeof htmlOption.grid === "object" &&
-    !Array.isArray(htmlOption.grid)
-  ) {
-    htmlOption.grid = {
-      ...htmlOption.grid,
-      top: 80,
-      bottom: 40,
-      left: 20,
-      right: 20,
-      containLabel: true,
-    };
+  // 多 grid 图表不覆盖布局
+  const isMultiGrid =
+    Array.isArray(htmlOption.grid) &&
+    (htmlOption.grid as unknown[]).length > 1;
+  if (!isMultiGrid) {
+    // 仅单 grid 时调整布局
+    if (
+      htmlOption.grid &&
+      typeof htmlOption.grid === "object" &&
+      !Array.isArray(htmlOption.grid)
+    ) {
+      htmlOption.grid = {
+        ...htmlOption.grid,
+        top: 80,
+        bottom: 40,
+        left: 20,
+        right: 20,
+        containLabel: true,
+      };
+    }
+  } else {
+    // 多 grid：将 legend 移到底部（与 normalizeOption 同逻辑）
+    if (htmlOption.legend && typeof htmlOption.legend === "object" && !Array.isArray(htmlOption.legend)) {
+      const leg = htmlOption.legend as Record<string, unknown>;
+      const patched: Record<string, unknown> = { ...leg, bottom: 0, left: "center" };
+      delete patched.top;
+      htmlOption.legend = patched;
+    }
   }
-
   const optionJSON = JSON.stringify(htmlOption, null, 2);
 
   return `<!DOCTYPE html>
@@ -135,7 +238,7 @@ function generateStandaloneHTML(
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; background: #fff; }
-    #chart { width: 100%; height: 100%; min-height: 480px; }
+    #chart { width: 100%; height: 100%; min-height: 580px; }
   </style>
 </head>
 <body>
@@ -180,6 +283,20 @@ export default function EChartsView({
 }) {
   const divRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<unknown>(null);
+
+  // 多面板图表自动增大高度，确保每个面板有足够空间
+  const effectiveHeight = React.useMemo(() => {
+    if (
+      Array.isArray(option.grid) &&
+      (option.grid as unknown[]).length > 1
+    ) {
+      const gridCount = (option.grid as unknown[]).length;
+      // 每面板 200px + 底部 80px 给标签和 legend
+      return Math.max(height, gridCount * 200 + 80, 600);
+    }
+    return height;
+  }, [option, height]);
+
 
   useEffect(() => {
     let disposed = false;
