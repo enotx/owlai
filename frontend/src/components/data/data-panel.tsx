@@ -24,8 +24,8 @@ import { previewKnowledge } from "@/lib/api";
 export default function DataPanel() {
   const { currentTaskId, previewData, previewColumns, previewSource, setPreviewData } = useTaskStore();
   const [selectedSheet, setSelectedSheet] = useState<string | null>(null);
-  type DataPanelTab = "data" | "sources" | "skills";
-  const [activeTab, setActiveTab] = useState<DataPanelTab>("data");
+  const activeTab = useTaskStore((s) => s.activeDataTab);
+  const setActiveTab = useTaskStore((s) => s.setActiveDataTab);
 
   const hasData = previewColumns.length > 0 && previewData && previewData.length > 0;
   const isTextPreview = previewSource?.fileType === "text" && previewSource?.textContent;
@@ -112,24 +112,25 @@ export default function DataPanel() {
     </div>
 
 
-    {/* Data source label + row count (below tabs) */}
-    {(hasData || isTextPreview) && previewSource && (
-      <div className="flex items-center gap-2 border-b px-5 py-2">
-        <span className="text-xs font-medium">
-          {previewSource.type === "step"
-            ? `⚡ ${previewSource.dfName}`
-            : `📁 ${previewSource.name}`}
-        </span>
-        {hasData && (
-          <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-            {previewData.length} rows
-          </span>
-        )}
-      </div>
-    )}
       {/* Tab content */}
       {activeTab === "data" && (
         <>
+          {/* Data source label + row count (only on Data Preview tab) */}
+          {(hasData || isTextPreview) && previewSource && (
+            <div className="flex items-center gap-2 border-b px-5 py-2">
+              <span className="text-xs font-medium">
+                {previewSource.type === "step"
+                  ? `⚡ ${previewSource.dfName}`
+                  : `📁 ${previewSource.name}`}
+              </span>
+              {hasData && (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                  {previewData.length} rows
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Excel Sheet switcher */}
           {previewSource?.fileType === "excel" && previewSource?.availableSheets && (
             <div className="flex items-center gap-2 border-b px-4 py-2 bg-muted/30">

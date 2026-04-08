@@ -199,6 +199,10 @@ interface TaskStore {
   ) => void;
   /** 加载某个 Step 中捕获的 DataFrame 到数据面板 */
   loadStepDataframe: (stepId: string, dfName: string) => Promise<void>;
+  // 右侧 Data Panel 当前 Tab
+  activeDataTab: "data" | "sources" | "skills";
+  setActiveDataTab: (tab: "data" | "sources" | "skills") => void;
+
 
   // 加载状态
   isSending: boolean;
@@ -337,7 +341,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   previewColumns: [],
   previewSource: null,
   setPreviewData: (data, columns = [], source = null) =>
-    set({ previewData: data, previewColumns: columns, previewSource: source }),
+    set({ previewData: data, previewColumns: columns, previewSource: source, activeDataTab: "data" }),
   loadStepDataframe: async (stepId, dfName) => {
     try {
       const { fetchStepDataframe } = await import("@/lib/api");
@@ -347,6 +351,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
         previewData: rows,
         previewColumns: columns,
         previewSource: { type: "step", stepId, dfName },
+        activeDataTab: "data",
       });
     } catch (err) {
       console.error("Failed to load step dataframe:", err);
@@ -388,5 +393,10 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   // HITL
   pendingHITL: null,
   setPendingHITL: (hitl) => set({ pendingHITL: hitl }),
+
+  // Data Panel Tab
+  activeDataTab: "data",
+  setActiveDataTab: (tab) => set({ activeDataTab: tab }),
+
 
 }));

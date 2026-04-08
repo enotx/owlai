@@ -132,6 +132,59 @@ export default function KnowledgeZone() {
 
   const handlePreview = async (k: (typeof knowledgeList)[0]) => {
     try {
+      // ── DuckDB table knowledge: use warehouse preview API ──
+      if (k.type === "duckdb_table" || k.type === "data_source") {
+        let tableId: string | null = null;
+        let meta: Record<string, unknown> | null = null;
+        if (k.metadata_json) {
+          try {
+            meta = JSON.parse(k.metadata_json);
+            tableId = (meta?.duckdb_table_id as string) ?? null;
+          } catch { /* ignore */ }
+        }
+
+        if (tableId) {
+          const { previewDuckDBTable } = await import("@/lib/api");
+          try {
+            const res = await previewDuckDBTable(tableId);
+            setPreviewData(res.data.rows, res.data.columns, {
+              type: "knowledge",
+              name: (meta?.display_name as string) || k.name,
+              fileType: "excel",
+            });
+            return;
+          } catch {
+            // DuckDB preview failed — fall through to metadata display
+          }
+        }
+
+        // Fallback: render metadata as text preview
+        if (meta) {
+          const schema = (meta.schema as Array<{ name: string; type: string }>) || [];
+          const lines = [
+            `# Data Source: ${(meta.display_name as string) || k.name}`,
+            meta.description ? `\n${meta.description}` : "",
+            `\n**Table:** \`${(meta.table_name as string) || k.name}\``,
+            `**Rows:** ${((meta.row_count as number) ?? 0).toLocaleString()}`,
+            `**Source:** ${(meta.source_type as string) || "unknown"}`,
+            meta.data_updated_at ? `**Updated:** ${meta.data_updated_at}` : "",
+            schema.length ? "\n## Schema" : "",
+            ...schema.map((c) => `- \`${c.name}\` — ${c.type}`),
+          ]
+            .filter(Boolean)
+            .join("\n");
+
+          setPreviewData([], [], {
+            type: "knowledge",
+            name: k.name,
+            fileType: "text",
+            textContent: lines,
+          });
+        }
+        return;
+      }
+
+      // ── File-based knowledge (csv / excel / text) ──
       const { previewKnowledge } = await import("@/lib/api");
       const res = await previewKnowledge(k.id);
       const data = res.data;
@@ -155,12 +208,12 @@ export default function KnowledgeZone() {
   const getFileIcon = (type: string) => {
     if (type === "csv") return <FileSpreadsheet className="h-5 w-5 text-green-600" />;
     if (type === "excel") return <Sheet className="h-5 w-5 text-blue-600" />;
-    if (type === "data_source") return <Database className="h-5 w-5 text-emerald-600" />;
+    if (type === "data_source" || type === "duckdb_table") return <Database className="h-5 w-5 text-emerald-600" />;
     return <FileText className="h-5 w-5 text-gray-500" />;
   };
 
   const getFileMeta = (k: (typeof knowledgeList)[0]) => {
-    if (k.type === "data_source") return "Data Source";
+    if (k.type === "data_source" || k.type === "duckdb_table") return "Data Source";
     const ext = k.name.slice(k.name.lastIndexOf(".")).toLowerCase();
     if (ext === ".csv") return "CSV Data";
     if (ext === ".xlsx" || ext === ".xls") return "Excel Sheet";
