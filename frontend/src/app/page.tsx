@@ -24,6 +24,8 @@ import {
   BarChart3,
   HelpCircle,
   TableProperties,
+  Menu,
+  X,
 } from "lucide-react";
 import { useBackend } from "@/contexts/backend-context";
 import { useDatabase } from "@/contexts/database-context";
@@ -114,7 +116,7 @@ function EdgeChevron({
       onClick={onClick}
       className={cn(
         "absolute top-1/2 -translate-y-1/2 z-20",
-        "flex h-8 w-4 items-center justify-center",
+        "hidden md:flex h-8 w-4 items-center justify-center",
         "bg-card border shadow-sm transition-colors hover:bg-accent",
         // Positioning: on the edge between panels
         side === "left" ? "-right-4 rounded-r-md border-l-0" : "-left-4 rounded-l-md border-r-0"
@@ -206,6 +208,20 @@ function CollapsedSidebar({
 }
 
 /* ══════════════════════════════════════════
+   Mobile header title (reads from store reactively)
+   ══════════════════════════════════════════ */
+function MobileTitle() {
+  const currentTaskId = useTaskStore((s) => s.currentTaskId);
+  const tasks = useTaskStore((s) => s.tasks);
+  const currentTitle = tasks.find((t) => t.id === currentTaskId)?.title;
+  return (
+    <h1 className="text-sm font-semibold truncate">
+      {currentTitle || "Owl.ai"}
+    </h1>
+  );
+}
+
+/* ══════════════════════════════════════════
    Main page
    ══════════════════════════════════════════ */
 export default function HomePage() {
@@ -222,6 +238,25 @@ export default function HomePage() {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [isDragging, setIsDragging] = useState<"left" | "right" | null>(null);
+
+  /* ── Mobile responsive state ── */
+  const [isMobile, setIsMobile] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isMobileDataPanelOpen, setIsMobileDataPanelOpen] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => {
+      setIsMobile(e.matches);
+      if (!e.matches) {
+        // 切回桌面时自动关闭 mobile overlay
+        setIsMobileSidebarOpen(false);
+        setIsMobileDataPanelOpen(false);
+      }
+    };
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
 
   const stateRef = useRef({ leftWidth, rightWidth, leftCollapsed, rightCollapsed });
   useEffect(() => {
@@ -351,9 +386,27 @@ export default function HomePage() {
       {/* Drag overlay */}
       {isDragging && <div className="fixed inset-0 z-50 cursor-col-resize" />}
 
+      {/* ═══ Mobile Overlay Backdrop ═══ */}
+      {isMobile && (isMobileSidebarOpen || isMobileDataPanelOpen) && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 md:hidden"
+          onClick={() => {
+            setIsMobileSidebarOpen(false);
+            setIsMobileDataPanelOpen(false);
+          }}
+        />
+      )}
+
       {/* ═══ Left Sidebar ═══ */}
       <aside
-        className="relative shrink-0 transition-[width] duration-200 ease-out"
+        className={cn(
+          "relative shrink-0",
+          // Mobile: fixed overlay from left
+          "fixed inset-y-0 left-0 z-50 transition-transform duration-300 ease-in-out",
+          isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full",
+          // Desktop: relative, restore position
+          "md:relative md:z-auto md:translate-x-0 md:transition-[width] md:duration-200 md:ease-out"
+        )}
         style={{ width: effectiveLeft }}
       >
         {/* overflow-hidden 放在内容容器上，不裁剪 chevron */}
@@ -372,14 +425,38 @@ export default function HomePage() {
 
 
       {/* ═══ Left Resize Handle (only when expanded) ═══ */}
-      {!leftCollapsed && <ResizeHandle onDragStart={handleDragStart("left")} />}
+      {!leftCollapsed && (
+        <div className="hidden md:flex">
+          <ResizeHandle onDragStart={handleDragStart("left")} />
+        </div>
+      )}
 
       {/* ═══ Center + Right ═══ */}
       <div className="flex flex-1 flex-col overflow-hidden min-w-0">
+        {/* ─── Mobile Header ─── */}
+        <header
+          className="flex md:hidden h-12 shrink-0 items-center gap-2 px-3 border-b bg-background"
+        >
+          <button
+            onClick={() => setIsMobileSidebarOpen(true)}
+            className="p-2 rounded-lg hover:bg-muted transition-colors"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <div className="flex-1 min-w-0 text-center">
+            <MobileTitle />
+          </div>
+          <button
+            onClick={() => setIsMobileDataPanelOpen(true)}
+            className="p-2 rounded-lg hover:bg-muted transition-colors"
+          >
+            <TableProperties className="h-5 w-5" />
+          </button>
+        </header>
 
         {/* ─── Top Bar ─── */}
         <header
-          className="flex h-14 shrink-0 items-center justify-between px-6"
+          className="hidden md:flex flex h-14 shrink-0 items-center justify-between px-6"
           style={{
             background: "var(--owl-topbar-bg)",
             borderBottom: "1px solid var(--owl-topbar-border)",
@@ -497,12 +574,27 @@ export default function HomePage() {
           </main>
 
           {/* Right Resize Handle (only when expanded) */}
-          {!rightCollapsed && <ResizeHandle onDragStart={handleDragStart("right")} />}
+          {!rightCollapsed && (
+            <div className="hidden md:flex">
+              <ResizeHandle onDragStart={handleDragStart("right")} />
+            </div>
+          )}
 
           {/* Right Data Panel */}
           <aside
-            className="relative shrink-0 transition-[width] duration-200 ease-out"
-            style={{ width: effectiveRight }}
+            className={cn(
+              "relative shrink-0",
+              // Mobile: fixed bottom sheet
+              "fixed inset-x-0 bottom-0 z-50 rounded-t-2xl shadow-2xl transition-transform duration-300 ease-in-out",
+              isMobileDataPanelOpen ? "translate-y-0" : "translate-y-full",
+              // Desktop: relative sidebar
+              "md:relative md:z-auto md:inset-auto md:rounded-none md:shadow-none md:translate-y-0 md:transition-[width] md:duration-200 md:ease-out"
+            )}
+            style={
+              isMobile
+                ? { height: "75vh", width: "100%" }
+                : { width: effectiveRight }
+            }
           >
             <div className="h-full w-full overflow-hidden">
               {!rightCollapsed && <DataPanel />}

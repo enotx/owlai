@@ -18,10 +18,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { DatabaseZap, MousePointerClick, FileText } from "lucide-react";
+import { DatabaseZap, MousePointerClick, FileText, X, } from "lucide-react";
 import { previewKnowledge } from "@/lib/api";
 
-export default function DataPanel() {
+export default function DataPanel({ onClose }: { onClose?: () => void } = {}) {
   const { currentTaskId, previewData, previewColumns, previewSource, setPreviewData } = useTaskStore();
   const [selectedSheet, setSelectedSheet] = useState<string | null>(null);
   const activeTab = useTaskStore((s) => s.activeDataTab);
@@ -65,7 +65,22 @@ export default function DataPanel() {
   };
 
   return (
-    <div className="flex h-full flex-col border-l">
+    <div className="flex h-full flex-col border-l bg-background">
+      {/* ── Mobile drag handle + close ── */}
+      {onClose && (
+        <div className="md:hidden flex items-center justify-between px-4 py-2 border-b">
+          <div className="flex-1" />
+          <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
+          <div className="flex-1 flex justify-end">
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg hover:bg-muted transition-colors"
+            >
+              <X className="h-4 w-4 text-muted-foreground" />
+            </button>
+          </div>
+        </div>
+      )}
     {/* 标题栏 */}
     <div className="flex items-center border-b">
       {/* Tabs */}

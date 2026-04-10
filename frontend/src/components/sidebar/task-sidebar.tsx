@@ -26,12 +26,13 @@ import {
   HelpCircle,
   BarChart3,
   Clock,
+  X, 
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type FilterTab = "all" | "ad-hoc" | "routine";
 
-export default function TaskSidebar() {
+export default function TaskSidebar({ onClose }: { onClose?: () => void } = {}) {
   const {
     tasks,
     currentTaskId,
@@ -223,14 +224,17 @@ export default function TaskSidebar() {
       {/* ─── Brand ─── */}
       <div className="px-5 pt-5 pb-4">
         <div className="flex items-center gap-2.5">
-          {/* Logo circle */}
-          {/* <div
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
-            style={{ background: "var(--owl-btn-primary-bg)" }}
-          > */}
-            {/* <span className="text-base" style={{ color: "var(--owl-btn-primary-fg)" }}>🦉</span> */}
-          {/* </div> */}
-          <div className="min-w-0">
+          {/* Mobile close button */}
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="md:hidden flex h-8 w-8 items-center justify-center rounded-lg hover:opacity-80 transition-opacity"
+              style={{ color: "var(--owl-sidebar-muted)" }}
+            >
+              <X className="h-5 w-5" />
+            </button>
+          )}
+          <div className="min-w-0 flex-1">
             <div className="text-sm font-bold tracking-tight" style={{ color: "var(--owl-brand-fg)" }}>
               owl.ai
             </div>

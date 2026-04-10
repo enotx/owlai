@@ -338,3 +338,33 @@
 .markdown-body .katex {
   font-size: 1em;
 }
+
+
+/* Mobile optimizations */
+@media (max-width: 768px) {
+  /* Prevent horizontal scroll */
+  body {
+    overflow-x: hidden;
+  }
+  /* Optimize touch targets */
+  button, a {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  /* Adjust font sizes for mobile */
+  .text-xs {
+    font-size: 0.8125rem;
+  }
+}
+/* Bottom sheet animation */
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out;
+}

@@ -32,12 +32,14 @@ import {
   Clock,
   Database,
   ChevronDown,
+  ChevronUp,
   ChevronRight,
   Trash2,
   RotateCcw,
   Download,
   FileText,
   FileCode2,
+  FolderOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CapturedDataFrame } from "@/stores/use-task-store";
@@ -49,7 +51,7 @@ import type { SSEEvent } from "@/lib/api";
 function UserBubble({ step }: { step: Step }) {
   return (
     <div className="flex gap-3 justify-end">
-      <div className="max-w-[80%] rounded-lg bg-primary px-3.5 py-2.5 text-sm leading-relaxed text-primary-foreground">
+      <div className="max-w-[90%] md:max-w-[80%] rounded-lg bg-primary px-3.5 py-2.5 text-sm leading-relaxed text-primary-foreground">
         <p className="whitespace-pre-wrap">{step.content}</p>
       </div>
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary">
@@ -66,7 +68,7 @@ function UserBubble({ step }: { step: Step }) {
        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
          <Bot className="h-4 w-4" />
        </div>
-       <div className="max-w-[80%] rounded-lg bg-muted px-3.5 py-2.5 text-sm leading-relaxed">
+        <div className="max-w-[90%] md:max-w-[80%] rounded-lg bg-muted px-3.5 py-2.5 text-sm leading-relaxed">
         <MarkdownRenderer content={content} />
        </div>
      </div>
@@ -297,7 +299,7 @@ function HITLBlock({
        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
          <Bot className="h-4 w-4" />
        </div>
-       <div className="max-w-[80%] rounded-lg bg-muted px-3.5 py-2.5 text-sm leading-relaxed">
+        <div className="max-w-[90%] md:max-w-[80%] rounded-lg bg-muted px-3.5 py-2.5 text-sm leading-relaxed">
         <div>
           <MarkdownRenderer content={message.content} />
           <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-foreground/60 align-text-bottom" />
@@ -629,6 +631,8 @@ export default function ChatArea() {
     selectedModel,
   } = useTaskStore();
   const pendingTool = getCurrentPendingTool();
+  // 新增：移动端 Knowledge Zone 折叠状态
+  const [isKnowledgeExpanded, setIsKnowledgeExpanded] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   /** 滚动容器引用（ScrollArea 内部的 viewport） */
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -837,10 +841,35 @@ export default function ChatArea() {
       <div className="shrink-0 border-b px-4 py-3">
         {currentTaskId ? (
           <>
-            <KnowledgeZone />
-            {/* SubTask列表 */}
-            <div className="mt-3">
-              <SubTaskList />
+            {/* ── Mobile: collapsible summary bar ── */}
+            <div className="md:hidden">
+              <button
+                onClick={() => setIsKnowledgeExpanded((v) => !v)}
+                className="w-full flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/50 transition-colors"
+              >
+                <span className="flex items-center gap-1.5">
+                  <FolderOpen className="h-3.5 w-3.5" />
+                  Active Context
+                </span>
+                {isKnowledgeExpanded ? (
+                  <ChevronUp className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5" />
+                )}
+              </button>
+              {isKnowledgeExpanded && (
+                <div className="mt-2 space-y-3">
+                  <KnowledgeZone />
+                  <SubTaskList />
+                </div>
+              )}
+            </div>
+            {/* ── Desktop: always visible ── */}
+            <div className="hidden md:block">
+              <KnowledgeZone />
+              <div className="mt-3">
+                <SubTaskList />
+              </div>
             </div>
           </>
         ) : (
@@ -961,7 +990,7 @@ export default function ChatArea() {
 
       {/* 导出按钮行 */}
       {currentTaskId && (
-        <div className="shrink-0 px-4 pt-1">
+        <div className="shrink-0 px-2 md:px-4 pt-1">
           <div className="mx-auto max-w-2xl flex justify-start">
             <ExportDropdown taskId={currentTaskId} hasSteps={steps.length > 0} />
           </div>
