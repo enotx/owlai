@@ -136,8 +136,18 @@ class Skill(Base):
     env_vars_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     allowed_modules_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    slash_command: Mapped[str | None] = mapped_column(String(50), nullable=True, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    handler_type: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, default="standard"
+    )  # "standard" | "custom_handler"
+    handler_config: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # JSON 配置，如 {"handler_name": "derive_pipeline", "max_react_rounds": 3}
+
+
 
 class Visualization(Base):
     """ECharts 可视化配置表"""

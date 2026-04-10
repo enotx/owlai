@@ -11,7 +11,6 @@ from openai.types.chat import ChatCompletionMessageParam
 from app.prompts import build_plan_system_prompt
 from app.tools import get_tools_for_agent
 
-
 class PlanAgent(BaseAgent):
     """Plan模式Agent - 需求澄清和任务分拆"""
     
@@ -31,19 +30,22 @@ class PlanAgent(BaseAgent):
         history = context.get("history_messages", [])
         # 获取Knowledge上下文
         dataset_ctx, text_ctx, var_ref, data_var_map = await self._get_knowledge_context()
-
+        # 获取Skill上下文
+        skill_ctx, skill_envs = await self._get_skill_context()
+        # 获取 DuckDB 仓库上下文
+        warehouse_context = await self._build_warehouse_context()
         conversation_turns = len([m for m in history if m["role"] in ("user", "assistant")])
         include_viz_examples = context.get("include_viz_examples", False)
         system_prompt = build_plan_system_prompt(
             dataset_context=dataset_ctx,
             text_context=text_ctx,
             variable_reference=var_ref,
+            skill_context=skill_ctx,
+            warehouse_context=warehouse_context,
             is_first_turn=(conversation_turns == 0),
             include_viz_examples=include_viz_examples,
         )
 
-
-        
         messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": system_prompt},
             *history,
@@ -73,6 +75,8 @@ class PlanAgent(BaseAgent):
             if hitl_break:
                 break
             try:
+                # print('Plan Agent Messages:', messages)  # 调试输出当前消息列表
+                # print('Plan Agent Tools:', [t for t in plan_tools])  # 调试输出工具列表
                 stream = await self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
@@ -167,7 +171,7 @@ class PlanAgent(BaseAgent):
                                 code=code,
                                 data_var_map=data_var_map,
                                 capture_dir=capture_dir,
-                                skill_envs= None,
+                                skill_envs=skill_envs if skill_envs else None,
                                 persistent_vars=persistent_vars if persistent_vars else None,
                             ):
                                 if isinstance(item, str):
@@ -423,3 +427,4 @@ class PlanAgent(BaseAgent):
                 pass
         
         return None
+    

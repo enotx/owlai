@@ -240,20 +240,3 @@ MATERIALIZE_TO_DUCKDB_TOOL = {
         },
     },
 }
-
-
-LIST_DUCKDB_TABLES_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "list_duckdb_tables",
-        "description": (
-            "List all tables currently in the local DuckDB warehouse. "
-            "Use this to check what data already exists before creating new tables, "
-            "to avoid duplicates or to find tables for querying."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {},
-        },
-    },
-}

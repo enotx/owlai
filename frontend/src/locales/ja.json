@@ -1,0 +1,59 @@
+{
+  "common": {
+    "search": "ワークスペース、アセット、ログを検索...",
+    "connected": "接続済み",
+    "offline": "オフライン",
+    "connecting": "接続中...",
+    "checking": "確認中...",
+    "updateAvailable": "アップデート可能",
+    "upToDate": "最新",
+    "downloading": "ダウンロード中...",
+    "newAction": "新規アクション",
+    "tasks": "タスク",
+    "settings": "設定",
+    "help": "ヘルプ",
+    "expand": "展開",
+    "collapse": "折りたたむ"
+  },
+  "settings": {
+    "title": "設定",
+    "interface": "インターフェース",
+    "providers": "プロバイダー/モデル",
+    "agents": "エージェント",
+    "skills": "スキル",
+    "miscellaneous": "その他",
+    "about": "について",
+    "comingSoon": "近日公開",
+    "categories": {
+      "general": "一般",
+      "llm": "LLM",
+      "extensions": "拡張機能",
+      "other": "その他"
+    }
+  },
+  "interface": {
+    "theme": "テーマ",
+    "themeDescription": "ビジュアルテーマを選択します。レイアウトは同じで、色のみが変わります。",
+    "language": "言語",
+    "languageDescription": "インターフェースの優先言語を選択します。",
+    "themes": {
+      "geek": {
+        "name": "ギーク",
+        "description": "ニュートラルトーンのクリーンなモノクロームインターフェース。オリジナルのOwl体験。"
+      },
+      "modern": {
+        "name": "モダン",
+        "description": "ディープネイビーのサイドバーにブルーのアクセント。洗練されたプロフェッショナルな外観。"
+      },
+      "evaUnit01": {
+        "name": "エヴァ初号機",
+        "description": "ダークタクティカルパープルにネオングリーンのハイライト、EVA初号機にインスパイア。"
+      }
+    },
+    "languages": {
+      "en": "English",
+      "zh-cn": "简体中文",
+      "ja": "日本語"
+    }
+  }
+}

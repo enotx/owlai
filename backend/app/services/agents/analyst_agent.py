@@ -7,6 +7,7 @@ from typing import AsyncGenerator, Any
 import json
 import uuid
 import os
+import re
 from app.services.agents.base import BaseAgent
 from openai.types.chat import ChatCompletionMessageParam
 from app.config import UPLOADS_DIR
@@ -18,6 +19,9 @@ from app.tools import (
     merge_top_level_keys,
 )
 from app.tools.visualization import validate_map_config
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 
@@ -31,6 +35,29 @@ class AnalystAgent(BaseAgent):
         2. 执行数据分析
         3. 记录Step到数据库
         """
+
+        # ── NEW: Custom handler 路由（优先于标准流程） ──
+        handler_type = context.get("invoked_skill_handler_type")
+        if handler_type == "custom_handler":
+            handler_config = context.get("invoked_skill_handler_config", {})
+            handler_name = handler_config.get("handler_name")
+            
+            if handler_name == "derive_pipeline":
+                async for chunk in self._handle_derive_pipeline(context, handler_config):
+                    yield chunk
+                return
+            elif handler_name == "extract_sop":
+                async for chunk in self._handle_extract_sop(context, handler_config):
+                    yield chunk
+                return
+            else:
+                yield self._sse({
+                    "type": "error",
+                    "content": f"Unknown custom handler: {handler_name}",
+                })
+                yield self._sse({"type": "done"})
+                return
+        
         user_message = context.get("user_message", "")
         subtask_id = context.get("subtask_id")
         
@@ -62,6 +89,43 @@ class AnalystAgent(BaseAgent):
 
         # 获取 DuckDB 仓库上下文
         warehouse_context = await self._build_warehouse_context()
+
+        # ── 处理 slash command 显式指定的 skill ──────────────
+        invoked_skill_name = context.get("invoked_skill_name")
+        if invoked_skill_name:
+            invoked_prompt = context.get("invoked_skill_prompt", "")
+            is_active = context.get("invoked_skill_is_active", False)
+            # 构建强调段落 — 让 LLM 明确知道用户想用哪个 skill
+            emphasized_section = (
+                f"## ⚡ User-Invoked Skill: {invoked_skill_name}\n"
+                f"**The user has explicitly requested to use this skill. "
+                f"Prioritize its instructions and capabilities for this task.**\n\n"
+                f"{invoked_prompt}"
+            )
+            if is_active:
+                # skill 已经在 _get_skill_context() 的结果中 → 去重
+                # 从 skill_ctx 中移除该 skill 的普通段落，用强调版替代
+                if skill_ctx and skill_ctx != "[No skills configured.]":
+                    # 按 "---" 分割各 skill 段落，移除匹配的那一段
+                    sections = skill_ctx.split("\n---\n")
+                    filtered = [
+                        s for s in sections
+                        if f"### 🔧 Skill: {invoked_skill_name}" not in s
+                    ]
+                    other_skills = "\n---\n".join(filtered) if filtered else ""
+                    # 强调版在前，其他 active skills 在后
+                    if other_skills and other_skills.strip():
+                        skill_ctx = emphasized_section + "\n---\n" + other_skills
+                    else:
+                        skill_ctx = emphasized_section
+                else:
+                    skill_ctx = emphasized_section
+            else:
+                # skill 是 inactive → 不在 _get_skill_context() 结果中，直接追加
+                if skill_ctx and skill_ctx != "[No skills configured.]":
+                    skill_ctx = emphasized_section + "\n---\n" + skill_ctx
+                else:
+                    skill_ctx = emphasized_section
 
         system_prompt = build_analyst_system_prompt(
             dataset_context=dataset_ctx,
@@ -107,6 +171,8 @@ class AnalystAgent(BaseAgent):
                 break
             try:
                 agent_tools = get_tools_for_agent("analyst")
+                # print('Agent Messages:', messages)  # 调试输出当前消息列表
+                # print('Agent Tools:', [t for t in agent_tools])  # 调试输出工具列表
                 stream = await self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
@@ -192,6 +258,26 @@ class AnalystAgent(BaseAgent):
                         os.makedirs(capture_dir, exist_ok=True)
                         
                         try:
+
+                            # ── 合并 extra_skill_envs（来自 slash command 调用） ──
+                            effective_skill_envs = dict(skill_envs) if skill_envs else {}
+                            extra_envs_from_ctx = context.get("extra_skill_envs")
+                            invoked_is_active = context.get("invoked_skill_is_active", False)
+                            # 仅当 skill 是 inactive 时才需要额外注入 env vars
+                            # （active skill 的 env vars 已经在 _get_skill_context → skill_envs 中）
+                            if extra_envs_from_ctx and not invoked_is_active:
+                                # 特殊处理 __allowed_modules__（需要合并而非覆盖）
+                                if "__allowed_modules__" in extra_envs_from_ctx and "__allowed_modules__" in effective_skill_envs:
+                                    import json as _j
+                                    existing_m = set(_j.loads(effective_skill_envs["__allowed_modules__"]))
+                                    new_m = set(_j.loads(extra_envs_from_ctx["__allowed_modules__"]))
+                                    effective_skill_envs["__allowed_modules__"] = _j.dumps(list(existing_m | new_m))
+                                    # 其他环境变量直接更新
+                                    extra_envs_clean = {k: v for k, v in extra_envs_from_ctx.items() if k != "__allowed_modules__"}
+                                    effective_skill_envs.update(extra_envs_clean)
+                                else:
+                                    effective_skill_envs.update(extra_envs_from_ctx)
+
                             # 使用心跳包装器执行代码
                             exec_result = None
                             async for item in self._execute_code_with_heartbeat(
@@ -608,58 +694,736 @@ class AnalystAgent(BaseAgent):
             )
         return "\n".join(lines)
 
-    async def _build_warehouse_context(self) -> str:
-        """构建 DuckDB 仓库的上下文信息，注入到 system prompt"""
-        from app.models import DuckDBTable
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Custom Handler: Derive Pipeline
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    async def _handle_derive_pipeline(
+        self, context: dict, handler_config: dict
+    ) -> AsyncGenerator[str, None]:
+        """Custom handler for /derive command"""
+        user_instructions = context.get("user_message", "")
+        
+        # Check if this is a confirmation message
+        confirm_match = re.match(r"^\[(Derive|Pipeline)\s+Confirm\]\s*(\{.*\})", user_instructions.strip(), re.DOTALL)
+        if confirm_match:
+            try:
+                config = json.loads(confirm_match.group(2))
+            except json.JSONDecodeError:
+                yield self._sse({"type": "error", "content": "Invalid derive confirmation payload."})
+                yield self._sse({"type": "done"})
+                return
+            
+            if config.get("cancelled"):
+                tbl = config.get("table_name", "")
+                if tbl:
+                    try:
+                        from app.services import warehouse as wh
+                        await wh.async_drop_table(tbl)
+                    except Exception:
+                        pass
+                yield self._sse({"type": "text", "content": "Derive cancelled. No data was saved."})
+                yield self._sse({"type": "done"})
+                return
+            
+            async for chunk in self._register_derive_metadata(config):
+                yield chunk
+            return
+        
+        # ── Main derive flow ──
+        yield self._sse({"type": "text", "content": "🔍 Analyzing task history to extract a data pipeline...\n"})
+
+        code_history = await self._collect_code_history()
+        if not code_history:
+            yield self._sse({
+                "type": "text",
+                "content": (
+                    "⚠️ No successful code executions found in this task. "
+                    "Please run some analysis first, then use `/derive` to save the result."
+                ),
+            })
+            yield self._sse({"type": "done"})
+            return
+
+        knowledge_ctx = await self._gather_knowledge_summary()
+
+        max_react_rounds = handler_config.get("max_react_rounds", 3)
+        last_error: str | None = None
+        derive_result: dict | None = None
+        final_code: str | None = None
+        pipeline_proposal: dict | None = None
+
+        for attempt in range(max_react_rounds):
+            round_label = f"(attempt {attempt + 1}/{max_react_rounds})"
+
+            if attempt == 0:
+                yield self._sse({"type": "text", "content": f"📝 Generating pipeline code {round_label}...\n"})
+            else:
+                yield self._sse({
+                    "type": "text",
+                    "content": (
+                        f"🔄 Previous attempt failed. Retrying {round_label}...\n"
+                        f"Error was: `{last_error[:200] if last_error else 'unknown'}`\n"
+                    ),
+                })
+
+            pipeline_proposal = None
+            async for item in self._extract_pipeline_with_llm_heartbeat(
+                code_history, user_instructions, knowledge_ctx, context, last_error
+            ):
+                if isinstance(item, str):
+                    yield item  # 心跳转发
+                else:
+                    pipeline_proposal = item
+            if pipeline_proposal is None:
+                yield self._sse({
+                    "type": "text",
+                    "content": "⚠️ Failed to extract a pipeline from the task history."
+                })
+                yield self._sse({"type": "done"})
+                return
+
+            transform_code = pipeline_proposal.get("transform_code", "")
+            final_code = transform_code
+
+            yield self._sse({
+                "type": "tool_start",
+                "code": transform_code,
+                "purpose": f"Pipeline execution {round_label}",
+            })
+
+            exec_result = None
+            async for item in self._execute_derive_code_with_heartbeat(transform_code):
+                if isinstance(item, str):
+                    yield item  # 心跳转发
+                else:
+                    exec_result = item
+
+            if exec_result is None:
+                last_error = "Sandbox execution returned no result"
+                yield self._sse({"type": "tool_result", "success": False, "output": None, "error": last_error, "time": 0})
+                continue
+
+            yield self._sse({
+                "type": "tool_result",
+                "success": exec_result.get("success", False),
+                "output": exec_result.get("output"),
+                "error": exec_result.get("error"),
+                "time": exec_result.get("execution_time", 0),
+            })
+
+            if not exec_result.get("success"):
+                last_error = exec_result.get("error", "Unknown execution error")
+                continue
+
+            output_text = exec_result.get("output", "") or ""
+            derive_result = self._parse_derive_marker(output_text)
+
+            if derive_result is None:
+                last_error = "Code executed successfully but did not print the __DERIVE_OK__ marker."
+                continue
+
+            break
+
+        if derive_result is None:
+            yield self._sse({
+                "type": "text",
+                "content": (
+                    f"❌ Pipeline extraction failed after {max_react_rounds} attempts.\n\n"
+                    f"Last error: `{last_error[:300] if last_error else 'unknown'}`\n\n"
+                    "Please fix the analysis in chat and try `/derive` again."
+                ),
+            })
+            yield self._sse({"type": "done"})
+            return
+
+        if pipeline_proposal is None:
+            yield self._sse({
+                "type": "text",
+                "content": "❌ Pipeline extraction finished without a valid proposal. Please try `/derive` again.",
+            })
+            yield self._sse({"type": "done"})
+            return
+
+        proposal = pipeline_proposal
+
+        if handler_config.get("require_hitl_confirmation", True):
+            schema = derive_result.get("schema", [])
+            row_count = derive_result.get("row_count", 0)
+            sample_rows = derive_result.get("sample_rows", [])
+            actual_table_name = derive_result.get("table_name", proposal.get("table_name", ""))
+
+            hitl_payload = {
+                "hitl_type": "pipeline_confirmation",
+                "title": "💾 Save as Derived Data Source",
+                "description": proposal.get("transform_description", ""),
+                "pipeline": {
+                    "table_name": actual_table_name,
+                    "display_name": proposal.get("display_name", actual_table_name),
+                    "description": proposal.get("description", ""),
+                    "source_type": proposal.get("source_type", "unknown"),
+                    "source_config": proposal.get("source_config", {}),
+                    "transform_code": final_code,
+                    "transform_description": proposal.get("transform_description", ""),
+                    "write_strategy": "replace",
+                    "schema": schema,
+                    "row_count": row_count,
+                    "sample_rows": sample_rows[:5],
+                },
+                "options": [
+                    {"label": "Confirm & Save", "value": "confirm", "badge": "recommended"},
+                    {"label": "Cancel", "value": "cancel"},
+                ],
+            }
+
+            yield self._sse({
+                "type": "hitl_request",
+                "title": hitl_payload["title"],
+                "description": hitl_payload["description"],
+                "options": hitl_payload["options"],
+                **{k: v for k, v in hitl_payload.items()},
+            })
+        else:
+            config = {
+                "table_name": derive_result.get("table_name"),
+                "display_name": proposal.get("display_name"),
+                "description": proposal.get("description"),
+                "transform_code": final_code,
+                "source_type": proposal.get("source_type"),
+                "source_config": proposal.get("source_config"),
+                "write_strategy": "replace",
+                "schema": derive_result.get("schema"),
+                "row_count": derive_result.get("row_count"),
+            }
+            async for chunk in self._register_derive_metadata(config):
+                yield chunk
+            return
+        
+        yield self._sse({"type": "done"})
+
+    # ── Helper methods for derive pipeline ──
+
+    async def _collect_code_history(self) -> list[dict]:
+        """回溯 Task 历史，收集成功的 tool_use Steps"""
+        from app.models import Step
         from sqlalchemy import select
 
         result = await self.db.execute(
-            select(DuckDBTable)
-            .where(DuckDBTable.status != "error")
-            .order_by(DuckDBTable.updated_at.desc())
-            .limit(20)
+            select(Step).where(Step.task_id == self.task_id, Step.step_type == "tool_use").order_by(Step.created_at.asc())
         )
-        tables = list(result.scalars().all())
+        steps = list(result.scalars().all())
 
-        if not tables:
-            return (
-                "The local DuckDB warehouse is empty. You can use `materialize_to_duckdb` "
-                "to save cleaned DataFrames as persistent tables.\n\n"
-                "To query DuckDB tables in code, use:\n"
-                "```python\n"
-                "import duckdb\n"
-                "con = duckdb.connect(getenv('WAREHOUSE_PATH'), read_only=True)\n"
-                "df = con.execute('SELECT * FROM table_name').fetchdf()\n"
-                "con.close()\n"
-                "```"
-            )
-
-        lines = [
-            "The following tables exist in the local DuckDB warehouse. "
-            "You can query them using `duckdb.connect(getenv('WAREHOUSE_PATH'))` "
-            "inside `execute_python_code`.\n"
-        ]
-        for t in tables:
+        history = []
+        for step in steps:
+            if not step.code or not step.code_output:
+                continue
             try:
-                schema = json.loads(t.table_schema_json) if t.table_schema_json else []
-            except (json.JSONDecodeError, TypeError):
-                schema = []
-            col_preview = ", ".join(f"`{s['name']}` ({s['type']})" for s in schema[:8])
-            if len(schema) > 8:
-                col_preview += f", ... ({len(schema)} cols)"
+                output_data = json.loads(step.code_output)
+            except json.JSONDecodeError:
+                continue
+            if not output_data.get("success"):
+                continue
 
-            updated = t.data_updated_at.strftime("%Y-%m-%d %H:%M") if t.data_updated_at else "unknown"
-            lines.append(
-                f"- **{t.table_name}** — {t.display_name} "
-                f"({t.row_count:,} rows, source: {t.source_type}, updated: {updated})\n"
-                f"  Columns: {col_preview}"
+            history.append({
+                "code": step.code,
+                "output": output_data.get("output", "")[:2000],
+                "purpose": step.content or "",
+            })
+
+        return history
+
+    async def _gather_knowledge_summary(self) -> str:
+        """收集当前 Task 的 Knowledge 摘要"""
+        from app.models import Knowledge
+        from sqlalchemy import select
+
+        knowledge_ctx = ""
+        try:
+            result = await self.db.execute(select(Knowledge).where(Knowledge.task_id == self.task_id))
+            items = list(result.scalars().all())
+            if items:
+                parts = [f"- {k.name} (type: {k.type})" for k in items]
+                knowledge_ctx = "Available data:\n" + "\n".join(parts)
+        except Exception:
+            pass
+        return knowledge_ctx
+
+    async def _extract_pipeline_with_llm(
+        self,
+        code_history: list[dict],
+        user_instructions: str,
+        knowledge_context: str,
+        context: dict,
+        previous_error: str | None = None,
+    ) -> dict | None:
+        """使用 LLM 从代码历史中提取 pipeline 定义（从 skill prompt 读取）"""
+        
+        # ── 从 skill 获取 prompt（而不是从独立文件） ──
+        system_prompt = context.get("invoked_skill_prompt", "")
+        if not system_prompt:
+            logger.error("Derive skill prompt_markdown is empty")
+            return None
+
+        # ── 构建 user prompt ──
+        user_prompt = self._build_pipeline_user_prompt(code_history, user_instructions, knowledge_context)
+
+        if previous_error:
+            user_prompt += (
+                f"\n\n## ⚠️ Previous Attempt Failed\n"
+                f"```\n{previous_error[:1000]}\n```\n\n"
+                f"Fix the code and try again."
             )
-            if t.description:
-                lines.append(f"  Description: {t.description}")
 
-        lines.append(
-            "\n**To persist new data**: Use `materialize_to_duckdb` tool. "
-            "For FIRST-TIME writes, confirm with the user via `request_human_input` first."
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.1,
+                max_tokens=8192,
+            )
+
+            content = (response.choices[0].message.content or "").strip()
+            json_match = re.search(r"\{.*\}", content, re.DOTALL)
+            if not json_match:
+                logger.error("LLM did not return valid JSON for pipeline extraction")
+                return None
+
+            proposal = json.loads(json_match.group())
+
+            required = ["table_name", "display_name", "description", "source_type", "transform_code"]
+            for field in required:
+                if field not in proposal:
+                    logger.error(f"Pipeline proposal missing field: {field}")
+                    return None
+
+            from app.services.warehouse import validate_table_name, _sanitize_table_name
+            valid, err = validate_table_name(proposal["table_name"])
+            if not valid:
+                proposal["table_name"] = _sanitize_table_name(proposal["table_name"])
+
+            return proposal
+
+        except Exception as e:
+            logger.error(f"Pipeline extraction LLM call failed: {e}")
+            return None
+
+    async def _extract_pipeline_with_llm_heartbeat(
+        self,
+        code_history: list[dict],
+        user_instructions: str,
+        knowledge_context: str,
+        context: dict,
+        previous_error: str | None = None,
+    ) -> AsyncGenerator[str | dict | None, None]:
+        """包装 _extract_pipeline_with_llm，定期发送心跳"""
+        import asyncio
+        done_event = asyncio.Event()
+        result_holder: list[dict | None] = []
+        async def _do_extract():
+            r = await self._extract_pipeline_with_llm(
+                code_history, user_instructions, knowledge_context,
+                context, previous_error,
+            )
+            result_holder.append(r)
+            done_event.set()
+        task = asyncio.create_task(_do_extract())
+        while not done_event.is_set():
+            try:
+                await asyncio.wait_for(asyncio.shield(done_event.wait()), timeout=15.0)
+            except asyncio.TimeoutError:
+                yield self._sse({"type": "heartbeat", "content": "llm_thinking"})
+        # 检查任务异常
+        if task.done() and task.exception():
+            logger.error(f"Pipeline extraction task failed: {task.exception()}")
+            yield None
+            return
+        yield result_holder[0] if result_holder else None
+
+    def _build_pipeline_user_prompt(
+        self,
+        code_history: list[dict],
+        user_instructions: str,
+        knowledge_context: str,
+    ) -> str:
+        """构建 pipeline 提取的 user prompt（纯数据组装）"""
+        parts: list[str] = []
+
+        parts.append("## Code History\n")
+        for i, item in enumerate(code_history, 1):
+            parts.append(f"### Execution {i}")
+            parts.append(f"**Purpose**: {item.get('purpose', 'N/A')}")
+            parts.append(f"```python\n{item['code']}\n```")
+            output = item.get('output', '')[:500]
+            if output:
+                parts.append(f"**Output**:\n```\n{output}\n```")
+            parts.append("")
+
+        if user_instructions:
+            parts.append(f"## User Instructions\n\n{user_instructions}\n")
+
+        if knowledge_context:
+            parts.append(f"## Available Data\n\n{knowledge_context}\n")
+
+        parts.append(
+            "## Task\n\n"
+            "Extract a complete pipeline script from the history above. "
+            "Return ONLY the JSON object."
         )
 
-        return "\n".join(lines)
+        return "\n".join(parts)
+
+    async def _execute_derive_code(self, transform_code: str) -> dict | None:
+        """在沙箱中执行 derive 代码"""
+        from app.services.sandbox import execute_code_in_sandbox
+        from app.services.data_processor import sanitize_variable_name
+        from app.models import Knowledge
+        from app.config import UPLOADS_DIR
+        from sqlalchemy import select
+
+        data_var_map: dict[str, str] = {}
+        result = await self.db.execute(select(Knowledge).where(Knowledge.task_id == self.task_id))
+        for k in result.scalars().all():
+            if k.type in ("csv", "excel") and k.file_path and os.path.exists(k.file_path):
+                var_name = sanitize_variable_name(k.name)
+                data_var_map[var_name] = os.path.abspath(k.file_path)
+
+        capture_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "derive_exec")
+        os.makedirs(capture_dir, exist_ok=True)
+
+        persist_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "persist")
+        persisted_var_map: dict[str, str] = {}
+        if os.path.isdir(persist_dir):
+            import glob
+            for fpath in glob.glob(os.path.join(persist_dir, "*.parquet")):
+                var_name = os.path.splitext(os.path.basename(fpath))[0]
+                persisted_var_map[var_name] = fpath
+            for fpath in glob.glob(os.path.join(persist_dir, "*.json")):
+                var_name = os.path.splitext(os.path.basename(fpath))[0]
+                if var_name not in persisted_var_map:
+                    persisted_var_map[var_name] = fpath
+
+        from sqlalchemy import select as sa_select
+        from app.models import Skill
+        skill_result = await self.db.execute(sa_select(Skill).where(Skill.is_active == True))
+        skill_envs: dict[str, str] = {}
+        for skill in skill_result.scalars().all():
+            try:
+                envs = json.loads(skill.env_vars_json) if skill.env_vars_json else {}
+                skill_envs.update(envs)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            try:
+                modules = json.loads(skill.allowed_modules_json) if skill.allowed_modules_json else []
+                if modules:
+                    existing = json.loads(skill_envs.get("__allowed_modules__", "[]"))
+                    existing.extend(modules)
+                    skill_envs["__allowed_modules__"] = json.dumps(list(set(existing)))
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        try:
+            exec_result = await execute_code_in_sandbox(
+                code=transform_code,
+                data_var_map=data_var_map,
+                timeout=300,
+                capture_dir=capture_dir,
+                injected_envs=skill_envs if skill_envs else None,
+                persisted_var_map=persisted_var_map if persisted_var_map else None,
+            )
+            return exec_result
+        except Exception as e:
+            logger.error(f"Derive code sandbox error: {e}")
+            return {"success": False, "output": None, "error": str(e), "execution_time": 0.0}
+
+    async def _execute_derive_code_with_heartbeat(
+        self, transform_code: str
+    ) -> AsyncGenerator[str | dict, None]:
+        """带心跳的 derive 代码执行，复用 base._execute_code_with_heartbeat"""
+        from app.services.data_processor import sanitize_variable_name
+        from app.models import Knowledge, Skill
+        from sqlalchemy import select
+
+        # ── 准备 data_var_map ──
+        data_var_map: dict[str, str] = {}
+        result = await self.db.execute(
+            select(Knowledge).where(Knowledge.task_id == self.task_id)
+        )
+        for k in result.scalars().all():
+            if k.type in ("csv", "excel") and k.file_path and os.path.exists(k.file_path):
+                var_name = sanitize_variable_name(k.name)
+                data_var_map[var_name] = os.path.abspath(k.file_path)
+
+        capture_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "derive_exec")
+        os.makedirs(capture_dir, exist_ok=True)
+
+        # ── 准备 persistent_vars ──
+        persist_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "persist")
+        persisted_var_map: dict[str, str] = {}
+        if os.path.isdir(persist_dir):
+            import glob
+            for fpath in glob.glob(os.path.join(persist_dir, "*.parquet")):
+                var_name = os.path.splitext(os.path.basename(fpath))[0]
+                persisted_var_map[var_name] = fpath
+            for fpath in glob.glob(os.path.join(persist_dir, "*.json")):
+                var_name = os.path.splitext(os.path.basename(fpath))[0]
+                if var_name not in persisted_var_map:
+                    persisted_var_map[var_name] = fpath
+
+        # ── 准备 skill_envs ──
+        skill_result = await self.db.execute(select(Skill).where(Skill.is_active == True))
+        skill_envs: dict[str, str] = {}
+        for skill in skill_result.scalars().all():
+            try:
+                envs = json.loads(skill.env_vars_json) if skill.env_vars_json else {}
+                skill_envs.update(envs)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            try:
+                modules = json.loads(skill.allowed_modules_json) if skill.allowed_modules_json else []
+                if modules:
+                    existing = json.loads(skill_envs.get("__allowed_modules__", "[]"))
+                    existing.extend(modules)
+                    skill_envs["__allowed_modules__"] = json.dumps(list(set(existing)))
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # ── 复用 base 的心跳包装器 ──
+        async for item in self._execute_code_with_heartbeat(
+            code=transform_code,
+            data_var_map=data_var_map,
+            capture_dir=capture_dir,
+            skill_envs=skill_envs if skill_envs else None,
+            persistent_vars=persisted_var_map if persisted_var_map else None,
+        ):
+            yield item
+
+    def _parse_derive_marker(self, output: str) -> dict | None:
+        """解析沙箱输出中的 __DERIVE_OK__ 标记"""
+        marker = "__DERIVE_OK__"
+        for line in output.split("\n"):
+            line = line.strip()
+            if line.startswith(marker):
+                try:
+                    return json.loads(line[len(marker):])
+                except json.JSONDecodeError:
+                    pass
+        return None
+
+    async def _register_derive_metadata(self, config: dict) -> AsyncGenerator[str, None]:
+        """用户确认后，注册元数据到 SQLite"""
+        from app.models import DuckDBTable, DataPipeline
+        from app.database import async_session
+        from app.services import warehouse as wh
+        from datetime import datetime
+
+        table_name = config.get("table_name", "")
+        display_name = config.get("display_name", table_name)
+        description = config.get("description", "")
+        transform_code = config.get("transform_code", "")
+        source_type = config.get("source_type", "unknown")
+        source_config = config.get("source_config", {})
+        write_strategy = config.get("write_strategy", "replace")
+
+        if not table_name:
+            yield self._sse({"type": "error", "content": "Invalid confirmation: missing table_name."})
+            yield self._sse({"type": "done"})
+            return
+
+        exists = await wh.async_table_exists(table_name)
+        if not exists:
+            yield self._sse({
+                "type": "error",
+                "content": f"Table `{table_name}` not found in DuckDB. Please try `/derive` again."
+            })
+            yield self._sse({"type": "done"})
+            return
+
+        yield self._sse({"type": "text", "content": f"📋 Registering `{table_name}` as a data asset...\n"})
+
+        try:
+            tables_info = await wh.async_list_tables()
+            table_info = next((t for t in tables_info if t["table_name"] == table_name), None)
+            if table_info:
+                schema = table_info["schema"]
+                row_count = table_info["row_count"]
+            else:
+                schema = config.get("schema", [])
+                row_count = config.get("row_count", 0)
+        except Exception:
+            schema = config.get("schema", [])
+            row_count = config.get("row_count", 0)
+
+        try:
+            async with async_session() as meta_db:
+                from sqlalchemy import select as sa_select
+
+                table_schema_json = json.dumps(schema, ensure_ascii=False)
+                now = datetime.now()
+
+                existing = await meta_db.execute(sa_select(DuckDBTable).where(DuckDBTable.table_name == table_name))
+                table_meta = existing.scalar_one_or_none()
+
+                if table_meta:
+                    table_meta.display_name = display_name
+                    table_meta.description = description
+                    table_meta.table_schema_json = table_schema_json
+                    table_meta.row_count = row_count
+                    table_meta.source_type = source_type
+                    table_meta.source_config = json.dumps(source_config, ensure_ascii=False) if source_config else None
+                    table_meta.data_updated_at = now
+                    table_meta.status = "ready"
+                else:
+                    table_meta = DuckDBTable(
+                        table_name=table_name,
+                        display_name=display_name,
+                        description=description,
+                        table_schema_json=table_schema_json,
+                        row_count=row_count,
+                        source_type=source_type,
+                        source_config=json.dumps(source_config, ensure_ascii=False) if source_config else None,
+                        data_updated_at=now,
+                        status="ready",
+                    )
+                    meta_db.add(table_meta)
+                await meta_db.flush()
+
+                pipeline = DataPipeline(
+                    name=f"Pipeline: {display_name}",
+                    description=description,
+                    source_task_id=self.task_id,
+                    source_type=source_type,
+                    source_config=json.dumps(source_config, ensure_ascii=False) if source_config else "{}",
+                    transform_code=transform_code,
+                    transform_description=config.get("transform_description", ""),
+                    target_table_name=table_name,
+                    write_strategy=write_strategy,
+                    output_schema=table_schema_json,
+                    is_auto=False,
+                    status="active",
+                    last_run_at=now,
+                    last_run_status="success",
+                )
+                meta_db.add(pipeline)
+                await meta_db.flush()
+
+                table_meta.pipeline_id = pipeline.id
+                await meta_db.commit()
+
+        except Exception as e:
+            logger.error(f"Derive metadata registration failed: {e}")
+
+        col_count = len(schema)
+        col_preview = ", ".join(f"`{s['name']}` ({s['type']})" for s in schema[:8])
+        if col_count > 8:
+            col_preview += f", ... ({col_count} total)"
+
+        success_msg = (
+            f"✅ **Data saved successfully!**\n\n"
+            f"| Property | Value |\n"
+            f"|----------|-------|\n"
+            f"| Table | `{table_name}` |\n"
+            f"| Rows | {row_count:,} |\n"
+            f"| Columns | {col_count} |\n\n"
+            f"**Columns:** {col_preview}\n\n"
+            f"You can find this table in the **Data Sources** tab on the right panel."
+        )
+
+        yield self._sse({"type": "text", "content": success_msg})
+        yield self._sse({"type": "done"})
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Custom Handler: Extract SOP
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    async def _handle_extract_sop(
+        self, context: dict, handler_config: dict
+    ) -> AsyncGenerator[str, None]:
+        """Custom handler for /sop command"""
+        user_instructions = context.get("user_message", "")
+        
+        yield self._sse({"type": "text", "content": "📋 Analyzing task history to extract SOP...\n"})
+
+        code_history = await self._collect_code_history()
+        if not code_history:
+            yield self._sse({
+                "type": "text",
+                "content": "⚠️ No code execution history found. Please complete some analysis first."
+            })
+            yield self._sse({"type": "done"})
+            return
+
+        knowledge_ctx = await self._gather_knowledge_summary()
+        
+        # ── 从 skill 获取 system prompt（而不是硬编码） ──
+        system_prompt = context.get("invoked_skill_prompt", "")
+        if not system_prompt:
+            # Fallback to a basic prompt if skill prompt is empty
+            system_prompt = "You are an expert at documenting data analysis procedures."
+        
+        # ── 构建 user prompt（纯数据组装） ──
+        user_prompt = self._build_sop_extraction_prompt(
+            code_history, user_instructions, knowledge_ctx
+        )
+
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.3,
+                max_tokens=8192,
+            )
+
+            sop_content = (response.choices[0].message.content or "").strip()
+
+            yield self._sse({"type": "text", "content": "\n\n---\n\n" + sop_content + "\n\n---\n\n"})
+            yield self._sse({
+                "type": "text",
+                "content": "💡 **Tip**: You can save this SOP as a text file in the Knowledge section for future reference."
+            })
+
+        except Exception as e:
+            logger.error(f"SOP extraction failed: {e}")
+            yield self._sse({"type": "error", "content": f"Failed to generate SOP: {str(e)}"})
+
+        yield self._sse({"type": "done"})
+
+    def _build_sop_extraction_prompt(
+        self,
+        code_history: list[dict],
+        user_instructions: str,
+        knowledge_context: str,
+    ) -> str:
+        """构建 SOP 提取的 prompt"""
+        history_section = "## Analysis History\n\n"
+        for i, item in enumerate(code_history, 1):
+            history_section += f"### Step {i}\n"
+            history_section += f"**Purpose**: {item.get('purpose', 'N/A')}\n\n"
+            history_section += f"**Code**:\n```python\n{item['code'][:500]}\n```\n\n"
+        
+        instructions_section = ""
+        if user_instructions:
+            instructions_section = f"## User Instructions\n\n{user_instructions}\n\n"
+        
+        knowledge_section = f"## Available Data\n\n{knowledge_context}\n\n"
+        
+        prompt = f"""
+{history_section}
+{instructions_section}
+{knowledge_section}
+## Your Task
+Based on the analysis history above, create a **Standard Operating Procedure (SOP)** document in Markdown format.
+The SOP should include:
+1. **Objective** — What problem does this procedure solve?
+2. **Prerequisites** — Required data sources, tools, or knowledge
+3. **Step-by-Step Instructions** — Clear, actionable steps (abstract away specific file names)
+4. **Expected Outputs** — What results should be produced
+5. **Common Issues & Solutions** — Troubleshooting guide based on the history
+Focus on making the SOP reusable for similar tasks in the future. Use clear headings and bullet points.
+"""
+        
+        return prompt

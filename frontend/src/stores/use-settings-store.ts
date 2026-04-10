@@ -82,6 +82,10 @@ interface SettingsStore {
   selectedSettingsItem: string;
   setSelectedSettingsItem: (item: string) => void;
 
+  // 语言设置
+  locale: string;
+  setLocale: (locale: string) => void;
+
 }
 
 
@@ -143,5 +147,14 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
   // Settings Dialog 当前选中项
   selectedSettingsItem: "providers",
   setSelectedSettingsItem: (item) => set({ selectedSettingsItem: item }),
+
+  // 语言设置（从 localStorage 加载，默认 en）
+  locale: typeof window !== "undefined" ? (localStorage.getItem("owl-locale") || "en") : "en",
+  setLocale: (locale) => {
+    set({ locale });
+    if (typeof window !== "undefined") {
+      localStorage.setItem("owl-locale", locale);
+    }
+  },
 
 }));

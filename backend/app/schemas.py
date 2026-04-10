@@ -3,6 +3,7 @@
 """Pydantic 请求/响应数据模型"""
 
 from datetime import datetime
+from typing import Any
 from pydantic import BaseModel, Field
 
 
@@ -221,6 +222,11 @@ class SkillCreate(BaseModel):
     env_vars: dict[str, str] = Field(default_factory=dict)
     allowed_modules: list[str] = Field(default_factory=list)
     is_active: bool = True
+    is_system: bool = False
+    slash_command: str | None = None
+    handler_type: str | None = Field(default="standard", pattern="^(standard|custom_handler)$")
+    handler_config: dict[str, Any] | None = None  # 会被序列化为 JSON
+
 
 
 class SkillUpdate(BaseModel):
@@ -231,6 +237,10 @@ class SkillUpdate(BaseModel):
     env_vars: dict[str, str] | None = None
     allowed_modules: list[str] | None = None
     is_active: bool | None = None
+    is_system: bool | None = None
+    slash_command: str | None = Field(None, max_length=50)
+    handler_type: str | None = Field(None, pattern="^(standard|custom_handler)$")
+    handler_config: dict[str, Any] | None = None
 
 
 class SkillResponse(BaseModel):
@@ -242,9 +252,14 @@ class SkillResponse(BaseModel):
     env_vars: dict[str, str]
     allowed_modules: list[str]
     is_active: bool
+    is_system: bool
+    slash_command: str | None
     created_at: datetime
     updated_at: datetime
     model_config = {"from_attributes": True}
+    handler_type: str
+    handler_config: dict[str, Any] | None
+
 
 # ===== Visualization =====
 class VisualizationResponse(BaseModel):

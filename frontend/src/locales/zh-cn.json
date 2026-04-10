@@ -1,0 +1,59 @@
+{
+  "common": {
+    "search": "搜索工作区、资源或日志...",
+    "connected": "后端已连接",
+    "offline": "后端离线",
+    "connecting": "后端连接中...",
+    "checking": "后端检查中...",
+    "updateAvailable": "有可用更新",
+    "upToDate": "已是最新",
+    "downloading": "下载中...",
+    "newAction": "新建任务",
+    "tasks": "任务",
+    "settings": "设置",
+    "help": "帮助",
+    "expand": "展开",
+    "collapse": "收起"
+  },
+  "settings": {
+    "title": "设置",
+    "interface": "界面",
+    "providers": "提供商/模型",
+    "agents": "智能体",
+    "skills": "技能",
+    "miscellaneous": "其他",
+    "about": "关于",
+    "comingSoon": "即将推出",
+    "categories": {
+      "general": "通用",
+      "llm": "大语言模型",
+      "extensions": "扩展",
+      "other": "其他"
+    }
+  },
+  "interface": {
+    "theme": "主题",
+    "themeDescription": "选择视觉主题。布局保持不变，仅颜色改变。",
+    "language": "语言",
+    "languageDescription": "选择界面的首选语言。",
+    "themes": {
+      "geek": {
+        "name": "极客",
+        "description": "简洁的单色界面，中性色调。原始的 Owl 体验。"
+      },
+      "modern": {
+        "name": "现代",
+        "description": "深海军蓝侧边栏配蓝色点缀。精致专业的外观。"
+      },
+      "evaUnit01": {
+        "name": "初号机",
+        "description": "深色战术紫配霓虹绿高光，灵感来自 EVA 初号机。"
+      }
+    },
+    "languages": {
+      "en": "English",
+      "zh-cn": "简体中文",
+      "ja": "日本語"
+    }
+  }
+}

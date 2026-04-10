@@ -540,3 +540,59 @@ class BaseAgent(ABC):
             )
         }
         return hitl_event, tool_content
+
+    async def _build_warehouse_context(self) -> str:
+        """构建 DuckDB 仓库的上下文信息，注入到 system prompt"""
+        from app.models import DuckDBTable
+        from sqlalchemy import select
+
+        result = await self.db.execute(
+            select(DuckDBTable)
+            .where(DuckDBTable.status != "error")
+            .order_by(DuckDBTable.updated_at.desc())
+            .limit(20)
+        )
+        tables = list(result.scalars().all())
+
+        if not tables:
+            return (
+                "The local DuckDB warehouse is empty. You can use `materialize_to_duckdb` "
+                "to save cleaned DataFrames as persistent tables.\n\n"
+                "To query DuckDB tables in code, use:\n"
+                "```python\n"
+                "import duckdb\n"
+                "con = duckdb.connect(getenv('WAREHOUSE_PATH'), read_only=True)\n"
+                "df = con.execute('SELECT * FROM table_name').fetchdf()\n"
+                "con.close()\n"
+                "```"
+            )
+
+        lines = [
+            "The following tables exist in the local DuckDB warehouse. "
+            "You can query them using `duckdb.connect(getenv('WAREHOUSE_PATH'))` "
+            "inside `execute_python_code`.\n"
+        ]
+        for t in tables:
+            try:
+                schema = json.loads(t.table_schema_json) if t.table_schema_json else []
+            except (json.JSONDecodeError, TypeError):
+                schema = []
+            col_preview = ", ".join(f"`{s['name']}` ({s['type']})" for s in schema[:8])
+            if len(schema) > 8:
+                col_preview += f", ... ({len(schema)} cols)"
+
+            updated = t.data_updated_at.strftime("%Y-%m-%d %H:%M") if t.data_updated_at else "unknown"
+            lines.append(
+                f"- **{t.table_name}** — {t.display_name} "
+                f"({t.row_count:,} rows, source: {t.source_type}, updated: {updated})\n"
+                f"  Columns: {col_preview}"
+            )
+            if t.description:
+                lines.append(f"  Description: {t.description}")
+
+        lines.append(
+            "\n**To persist new data**: Use `materialize_to_duckdb` tool. "
+            "For FIRST-TIME writes, confirm with the user via `request_human_input` first."
+        )
+
+        return "\n".join(lines)

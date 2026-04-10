@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useSettingsStore } from "@/stores/use-settings-store";
+import { useTranslations } from "@/hooks/use-translations";
 import { fetchProviders } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
@@ -25,20 +26,20 @@ type MenuItem = {
   category?: string;
 };
 
-const menuItems: MenuItem[] = [
-  { id: "interface", label: "Interface", category: "General" },
-  { id: "providers", label: "Providers/Models", category: "LLM" },
-  { id: "agents", label: "Agents", category: "LLM" },
-  { id: "skills", label: "Skills", category: "Extensions" },
-  { id: "misc", label: "Miscellaneous", category: "Other" },
-  { id: "about", label: "About", category: "Other" },
-];
-
-
 export default function SettingsDialog() {
   const { isSettingsOpen, setSettingsOpen, setProviders, currentView, setCurrentView,
           selectedSettingsItem, setSelectedSettingsItem } =
       useSettingsStore();
+  const t = useTranslations("settings");
+
+  const menuItems: MenuItem[] = [
+    { id: "interface", label: t("interface"), category: t("categories.general") },
+    { id: "providers", label: t("providers"), category: t("categories.llm") },
+    { id: "agents", label: t("agents"), category: t("categories.llm") },
+    { id: "skills", label: t("skills"), category: t("categories.extensions") },
+    { id: "misc", label: t("miscellaneous"), category: t("categories.other") },
+    { id: "about", label: t("about"), category: t("categories.other") },
+  ];
   // const [selectedItem, setSelectedItem] = useState<string>("providers");
 
   // 加载 Providers 数据
@@ -80,7 +81,7 @@ export default function SettingsDialog() {
     
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
-        Coming Soon
+        {t("comingSoon")}
       </div>
     );
   };
@@ -101,7 +102,7 @@ export default function SettingsDialog() {
         showCloseButton={false}
       >
         {/* 隐藏的标题，仅供屏幕阅读器使用 */}
-        <DialogTitle className="sr-only">Settings</DialogTitle>
+        <DialogTitle className="sr-only">{t("title")}</DialogTitle>
           <Button
             variant="ghost"
             size="icon"
@@ -114,7 +115,7 @@ export default function SettingsDialog() {
           {/* 左侧导航 */}
           <aside className="w-56 border-r bg-muted/30 flex flex-col">
             <div className="p-4">
-              <h2 className="text-lg font-semibold">Settings</h2>
+              <h2 className="text-lg font-semibold">{t("title")}</h2>
             </div>
             <Separator />
             <div className="flex-1 overflow-y-auto p-2">

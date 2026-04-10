@@ -9,6 +9,7 @@ import DataPanel from "@/components/data/data-panel";
 import { Badge } from "@/components/ui/badge";
 import SettingsDialog from "@/components/settings/settings-dialog";
 import DatabaseWarningDialog from "@/components/database/database-warning-dialog";
+import { useTranslations } from "@/hooks/use-translations";
 import {
   CircleCheck,
   CircleX,
@@ -213,6 +214,7 @@ export default function HomePage() {
   const { shouldShowOnboarding, skipOnboarding, recheckConfiguration } = useOnboarding();
   const { updateStatus, setUpdateStatus, setUpdateInfo, setSettingsOpen, setSelectedSettingsItem } = useSettingsStore();
   const isTauriEnv = typeof window !== "undefined" && "__TAURI__" in window;
+  const t = useTranslations("common");
 
   /* ── Panel state ── */
   const [leftWidth, setLeftWidth] = useState(LEFT_DEFAULT);
@@ -399,7 +401,7 @@ export default function HomePage() {
               className="text-sm"
               style={{ color: "var(--owl-topbar-search-placeholder)" }}
             >
-              Search workspace, assets, or logs...
+              {t("search")}
             </span>
           </div>
           <div className="flex items-center gap-3">
@@ -423,10 +425,10 @@ export default function HomePage() {
                 }}
                 onClick={handleUpdateBadgeClick}
               >
-                {updateStatus === "checking" && <><Loader2 className="h-3 w-3 animate-spin" />Checking...</>}
-                {updateStatus === "has_update" && <><CircleCheck className="h-3 w-3" />Update Available</>}
-                {(updateStatus === "up_to_date" || updateStatus === "downloaded") && <><CircleCheck className="h-3 w-3" />Up to Date</>}
-                {updateStatus === "downloading" && <><Loader2 className="h-3 w-3 animate-spin" />Downloading...</>}
+                {updateStatus === "checking" && <><Loader2 className="h-3 w-3 animate-spin" />{t("checking")}</>}
+                {updateStatus === "has_update" && <><CircleCheck className="h-3 w-3" />{t("updateAvailable")}</>}
+                {(updateStatus === "up_to_date" || updateStatus === "downloaded") && <><CircleCheck className="h-3 w-3" />{t("upToDate")}</>}
+                {updateStatus === "downloading" && <><Loader2 className="h-3 w-3 animate-spin" />{t("downloading")}</>}
               </Badge>
             )}
             <Badge
@@ -456,7 +458,7 @@ export default function HomePage() {
               {backendStatus === "checking" && <Loader2 className="h-3 w-3 animate-spin" />}
               {backendStatus === "connected" && <CircleCheck className="h-3 w-3" />}
               {backendStatus === "disconnected" && <CircleX className="h-3 w-3" />}
-              {backendStatus === "checking" ? "Connecting..." : backendStatus === "connected" ? "Connected" : "Offline"}
+              {backendStatus === "checking" ? t("connecting") : backendStatus === "connected" ? t("connected") : t("offline")}
             </Badge>
             <button
               className="rounded-full p-2 transition-colors"

@@ -2,6 +2,8 @@
 
 """数据库连接与会话管理"""
 
+import json
+
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import select, text
@@ -26,12 +28,14 @@ class Base(DeclarativeBase):
 
 # ===== Schema Migration (in-app) =====
 # 使用 SQLite PRAGMA user_version 记录 schema 版本，避免外部迁移脚本依赖
-LATEST_SCHEMA_VERSION = 6
+LATEST_SCHEMA_VERSION = 8
 # v2: multi-agent (tasks.mode/plan_confirmed/current_subtask_id + subtasks + steps.subtask_id)
 # v3: visualization (visualizations table)
 # v4: skill reference_markdown (lazy-loaded reference doc)
 # v5: duckdb_tables + data_pipelines
 # v6: data_pipelines.freshness_policy_json + duckdb_tables.query_transform_code
+# v7: skills.is_system + skills.slash_command
+# v8: skills.handler_type + skills.handler_config (支持 custom_handler 类型的 Skill)
 
 
 async def _get_user_version(conn) -> int:
@@ -249,6 +253,48 @@ async def upgrade_db_schema() -> dict:
                 await _set_user_version(conn, 6)
                 applied.append("set user_version=6")
                 current = 6
+
+            # ── v7 migration: skills.is_system + skills.slash_command ──
+            if current < 7:
+                skills_cols = await _get_table_columns(conn, "skills")
+                if "is_system" not in skills_cols:
+                    await conn.execute(text(
+                        "ALTER TABLE skills ADD COLUMN is_system BOOLEAN NOT NULL DEFAULT 0"
+                    ))
+                    applied.append("ALTER TABLE skills ADD COLUMN is_system")
+                if "slash_command" not in skills_cols:
+                    await conn.execute(text(
+                        "ALTER TABLE skills ADD COLUMN slash_command VARCHAR(50)"
+                    ))
+                    applied.append("ALTER TABLE skills ADD COLUMN slash_command")
+                    # 创建唯一索引（SQLite 中 ALTER TABLE 不支持 UNIQUE 约束，用索引代替）
+                    await conn.execute(text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS ix_skills_slash_command "
+                        "ON skills(slash_command) WHERE slash_command IS NOT NULL"
+                    ))
+                    applied.append("CREATE UNIQUE INDEX ix_skills_slash_command")
+                await _set_user_version(conn, 7)
+                applied.append("set user_version=7")
+                current = 7
+
+            # ── v8 migration: skills.handler_type + skills.handler_config ──
+            if current < 8:
+                skills_cols = await _get_table_columns(conn, "skills")
+                if "handler_type" not in skills_cols:
+                    await conn.execute(text(
+                        "ALTER TABLE skills ADD COLUMN handler_type VARCHAR(50) DEFAULT 'standard'"
+                    ))
+                    applied.append("ALTER TABLE skills ADD COLUMN handler_type")
+                if "handler_config" not in skills_cols:
+                    await conn.execute(text(
+                        "ALTER TABLE skills ADD COLUMN handler_config TEXT"
+                    ))
+                    applied.append("ALTER TABLE skills ADD COLUMN handler_config")
+                await _set_user_version(conn, 8)
+                applied.append("set user_version=8")
+                current = 8
+
+
             return {
                 "success": True,
                 "from_version": from_version,
@@ -390,6 +436,8 @@ async def init_db() -> None:
 
     # 3) 创建默认配置数据
     await _create_default_agent_configs()
+    # 4) Seed 内置 Skills
+    await _seed_builtin_skills()
 
     logger.info(
         f"数据库初始化完成 (schema upgrade: {upgrade_result.get('from_version')} -> {upgrade_result.get('to_version')}, "
@@ -428,3 +476,43 @@ async def get_db():
     """获取数据库会话的依赖注入"""
     async with async_session() as session:
         yield session
+
+async def _seed_builtin_skills() -> None:
+    """Seed 内置系统 Skill（幂等：仅在不存在时创建，已存在则同步配置）"""
+    from app.models import Skill
+    from app.prompts.skills import get_builtin_skills
+    
+    builtin_skills = get_builtin_skills()
+    
+    async with async_session() as session:
+        for skill_def in builtin_skills:
+            result = await session.execute(
+                select(Skill).where(Skill.slash_command == skill_def["slash_command"])
+            )
+            existing = result.scalar_one_or_none()
+            
+            if not existing:
+                # 创建新 skill
+                skill = Skill(
+                    name=skill_def["name"],
+                    slash_command=skill_def["slash_command"],
+                    handler_type=skill_def.get("handler_type"),
+                    handler_config=skill_def.get("handler_config"),
+                    description=skill_def["description"],
+                    prompt_markdown=skill_def.get("prompt_markdown"),
+                    reference_markdown=skill_def.get("reference_markdown"),
+                    is_active=skill_def.get("is_active", True),
+                    is_system=True,
+                )
+                session.add(skill)
+            else:
+                # 更新现有 skill 的配置（保留用户的 is_active 状态）
+                existing.handler_type = skill_def.get("handler_type")
+                existing.handler_config = skill_def.get("handler_config")
+                existing.description = skill_def["description"]
+                existing.prompt_markdown = skill_def.get("prompt_markdown")
+                existing.reference_markdown = skill_def.get("reference_markdown")
+                if not existing.is_system:
+                    existing.is_system = True
+        
+        await session.commit()

@@ -490,9 +490,13 @@ export interface SkillData {
   description: string | null;
   prompt_markdown: string | null;
   reference_markdown: string | null;
+  handler_type: string;
+  handler_config: Record<string, unknown> | null;
   env_vars: Record<string, string>;
   allowed_modules: string[];
   is_active: boolean;
+  is_system: boolean;
+  slash_command: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -505,6 +509,8 @@ export const createSkill = async (data: {
   description?: string;
   prompt_markdown?: string;
   reference_markdown?: string;
+  handler_type?: string;
+  handler_config?: Record<string, unknown>;
   env_vars?: Record<string, string>;
   allowed_modules?: string[];
   is_active?: boolean;
@@ -517,6 +523,8 @@ export const updateSkill = async (
     description?: string;
     prompt_markdown?: string;
     reference_markdown?: string;
+    handler_type?: string;
+    handler_config?: Record<string, unknown>;
     env_vars?: Record<string, string>;
     allowed_modules?: string[];
     is_active?: boolean;

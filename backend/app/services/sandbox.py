@@ -134,6 +134,7 @@ _heartbeat_thread.start()
 
     script = f"""\
 import sys
+_sys_ref = sys
 import json
 import os as _os
 from io import StringIO
@@ -145,6 +146,28 @@ _ALLOWED_MODULES = {{
     'collections.abc', 'typing', 'numbers', 'hashlib', 'random',
     'sklearn', 'scipy', 'time', 'xgboost', 'lightgbm', 'catboost',
     'duckdb', 'pyarrow'
+    # ── 标准库（C 扩展内部高频依赖，无独立危害性） ──
+    'sys', 'os', 'io', 'threading', '_thread', 'warnings', 'logging',
+    'types', 'abc', 'copy', 'copyreg', 'weakref', 'contextlib',
+    'traceback', 'linecache', 'inspect', 'platform', 'pathlib',
+    'enum', 'dataclasses', 'typing_extensions', 'concurrent',
+    'pickle', '_pickle', 'codecs', 'encodings', 'struct',
+    'atexit', 'signal', 'errno', 'gc', 'csv',
+    'locale', 'unicodedata', 'importlib',
+    'zipfile', 'gzip', 'bz2', 'lzma', 'zlib',
+    'tempfile', 'glob', 'fnmatch', 'posixpath', 'genericpath',
+    'shutil', 'bisect', 'heapq', 'array', 'queue',
+    'pprint', 'difflib', 'html', 'xml', 'email',
+    'http', 'urllib', 'socket', 'ssl', 'select', 'selectors',
+    'sqlite3', 'ctypes', '_ctypes',
+    # ── 数据生态常见第三方库 ──
+    'requests', 'certifi', 'charset_normalizer', 'idna', 'urllib3',
+    'dateutil', 'pytz', 'six', 'pkg_resources', 'setuptools',
+    'distutils', 'pydantic', 'tqdm',
+    'bs4', 'lxml', 'soupsieve',
+    'openpyxl', 'xlrd', 'et_xmlfile',
+    'akshare', 'cachetools', 'appdirs', 'pypinyin',
+    'tabulate', 'jinja2', 'markupsafe',
 }}
 # 动态追加 Skill 声明的额外模块
 _ALLOWED_MODULES.update({repr(set(extra_allowed_modules or []))})
@@ -152,10 +175,28 @@ _ALLOWED_MODULES.update({repr(set(extra_allowed_modules or []))})
 _original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
 def _safe_import(name, *args, **kwargs):
     top_level = name.split('.')[0]
-    if top_level not in _ALLOWED_MODULES:
-        raise ImportError(f"Import of '{{name}}' is not allowed in sandbox")
-    return _original_import(name, *args, **kwargs)
-# ── 安全内建 ────────────────────────────────────────────
+    # 1) 白名单模块：直接放行
+    if top_level in _ALLOWED_MODULES:
+        return _original_import(name, *args, **kwargs)
+    # 2) 遍历完整调用栈判断来源
+    #    用户代码在 exec() 中执行，其 co_filename == '<string>'
+    #    第三方库的 .py / .so 文件名是真实路径
+    #    C 扩展帧不出现在 Python 栈中，因此需遍历全栈：
+    #    只要栈中有任意一帧来自真实库文件，就视为库内部依赖并放行
+    try:
+        _frame = _sys_ref._getframe(1)
+        while _frame is not None:
+            _fname = _frame.f_code.co_filename
+            # 如果找到任意一个真实库文件帧（非 <string> 非 <frozen ...>），放行
+            if _fname != '<string>' and not _fname.startswith('<'):
+                return _original_import(name, *args, **kwargs)
+            _frame = _frame.f_back
+    except (AttributeError, ValueError):
+        pass
+    # 全部帧都是 <string>（纯用户代码） → 拒绝
+    raise ImportError(f"Import of '{{name}}' is not allowed in sandbox")
+
+    # ── 安全内建 ────────────────────────────────────────────
 import builtins as _builtins_mod
 _safe_builtins = {{}}
 _BLOCKED = {{'exec', 'eval', 'compile', '__import__', 'open',
@@ -495,8 +536,8 @@ if _capture_dir:
 # DataFrame / Series → Parquet（高速、类型保真）
 # ndarray / scalar / 基础类型 → JSON（体积极小，无需 Parquet）
 _persisted_vars = {{}}
-_MAX_PERSIST = 30
-_MAX_PERSIST_ROWS = 200000
+_MAX_PERSIST = 50
+_MAX_PERSIST_ROWS = 2000000
 _MAX_PARQUET_SIZE = 50 * 1024 * 1024   # 单个 Parquet 文件上限 50 MB
 _MAX_JSON_VALUE_SIZE = 500000           # JSON 序列化后字符串上限
 if _capture_dir:

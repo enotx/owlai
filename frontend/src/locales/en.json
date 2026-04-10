@@ -1,0 +1,59 @@
+{
+  "common": {
+    "search": "Search workspace, assets, or logs...",
+    "connected": "Connected",
+    "offline": "Offline",
+    "connecting": "Connecting...",
+    "checking": "Checking...",
+    "updateAvailable": "Update Available",
+    "upToDate": "Up to Date",
+    "downloading": "Downloading...",
+    "newAction": "New Action",
+    "tasks": "Tasks",
+    "settings": "Settings",
+    "help": "Help",
+    "expand": "Expand",
+    "collapse": "Collapse"
+  },
+  "settings": {
+    "title": "Settings",
+    "interface": "Interface",
+    "providers": "Providers/Models",
+    "agents": "Agents",
+    "skills": "Skills",
+    "miscellaneous": "Miscellaneous",
+    "about": "About",
+    "comingSoon": "Coming Soon",
+    "categories": {
+      "general": "General",
+      "llm": "LLM",
+      "extensions": "Extensions",
+      "other": "Other"
+    }
+  },
+  "interface": {
+    "theme": "Theme",
+    "themeDescription": "Choose a visual theme. Layout stays the same — only colors change.",
+    "language": "Language",
+    "languageDescription": "Select your preferred language for the interface.",
+    "themes": {
+      "geek": {
+        "name": "Geek",
+        "description": "Clean monochrome interface with neutral tones. The original Owl experience."
+      },
+      "modern": {
+        "name": "Modern",
+        "description": "Deep navy sidebar with blue accents. A polished, professional look."
+      },
+      "evaUnit01": {
+        "name": "Eva Unit-01",
+        "description": "Dark tactical purple with neon green highlights, inspired by EVA Unit-01."
+      }
+    },
+    "languages": {
+      "en": "English",
+      "zh-cn": "简体中文",
+      "ja": "日本語"
+    }
+  }
+}

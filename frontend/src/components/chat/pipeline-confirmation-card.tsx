@@ -34,6 +34,9 @@ export interface ConfirmedPipelineConfig {
   transform_code: string;
   source_type: string;
   source_config: Record<string, unknown>;
+  transform_description?: string;
+  schema?: Array<{ name: string; type: string }>;
+  row_count?: number;
 }
 
 interface PipelineConfirmationCardProps {
@@ -64,9 +67,12 @@ export default function PipelineConfirmationCard({
       transform_code: pipeline.transform_code,
       source_type: pipeline.source_type,
       source_config: pipeline.source_config,
-    });
+      transform_description: pipeline.transform_description,
+      schema: pipeline.schema,
+      row_count: pipeline.row_count,
+    } as ConfirmedPipelineConfig);
   };
-
+  
   return (
     <div className="flex gap-3 justify-start">
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white">

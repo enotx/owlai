@@ -284,6 +284,14 @@ function SkillEditor({ skill, onBack, onSaved }: SkillEditorProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ← 新增：handler 配置
+  const [handlerType, setHandlerType] = useState<"standard" | "custom_handler">(
+    (skill?.handler_type as "standard" | "custom_handler") ?? "standard"
+  );
+  const [handlerConfig, setHandlerConfig] = useState(
+    skill?.handler_config ? JSON.stringify(skill.handler_config, null, 2) : ""
+  );
+
   const addEnvEntry = () => {
     setEnvEntries((prev) => [...prev, { key: "", value: "" }]);
   };
@@ -326,11 +334,23 @@ function SkillEditor({ skill, onBack, onSaved }: SkillEditorProps) {
       .map((m) => m.trim())
       .filter(Boolean);
 
+    // ← 解析 handler_config
+    let parsedHandlerConfig: Record<string, unknown> | undefined;
+    if (handlerType === "custom_handler" && handlerConfig.trim()) {
+      try {
+        parsedHandlerConfig = JSON.parse(handlerConfig);
+      } catch {
+        setError("Invalid handler config JSON");
+        return;
+      }
+    }
     const payload = {
       name: name.trim(),
       description: description.trim() || undefined,
       prompt_markdown: promptMarkdown || undefined,
       reference_markdown: referenceMarkdown || undefined,
+      handler_type: handlerType,
+      handler_config: parsedHandlerConfig,
       env_vars: envVars,
       allowed_modules: modules,
       is_active: isActive,
@@ -412,6 +432,45 @@ function SkillEditor({ skill, onBack, onSaved }: SkillEditorProps) {
               commas.
             </p>
           </div>
+
+          <div>
+            <label className="text-sm font-medium mb-1.5 block">
+              Handler Type
+            </label>
+            <select
+              value={handlerType}
+              onChange={(e) => setHandlerType(e.target.value as "standard" | "custom_handler")}
+              className="w-full px-3 py-2 border rounded-md"
+              disabled={skill?.is_system} // 系统 skill 不可修改
+            >
+              <option value="standard">Standard (LLM + Tools)</option>
+              <option value="custom_handler">Custom Handler (ReACT)</option>
+            </select>
+            <p className="text-xs text-muted-foreground mt-1">
+              Standard: Skill prompt injected into system prompt. Custom: Dedicated handler with ReACT loop.
+            </p>
+          </div>
+
+          {handlerType === "custom_handler" && (
+            <div>
+              <label className="text-sm font-medium mb-1.5 block">
+                Handler Config (JSON)
+              </label>
+              <Textarea
+                value={handlerConfig}
+                onChange={(e) => setHandlerConfig(e.target.value)}
+                placeholder={`{
+            "handler_name": "derive_pipeline",
+            "max_react_rounds": 3,
+            "require_hitl_confirmation": true
+          }`}
+                className="h-[120px] w-full font-mono text-sm"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Configuration for the custom handler (JSON format).
+              </p>
+            </div>
+          )}
 
           <div>
             <label className="text-sm font-medium mb-1.5 block">

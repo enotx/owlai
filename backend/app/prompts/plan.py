@@ -58,6 +58,11 @@ You can ONLY generate a plan when BOTH conditions are met:
 ## Visualization Guidelines
 {visualization_guide}
 
+## Local Data Warehouse (DuckDB)
+{warehouse_context}
+
+## Available Skills
+{skill_context}
 
 **Remember**: A good plan is built on solid understanding. Take your time.
 
@@ -78,6 +83,8 @@ def build_plan_system_prompt(
     dataset_context: str,
     text_context: str,
     variable_reference: str,
+    skill_context: str,
+    warehouse_context: str,
     is_first_turn: bool = False,
     include_viz_examples: bool = False,
 ) -> str:
@@ -89,6 +96,8 @@ def build_plan_system_prompt(
         dataset_context=dataset_context,
         text_context=text_context,
         variable_reference=variable_reference,
+        warehouse_context=warehouse_context,
+        skill_context=skill_context,
         visualization_guide=visualization_guide,
     )
     if is_first_turn:

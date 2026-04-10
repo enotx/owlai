@@ -17,26 +17,26 @@ import type { SSEEvent } from "@/lib/api";
 import { useTaskStore, Step } from "@/stores/use-task-store";
 import { useSettingsStore } from "@/stores/use-settings-store";
 import { cn } from "@/lib/utils";
+import { fetchSkills, type SkillData } from "@/lib/api";
+import { Zap } from "lucide-react";
+
 // ── Slash Command Definitions ─────────────────────────────
-const SLASH_COMMANDS = [
-  {
-    command: "/derive",
-    label: "Derive a Data Source",
-    description: "Extract pipeline and save results to Data Warehouse",
-    icon: Database,
-    group: "Extract",
-  },
-  {
-    command: "/sop",
-    label: "Extract an SOP",
-    description: "Extract a Standard Operating Procedure from this task",
-    icon: FileText,
-    group: "Extract",
-  },
-] as const;
-type SlashCommand = (typeof SLASH_COMMANDS)[number];
+// ── Dynamic Slash Command from Skills ─────────────────
+interface SlashCommand {
+  command: string;     // e.g. "/derive"
+  label: string;
+  description: string;
+  icon: React.ComponentType<{ className?: string }>;
+  group: "System" | "Custom";
+  isActive: boolean;
+  skillId: string;
+}
 const DEFAULT_MODEL_VALUE = "__use_default__";
 export default function MessageInput() {
+  // Dynamic slash commands from skills
+  const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
+  const [slashCommandsLoaded, setSlashCommandsLoaded] = useState(false);
+
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const autoRenameCalledRef = useRef(false);
@@ -46,6 +46,37 @@ export default function MessageInput() {
   const [slashFilter, setSlashFilter] = useState("");
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const slashMenuRef = useRef<HTMLDivElement>(null);
+
+  // Load skills for slash commands
+  useEffect(() => {
+    let cancelled = false;
+    const loadSkills = async () => {
+      try {
+        const res = await fetchSkills();
+        if (cancelled) return;
+        const skills: SkillData[] = res.data;
+        const cmds: SlashCommand[] = skills.map((skill) => {
+          const cmd = skill.slash_command || skill.name.toLowerCase().replace(/\s+/g, "_");
+          return {
+            command: `/${cmd}`,
+            label: skill.name,
+            description: skill.description || "",
+            icon: skill.is_system ? Database : Zap,
+            group: skill.is_system ? "System" : "Custom",
+            isActive: skill.is_active,
+            skillId: skill.id,
+          };
+        });
+        setSlashCommands(cmds);
+        setSlashCommandsLoaded(true);
+      } catch {
+        // fallback: empty
+        setSlashCommandsLoaded(true);
+      }
+    };
+    loadSkills();
+    return () => { cancelled = true; };
+  }, []);
 
   const {
     currentTaskId,
@@ -81,19 +112,19 @@ export default function MessageInput() {
 
   // Filter slash commands based on typed text
   const filteredCommands = useMemo(() => {
-    if (!slashFilter) return [...SLASH_COMMANDS];
+    if (!slashFilter) return [...slashCommands];
     const lower = slashFilter.toLowerCase();
-    return SLASH_COMMANDS.filter(
+    return slashCommands.filter(
       (cmd) =>
         cmd.command.slice(1).toLowerCase().startsWith(lower) ||
         cmd.label.toLowerCase().includes(lower)
     );
-  }, [slashFilter]);
+  }, [slashFilter, slashCommands]);
 
   // Detect active slash command in text (for badge display)
   const activeCommand = useMemo(() => {
     const trimmed = text.trimStart();
-    for (const cmd of SLASH_COMMANDS) {
+    for (const cmd of slashCommands) {
       if (
         trimmed.startsWith(cmd.command + " ") ||
         trimmed === cmd.command
@@ -102,23 +133,9 @@ export default function MessageInput() {
       }
     }
     return null;
-  }, [text]);
+  }, [text, slashCommands]);
 
-  // Check if the task has any successful code executions (for /derive availability)
-  const hasCodeExecutions = useMemo(() => {
-    return steps.some(
-      (s) =>
-        s.step_type === "tool_use" &&
-        s.code_output &&
-        (() => {
-          try {
-            return JSON.parse(s.code_output).success === true;
-          } catch {
-            return false;
-          }
-        })()
-    );
-  }, [steps]);
+
 
   const getDefaultModelForMode = (mode: string) => {
     const agentTypeMap: Record<string, string> = {
@@ -469,35 +486,52 @@ export default function MessageInput() {
         {showSlashMenu && filteredCommands.length > 0 && (
           <div
             ref={slashMenuRef}
-            className="absolute bottom-full left-0 mb-1 w-80 rounded-lg border bg-popover p-1 shadow-lg z-50"
+            className="absolute bottom-full left-0 mb-1 w-80 rounded-lg border bg-popover p-1 shadow-lg z-50 max-h-96 overflow-y-auto"
           >
-            {/* Group header */}
-            <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Extract
-            </div>
-            {filteredCommands.map((cmd, idx) => (
-              <button
-                key={cmd.command}
-                className={cn(
-                  "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-                  idx === slashSelectedIndex
-                    ? "bg-accent text-accent-foreground"
-                    : "hover:bg-muted"
-                )}
-                onMouseEnter={() => setSlashSelectedIndex(idx)}
-                onClick={() => selectSlashCommand(cmd)}
-              >
-                <cmd.icon className="h-4 w-4 text-muted-foreground shrink-0" />
-                <div className="text-left min-w-0">
-                  <div className="font-medium text-xs">{cmd.command}</div>
-                  <div className="text-[11px] text-muted-foreground truncate">
-                    {cmd.description}
+            {/* Group by System / Custom */}
+            {["System", "Custom"].map((group) => {
+              const groupCmds = filteredCommands.filter((c) => c.group === group);
+              if (groupCmds.length === 0) return null;
+              return (
+                <div key={group}>
+                  <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {group === "System" ? "🔧 System" : "📦 Custom"}
                   </div>
+                  {groupCmds.map((cmd, idx) => {
+                    const globalIdx = filteredCommands.indexOf(cmd);
+                    return (
+                      <button
+                        key={cmd.skillId}
+                        className={cn(
+                          "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+                          globalIdx === slashSelectedIndex
+                            ? "bg-accent text-accent-foreground"
+                            : "hover:bg-muted"
+                        )}
+                        onMouseEnter={() => setSlashSelectedIndex(globalIdx)}
+                        onClick={() => selectSlashCommand(cmd)}
+                      >
+                        <cmd.icon className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <div className="text-left min-w-0 flex-1">
+                          <div className="font-medium text-xs flex items-center gap-2">
+                            {cmd.command}
+                            {cmd.isActive && (
+                              <span className="inline-block w-2 h-2 rounded-full bg-green-500" title="Active" />
+                            )}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground truncate">
+                            {cmd.description}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
-              </button>
-            ))}
+              );
+            })}
           </div>
         )}
+
 
         <Textarea
           ref={textareaRef}
@@ -589,34 +623,6 @@ export default function MessageInput() {
             ))}
           </SelectContent>
         </Select>
-
-        {/* Extract buttons (mouse trigger for slash commands) */}
-        {currentTaskId && !isSending && (
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() =>
-                handleExtractClick(
-                  SLASH_COMMANDS.find((c) => c.command === "/derive")!
-                )
-              }
-              disabled={!hasCodeExecutions}
-              className={cn(
-                "inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors border",
-                hasCodeExecutions
-                  ? "text-emerald-700 border-emerald-200 bg-emerald-50 hover:bg-emerald-100 dark:text-emerald-300 dark:border-emerald-800 dark:bg-emerald-950 dark:hover:bg-emerald-900"
-                  : "text-muted-foreground/40 border-transparent cursor-not-allowed"
-              )}
-              title={
-                hasCodeExecutions
-                  ? "Derive a Data Source from this task"
-                  : "Run some analysis first"
-              }
-            >
-              <Database className="h-3 w-3" />
-              /derive
-            </button>
-          </div>
-        )}
 
         {/* Shortcut hint */}
         <span className="ml-auto text-[10px] text-muted-foreground">
