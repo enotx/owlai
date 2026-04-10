@@ -68,13 +68,13 @@ export default function AgentsView() {
           {Object.entries(AGENT_LABELS).map(([type, { label, p_title }]) => (
             <div
               key={type}
-              className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors"
+              className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 border rounded-lg hover:bg-accent/50 transition-colors"
             >
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <div className="font-medium">{label}</div>
                 {p_title && <div className="text-sm text-muted-foreground mt-0.5">{p_title}</div>}
               </div>
-              <div className="min-w-[240px] max-w-[400px] ml-auto">
+              <div className="w-full sm:min-w-[240px] sm:max-w-[400px] sm:ml-auto">
                 <Select
                   value={getSelectedValue(type) || ""}
                   onValueChange={(value) => handleModelChange(type, value)}

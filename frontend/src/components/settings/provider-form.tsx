@@ -186,7 +186,7 @@ export default function ProviderForm() {
             <label className="text-sm font-medium mb-2 block">Models</label>
             <div className="space-y-2">
               {models.map((model, index) => (
-                <div key={index} className="flex gap-2">
+                <div key={index} className="flex flex-col sm:flex-row gap-2">
                   <Input
                     placeholder="model-id"
                     value={model.id}
@@ -239,7 +239,7 @@ export default function ProviderForm() {
       </div>
 
       {/* 底部操作栏 */}
-      <div className="px-6 py-4 border-t flex justify-end gap-3">
+      <div className="px-4 sm:px-6 py-4 border-t flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3">
         <Button
           variant="outline"
           onClick={handleTestConnection}

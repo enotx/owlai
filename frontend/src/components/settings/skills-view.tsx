@@ -148,7 +148,7 @@ export default function SkillsView() {
                 className="border rounded-lg p-4 hover:bg-muted/30 transition-colors"
               >
                 {/* Top row: name + badge + actions */}
-                <div className="flex items-center justify-between gap-2 mb-1">
+                <div className="flex items-start sm:items-center justify-between gap-2 mb-1">
                   <div className="flex items-center gap-2 min-w-0 flex-1">
                     <span className="font-medium truncate">{skill.name}</span>
                     <Badge
@@ -404,7 +404,7 @@ function SkillEditor({ skill, onBack, onSaved }: SkillEditorProps) {
       )}
 
       {/* Scrollable form — takes remaining space */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-6">
+      <div className="flex-1 min-h-0 overflow-y-auto p-6 sm:p-6">
         <div className="max-w-2xl space-y-6">
           {/* Name + Allowed Modules */}
           <div>
@@ -655,7 +655,7 @@ price = t.info["currentPrice"]
       </div>
 
       {/* Bottom action bar — fixed at bottom, matching provider-form style */}
-      <div className="shrink-0 px-6 py-4 border-t flex justify-end gap-3">
+      <div className="shrink-0 px-4 sm:px-6 py-4 border-t flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3">
         <Button
           variant="outline"
           onClick={() => setIsActive(!isActive)}

@@ -47,13 +47,13 @@ export default function ProvidersList() {
           {providers.map((provider) => (
             <div
               key={provider.id}
-              className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors"
+              className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 border rounded-lg hover:bg-accent/50 transition-colors"
             >
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 min-w-0">
                 <Sparkles className="h-5 w-5 text-primary" />
                 <span className="font-medium">{provider.display_name}</span>
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 self-end sm:self-auto">
                 <Button
                   variant="outline"
                   size="sm"
