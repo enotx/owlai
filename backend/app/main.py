@@ -18,11 +18,23 @@ from app.config import UPLOADS_DIR, APP_MODE
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化数据库和上传目录"""
-    # 移除：os.makedirs("data/uploads", exist_ok=True)
-    # 改为：UPLOADS_DIR 在 config.py 中已经自动创建
     await init_db()
-    # print(f"✅ Owl Backend is ready. Data directory: {UPLOADS_DIR.parent}")
-    # print(f"🔧 Running in {APP_MODE} mode")
+
+    # ── 启动时清理孤儿文件（DB 中已不存在的 Task 残留） ──
+    try:
+        from app.services.cleanup import cleanup_orphaned_files
+        cleanup_stats = await cleanup_orphaned_files()
+        if cleanup_stats.get("orphaned_dirs_removed") or cleanup_stats.get("temp_files_removed"):
+            import logging
+            logging.getLogger(__name__).info(
+                f"Startup cleanup: {cleanup_stats['orphaned_dirs_removed']} orphaned dirs, "
+                f"{cleanup_stats['temp_files_removed']} temp files, "
+                f"{cleanup_stats['bytes_freed'] / 1024 / 1024:.1f} MB freed"
+            )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Startup cleanup failed (non-fatal): {e}")
+
     yield
 
 app = FastAPI(title="Owl API", version="0.1.3", lifespan=lifespan)

@@ -3,7 +3,7 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -60,15 +60,35 @@ async def update_task(task_id: str, body: TaskUpdate, db: AsyncSession = Depends
 
 
 @router.delete("/{task_id}")
-async def delete_task(task_id: str, db: AsyncSession = Depends(get_db)):
-    """删除任务（级联删除关联数据）"""
+async def delete_task(
+    task_id: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """删除任务（级联删除关联数据 + 后台清理磁盘文件）"""
     task = await db.get(Task, task_id)
     if not task:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Task not found")
+
+    # ── 在删除 DB 前收集文件路径 ─────────────────────────
+    result = await db.execute(
+        select(Knowledge).where(Knowledge.task_id == task_id)
+    )
+    knowledge_file_paths = [
+        k.file_path for k in result.scalars().all() if k.file_path
+    ]
+
+    # ── 级联删除 DB 记录 ────────────────────────────────
     await db.delete(task)
     await db.commit()
+
+    # ── 后台清理磁盘文件 ────────────────────────────────
+    from app.services.cleanup import delete_task_files
+    background_tasks.add_task(delete_task_files, task_id, knowledge_file_paths)
+
     return {"detail": "Task deleted"}
+
 
 @router.patch("/{task_id}/mode", response_model=TaskResponse)
 async def update_task_mode(
