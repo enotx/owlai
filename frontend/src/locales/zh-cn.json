@@ -48,6 +48,10 @@
       "evaUnit01": {
         "name": "初号机",
         "description": "深色战术紫配霓虹绿高光，灵感来自 EVA 初号机。"
+      },
+      "evaUnit02": {
+        "name": "二号机",
+        "description": "深邃赤黑底色配烈焰红点缀，灵感来自 EVA 二号机。"
       }
     },
     "languages": {

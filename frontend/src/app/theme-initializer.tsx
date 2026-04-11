@@ -9,7 +9,7 @@ import { useThemeStore, type Theme } from "@/stores/use-theme-store";
  * Themes that require the `dark` class on <html>.
  * When adding a new dark theme, just append its id here.
  */
-const DARK_THEMES: Theme[] = ["eva-unit-01"];
+const DARK_THEMES: Theme[] = ["eva-unit-01", "eva-unit-02"];
 
 /**
  * Syncs the theme store value to:

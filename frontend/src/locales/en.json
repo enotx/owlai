@@ -48,6 +48,10 @@
       "evaUnit01": {
         "name": "Eva Unit-01",
         "description": "Dark tactical purple with neon green highlights, inspired by EVA Unit-01."
+      },
+      "evaUnit02": {
+        "name": "Eva Unit-02",
+        "description": "Deep crimson darkness with blazing red accents, inspired by EVA Unit-02."
       }
     },
     "languages": {

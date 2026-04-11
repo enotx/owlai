@@ -319,7 +319,90 @@
     --owl-status-offline-border:    oklch(0.46 0.12 28);
     --owl-status-offline-fg:        oklch(0.72 0.18 28);
   }
+  /* ── Eva Unit-02 Theme Overrides ── */
+  [data-theme="eva-unit-02"] {
+    /* ─ Background system (warm dark, slight red undertone) ─ */
+    --background:            oklch(0.15 0.01 30);
+    --foreground:            oklch(0.93 0.01 60);
+    --card:                  oklch(0.20 0.015 30);
+    --card-foreground:       oklch(0.93 0.01 60);
+    --popover:               oklch(0.20 0.015 30);
+    --popover-foreground:    oklch(0.93 0.01 60);
+    /* ─ Primary: Eva-02 signature red ─ */
+    --primary:               oklch(0.55 0.24 29);
+    --primary-foreground:    oklch(0.98 0 0);
+    /* ─ Neutral surfaces ─ */
+    --secondary:             oklch(0.25 0.012 30);
+    --secondary-foreground:  oklch(0.93 0.01 60);
+    --muted:                 oklch(0.23 0.012 30);
+    --muted-foreground:      oklch(0.62 0.02 40);
+    --accent:                oklch(0.25 0.015 30);
+    --accent-foreground:     oklch(0.93 0.01 60);
+    /* ─ Semantic ─ */
+    --destructive:           oklch(0.55 0.24 29);
+    /* ─ Edges ─ */
+    --border:                oklch(0.30 0.015 30);
+    --input:                 oklch(0.28 0.015 30);
+    --ring:                  oklch(0.55 0.24 29);
+    /* ─ Charts (EVA-02 palette: red → orange → gold → white → warm gray) ─ */
+    --chart-1:               oklch(0.55 0.24 29);
+    --chart-2:               oklch(0.72 0.17 55);
+    --chart-3:               oklch(0.82 0.14 85);
+    --chart-4:               oklch(0.95 0.01 60);
+    --chart-5:               oklch(0.45 0.10 30);
+    /* ─ Sidebar ─ */
+    --sidebar:               oklch(0.17 0.012 30);
+    --sidebar-foreground:    oklch(0.91 0.01 60);
+    --sidebar-primary:       oklch(0.55 0.24 29);
+    --sidebar-primary-foreground: oklch(0.98 0 0);
+    --sidebar-accent:        oklch(0.23 0.012 30);
+    --sidebar-accent-foreground:  oklch(0.91 0.01 60);
+    --sidebar-border:        oklch(0.28 0.015 30);
+    --sidebar-ring:          oklch(0.55 0.24 29);
+    /* ─ OWL custom tokens ─ */
+    --owl-sidebar-bg:        oklch(0.17 0.012 30);
+    --owl-sidebar-fg:        oklch(0.90 0.01 60);
+    --owl-sidebar-muted:     oklch(0.56 0.02 40);
+    --owl-sidebar-active-bg: oklch(0.55 0.24 29);
+    --owl-sidebar-active-fg: oklch(0.98 0 0);
+    --owl-sidebar-hover-bg:  oklch(0.23 0.015 30);
+    --owl-sidebar-border:    oklch(0.28 0.015 30);
+    --owl-brand-fg:          oklch(0.93 0.01 60);
+    --owl-brand-sub:         oklch(0.62 0.02 40);
+    --owl-btn-primary-bg:    oklch(0.55 0.24 29);
+    --owl-btn-primary-fg:    oklch(0.98 0 0);
+    --owl-topbar-bg:         oklch(0.17 0.012 30);
+    --owl-topbar-border:     oklch(0.28 0.015 30);
+    --owl-workspace-bg:      oklch(0.15 0.01 30);
+    --owl-dropzone-border:   oklch(0.40 0.10 29);
+    --owl-dropzone-bg:       oklch(0.19 0.015 30);
+    --owl-tab-active-border: oklch(0.55 0.24 29);
+    --owl-tab-active-fg:     oklch(0.55 0.24 29);
+    --owl-tab-inactive-fg:   oklch(0.56 0.02 40);
+    --owl-topbar-search-bg:         oklch(0.19 0.012 30);
+    --owl-topbar-search-fg:         oklch(0.91 0.01 60);
+    --owl-topbar-search-placeholder: oklch(0.58 0.02 40);
+    --owl-topbar-pill-bg:           oklch(0.18 0.012 30);
+    --owl-topbar-pill-border:       oklch(0.32 0.02 30);
+    --owl-topbar-pill-fg:           oklch(0.91 0.01 60);
+    --owl-topbar-icon-bg:           transparent;
+    --owl-topbar-icon-fg:           oklch(0.62 0.02 40);
+    --owl-topbar-icon-hover-bg:     oklch(0.24 0.015 30);
+    --owl-avatar-bg:                oklch(0.55 0.24 29);
+    --owl-avatar-fg:                oklch(0.98 0 0);
+    --owl-status-online-bg:         oklch(0.20 0.02 30);
+    --owl-status-online-border:     oklch(0.60 0.20 29);
+    --owl-status-online-fg:         oklch(0.60 0.20 29);
+    --owl-status-warning-bg:        oklch(0.21 0.02 30);
+    --owl-status-warning-border:    oklch(0.55 0.12 55);
+    --owl-status-warning-fg:        oklch(0.72 0.17 55);
+    --owl-status-offline-bg:        oklch(0.21 0.025 30);
+    --owl-status-offline-border:    oklch(0.46 0.14 29);
+    --owl-status-offline-fg:        oklch(0.60 0.20 29);
+  }
 }
+
+
 
 /* ── Markdown 渲染微调 ── */
 .markdown-body > :first-child {

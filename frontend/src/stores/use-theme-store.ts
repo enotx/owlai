@@ -2,7 +2,7 @@
 
 import { create } from "zustand";
 
-export type Theme = "geek" | "modern" | "eva-unit-01";
+export type Theme = "geek" | "modern" | "eva-unit-01" | "eva-unit-02";
 
 interface ThemeState {
   theme: Theme;
@@ -13,7 +13,7 @@ interface ThemeState {
 function getInitialTheme(): Theme {
   if (typeof window === "undefined") return "modern"; // SSR 环境下默认使用 modern
   const stored = localStorage.getItem("owl-theme");
-  if (stored === "geek" || stored === "modern" || stored === "eva-unit-01") {
+  if (stored === "geek" || stored === "modern" || stored === "eva-unit-01" || stored === "eva-unit-02") {
     return stored;
   }
   return "modern"; // 默认主题

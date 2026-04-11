@@ -27,6 +27,12 @@ const themes: { id: Theme; name: string; description: string; preview: string }[
     description: "interface.themes.evaUnit01.description",
     preview: "bg-gradient-to-br from-[#1a1029] via-[#2a1740] to-[#12081f]",
   },
+  {
+    id: "eva-unit-02",
+    name: "interface.themes.evaUnit02.name",
+    description: "interface.themes.evaUnit02.description",
+    preview: "bg-gradient-to-br from-[#1a0a08] via-[#2a0e0e] to-[#1a0808]",
+  },
 ];
 
 const languages = [
@@ -80,7 +86,9 @@ export default function InterfaceView() {
                         ? "bg-slate-900/60"
                         : themeItem.id === "eva-unit-01"
                           ? "bg-[#241235]/90"
-                          : "bg-gray-200/80"
+                          : themeItem.id === "eva-unit-02"
+                            ? "bg-[#1a0808]/90"
+                            : "bg-gray-200/80"
                     )}
                   />
                   <div className="flex-1 flex flex-col gap-1">
@@ -91,7 +99,9 @@ export default function InterfaceView() {
                           ? "bg-white/30"
                           : themeItem.id === "eva-unit-01"
                             ? "bg-[#b6ff00]/80"
-                            : "bg-gray-300/60"
+                            : themeItem.id === "eva-unit-02"
+                              ? "bg-red-600/80"
+                              : "bg-gray-300/60"
                       )}
                     />
                     <div
@@ -99,7 +109,9 @@ export default function InterfaceView() {
                         "flex-1 rounded",
                         themeItem.id === "eva-unit-01"
                           ? "bg-[#1a0a28]/80"
-                          : "bg-white/20"
+                          : themeItem.id === "eva-unit-02"
+                            ? "bg-[#120505]/80"
+                            : "bg-white/20"
                       )}
                     />
                   </div>
@@ -110,7 +122,9 @@ export default function InterfaceView() {
                         ? "bg-white/15"
                         : themeItem.id === "eva-unit-01"
                           ? "bg-[#2c163f]/90"
-                          : "bg-gray-100/60"
+                          : themeItem.id === "eva-unit-02"
+                            ? "bg-[#200a0a]/90"
+                            : "bg-gray-100/60"
                     )}
                   />
                 </div>
