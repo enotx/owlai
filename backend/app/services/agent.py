@@ -84,190 +84,43 @@ async def _get_client_from_db(
     return client, agent_config.model_id
 
 
-# ── Tool 定义（OpenAI Function Calling 格式） ────────────────
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "execute_python_code",
-            "description": (
-                "Execute Python code in a sandboxed environment with pandas and numpy. "
-                "All CSV datasets are pre-loaded as DataFrames. "
-                "Use print() to output results. "
-                "Use this tool to explore data, compute statistics, verify hypotheses, etc."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "code": {
-                        "type": "string",
-                        "description": "Python code to execute. Use print() for output.",
-                    },
-                    "purpose": {
-                        "type": "string",
-                        "description": "Brief description of what this code does (1 sentence).",
-                    },
-                },
-                "required": ["code", "purpose"],
-            },
-        },
-    }
-]
-
-
-# ── System Prompt 构建 ────────────────────────────────────────
-SYSTEM_PROMPT_TEMPLATE = """\
-You are **Owl 🦉**, an expert AI data analyst.
-
-## Your Approach
-You MUST work step-by-step:
-1. **Understand** — Read the user's question carefully. If unclear, ask for clarification BEFORE doing analysis.
-2. **Explore** — Use `execute_python_code` to inspect the data (shape, distributions, missing values, etc.).
-3. **Analyze** — Form hypotheses, write code to test them, iterate.
-4. **Conclude** — Summarize findings with evidence (numbers, statistics).
-
-## Rules
-- **ALWAYS explore data first** before drawing conclusions. Never guess.
-- **One step at a time** — do NOT try to answer everything in one giant code block. Break it down.
-- If your analysis direction is uncertain, **pause and ask the user** which direction they prefer.
-- Answer in the **same language** the user uses.
-- When presenting results, be concise but include key numbers.
-- If the user hasn't uploaded data yet, tell them to upload first.
-
-## DataFrame Naming Convention (IMPORTANT)
-When your code produces **key result DataFrames** that would be valuable for the user to preview, \
-you MUST name them using one of these prefixes so the system can auto-capture them:
-- `result` / `result_xxx` — final or intermediate analysis results (e.g. `result`, `result_top10`, `result_by_region`)
-- `output` / `output_xxx` — processed/transformed data ready for review (e.g. `output`, `output_cleaned`, `output_pivot`)
-- `summary` / `summary_xxx` — aggregated summaries or statistics (e.g. `summary`, `summary_stats`, `summary_monthly`)
-Examples:
-```python
-# ✅ Good — will be captured for user preview
-result_top10 = df.nlargest(10, 'revenue')
-summary_by_city = df.groupby('city').agg({{'revenue': 'sum'}}).reset_index()
-output = df[df['status'] == 'active']
-# ❌ Bad — generic names won't be prioritized
-temp = df.nlargest(10, 'revenue')
-x = df.groupby('city').agg({{'revenue': 'sum'}})
-
-
-
-## Available Datasets
-{dataset_context}
-
-## Reference Documents
-{text_context}
-
-## Variable Name Reference
-When writing code, use these pre-loaded DataFrame variable names:
-{variable_reference}
-"""
-
-
-async def _build_knowledge_context(
-    task_id: str, db: AsyncSession
-) -> tuple[str, str, str, dict[str, str]]:
-    """
-    构建三部分上下文：
-    1. dataset_context: CSV 元数据 + 样本行
-    2. text_context: TXT 全文
-    3. variable_reference: 变量名对照表
-    4. data_var_map: {变量名: 文件路径} 用于沙箱
-
-    Returns: (dataset_context, text_context, variable_reference, data_var_map)
-    """
-    result = await db.execute(
-        select(Knowledge).where(Knowledge.task_id == task_id)
-    )
-    knowledge_items = list(result.scalars().all())
-
-    dataset_parts: list[str] = []
-    text_parts: list[str] = []
-    var_ref_parts: list[str] = []
-    data_var_map: dict[str, str] = {}
-
-    for k in knowledge_items:
-        if k.type == "csv" and k.file_path and os.path.exists(k.file_path):
-            var_name = sanitize_variable_name(k.name)
-            data_var_map[var_name] = os.path.abspath(k.file_path)
-
-            # 元数据
-            section = f"### 📊 {k.name}  →  variable: `{var_name}`\n"
-            if k.metadata_json:
-                try:
-                    meta = json.loads(k.metadata_json)
-                    shape = meta.get("shape", [0, 0])
-                    section += f"- **Shape**: {shape[0]:,} rows × {shape[1]} columns\n"
-                    if "columns" in meta and "dtypes" in meta:
-                        col_info = ", ".join(
-                            f"`{c}` ({meta['dtypes'].get(c, '?')})"
-                            for c in meta["columns"]
-                        )
-                        section += f"- **Columns**: {col_info}\n"
-                    if "describe" in meta:
-                        section += f"- **Statistics**:\n```\n{json.dumps(meta['describe'], indent=2, ensure_ascii=False)[:2000]}\n```\n"
-                except json.JSONDecodeError:
-                    section += f"- Metadata: {k.metadata_json[:500]}\n"
-
-            # 样本行（前 200 行）
-            try:
-                sample = get_csv_sample_rows(k.file_path, n_rows=200)
-                # 限制样本文本长度，防止 token 爆炸
-                if len(sample) > 5000:
-                    sample = sample[:5000] + "\n... [sample truncated]"
-                section += f"- **Sample rows (first 200)**:\n```\n{sample}\n```\n"
-            except Exception:
-                pass
-
-            dataset_parts.append(section)
-            var_ref_parts.append(f"- `{var_name}` ← {k.name}")
-
-        elif k.type in ("text", "backstory") and k.file_path and os.path.exists(k.file_path):
-            try:
-                content = read_text_content(k.file_path)
-                text_parts.append(f"### 📄 {k.name}\n{content}")
-            except Exception as e:
-                text_parts.append(f"### 📄 {k.name}\n[Error reading file: {e}]")
-
-    dataset_context = "\n".join(dataset_parts) if dataset_parts else "[No datasets uploaded yet.]"
-    text_context = "\n\n".join(text_parts) if text_parts else "[No reference documents.]"
-    variable_reference = "\n".join(var_ref_parts) if var_ref_parts else "[No datasets available.]"
-
-    return dataset_context, text_context, variable_reference, data_var_map
-
-
 async def _load_history_messages(
     task_id: str, db: AsyncSession
 ) -> list[ChatCompletionMessageParam]:
-    """
-    加载对话历史，转换为 OpenAI messages 格式。
-    tool_use 类型的 Step 需要还原为 assistant(tool_call) + tool(result) 对。
-    """
+    """加载对话历史，转换为 OpenAI messages 格式"""
+    from app.models import Step
+    from sqlalchemy import select
+    
     result = await db.execute(
         select(Step)
         .where(Step.task_id == task_id)
         .order_by(Step.created_at.asc())
     )
     all_steps = list(result.scalars().all())
-    # 取最近 N 条
     recent = all_steps[-MAX_HISTORY_STEPS:]
 
     messages: list[ChatCompletionMessageParam] = []
     for s in recent:
-        # 防御性检查：跳过无效的 step
+        # 防御性检查
         if not s.id or not s.step_type:
             continue
+        
+        # 防御 None content
+        content = s.content or ""
 
         if s.step_type == "user_message":
-            if s.content:  # 只添加有内容的消息
-                messages.append({"role": "user", "content": s.content})
+            if content.strip():  # 只添加有内容的消息
+                messages.append({"role": "user", "content": content})
 
         elif s.step_type == "tool_use":
             # 还原为 tool_call + tool_result 对
-            tool_call_id = f"call_{str(s.id)[:20]}"
+            tool_call_id = f"call_{str(s.id)}"  # 使用完整 ID
+            code = s.code or ""
+            code_output = s.code_output or "(no output)"
+            
             messages.append({
                 "role": "assistant",
-                "content": s.content or "",
+                "content": content,
                 "tool_calls": [
                     {
                         "id": tool_call_id,
@@ -275,9 +128,9 @@ async def _load_history_messages(
                         "function": {
                             "name": "execute_python_code",
                             "arguments": json.dumps({
-                                "code": s.code or "",
-                                "purpose": s.content or "",
-                            }),
+                                "code": code,
+                                "purpose": content,
+                            }, ensure_ascii=False),
                         },
                     }
                 ],
@@ -285,20 +138,18 @@ async def _load_history_messages(
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call_id,
-                "content": s.code_output or "(no output)",
+                "content": code_output,
             })  # type: ignore
 
         elif s.step_type == "assistant_message":
-            if s.content:  # 只添加有内容的消息
-                messages.append({"role": "assistant", "content": s.content})
+            if content.strip():
+                messages.append({"role": "assistant", "content": content})
 
         elif s.step_type == "visualization":
-            # 可视化作为 assistant 的简短描述
-            if s.content:
-                messages.append({"role": "assistant", "content": f"[Visualization created] {s.content}"})
+            if content.strip():
+                messages.append({"role": "assistant", "content": f"[Visualization created] {content}"})
 
         elif s.step_type == "hitl_request":
-            # HITL 请求在 LLM 历史中表现为 assistant 的说明
             hitl_info = ""
             if s.code_output:
                 try:
@@ -312,15 +163,14 @@ async def _load_history_messages(
                         f"Options presented: {options_text}"
                     )
                 except json.JSONDecodeError:
-                    hitl_info = f"[HITL Request] {s.content or ''}"
+                    hitl_info = f"[HITL Request] {content}"
             else:
-                hitl_info = f"[HITL Request] {s.content or ''}"
+                hitl_info = f"[HITL Request] {content}"
 
             if hitl_info.strip():
                 messages.append({"role": "assistant", "content": hitl_info})
 
     return messages
-
 
 # ── SSE 事件类型定义 ──────────────────────────────────────────
 # 每个 SSE event 是一个 JSON 行：
