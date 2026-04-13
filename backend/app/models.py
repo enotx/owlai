@@ -36,6 +36,20 @@ class Task(Base):
     subtasks: Mapped[list["SubTask"]] = relationship(back_populates="task", cascade="all, delete-orphan", order_by="SubTask.order")
     visualizations: Mapped[list["Visualization"]] = relationship(back_populates="task", cascade="all, delete-orphan")
 
+    # 新增：任务类型
+    task_type: Mapped[str] = mapped_column(String(20), nullable=False, default="ad_hoc")
+    # "ad_hoc" | "routine" | "script" | "pipeline"
+    
+    # 新增：绑定的资产（routine/script/pipeline 类型时使用）
+    asset_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("assets.id", ondelete="SET NULL"), nullable=True
+    )
+    
+    # 新增：最近一次执行状态（routine/script/pipeline 类型时使用）
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_run_status: Mapped[str | None] = mapped_column(String(20), nullable=True) # "success" | "failed"
+
+
 
 class SubTask(Base):
     """子任务模型，用于Plan模式的任务分拆"""
@@ -248,3 +262,34 @@ class DataPipeline(Base):
     target_table: Mapped["DuckDBTable | None"] = relationship(
         back_populates="pipeline", foreign_keys="[DuckDBTable.pipeline_id]"
     )
+
+class Asset(Base):
+    """资产模型：Script / SOP"""
+    __tablename__ = "assets"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    asset_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    # "script" | "sop"
+    
+    # 来源追踪
+    source_task_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True
+    )
+    
+    # === Script 字段（asset_type="script" 时使用） ===
+    code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    script_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # "general" | "pipeline"
+    
+    # 环境变量（配置性参数）
+    env_vars_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    allowed_modules_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    
+    # === SOP 字段（asset_type="sop" 时使用） ===
+    content_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+

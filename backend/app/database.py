@@ -28,7 +28,7 @@ class Base(DeclarativeBase):
 
 # ===== Schema Migration (in-app) =====
 # 使用 SQLite PRAGMA user_version 记录 schema 版本，避免外部迁移脚本依赖
-LATEST_SCHEMA_VERSION = 8
+LATEST_SCHEMA_VERSION = 9
 # v2: multi-agent (tasks.mode/plan_confirmed/current_subtask_id + subtasks + steps.subtask_id)
 # v3: visualization (visualizations table)
 # v4: skill reference_markdown (lazy-loaded reference doc)
@@ -36,6 +36,7 @@ LATEST_SCHEMA_VERSION = 8
 # v6: data_pipelines.freshness_policy_json + duckdb_tables.query_transform_code
 # v7: skills.is_system + skills.slash_command
 # v8: skills.handler_type + skills.handler_config (支持 custom_handler 类型的 Skill)
+# v9: assets table + task.task_type/asset_id/last_run_*
 
 
 async def _get_user_version(conn) -> int:
@@ -293,6 +294,61 @@ async def upgrade_db_schema() -> dict:
                 await _set_user_version(conn, 8)
                 applied.append("set user_version=8")
                 current = 8
+            # ── v9 migration: assets table + task extensions ──
+            if current < 9:
+                # 创建 assets 表
+                if not await _table_exists(conn, "assets"):
+                    await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS assets (
+                        id VARCHAR(36) PRIMARY KEY,
+                        name VARCHAR(255) NOT NULL,
+                        description TEXT,
+                        asset_type VARCHAR(20) NOT NULL,
+                        source_task_id VARCHAR(36),
+                        code TEXT,
+                        script_type VARCHAR(20),
+                        env_vars_json TEXT NOT NULL DEFAULT '{}',
+                        allowed_modules_json TEXT NOT NULL DEFAULT '[]',
+                        content_markdown TEXT,
+                        created_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
+                        updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
+                        FOREIGN KEY(source_task_id) REFERENCES tasks(id) ON DELETE SET NULL
+                    )
+                    """))
+                    await conn.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_assets_asset_type ON assets(asset_type)"
+                    ))
+                    await conn.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_assets_script_type ON assets(script_type)"
+                    ))
+                    applied.append("CREATE TABLE assets + indexes")
+                
+                # 扩展 tasks 表
+                task_cols = await _get_table_columns(conn, "tasks")
+                if "task_type" not in task_cols:
+                    await conn.execute(text(
+                        "ALTER TABLE tasks ADD COLUMN task_type VARCHAR(20) NOT NULL DEFAULT 'ad_hoc'"
+                    ))
+                    applied.append("ALTER TABLE tasks ADD COLUMN task_type")
+                if "asset_id" not in task_cols:
+                    await conn.execute(text(
+                        "ALTER TABLE tasks ADD COLUMN asset_id VARCHAR(36)"
+                    ))
+                    applied.append("ALTER TABLE tasks ADD COLUMN asset_id")
+                if "last_run_at" not in task_cols:
+                    await conn.execute(text(
+                        "ALTER TABLE tasks ADD COLUMN last_run_at DATETIME"
+                    ))
+                    applied.append("ALTER TABLE tasks ADD COLUMN last_run_at")
+                if "last_run_status" not in task_cols:
+                    await conn.execute(text(
+                        "ALTER TABLE tasks ADD COLUMN last_run_status VARCHAR(20)"
+                    ))
+                    applied.append("ALTER TABLE tasks ADD COLUMN last_run_status")
+                
+                await _set_user_version(conn, 9)
+                applied.append("set user_version=9")
+                current = 9
 
 
             return {

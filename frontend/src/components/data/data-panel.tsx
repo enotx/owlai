@@ -8,6 +8,7 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Download } from "lucide-react";
 import { downloadKnowledge, exportStepDataframe} from "@/lib/api";
 import DataSourcesTab from "./data-sources-tab";
+import AssetPanel from "./asset-panel";
 
 import {
   Table,
@@ -85,8 +86,8 @@ export default function DataPanel({ onClose }: { onClose?: () => void } = {}) {
     <div className="flex items-center border-b">
       {/* Tabs */}
       <div className="flex">
-        {(["data", "sources", "skills"] as const).map((tab) => {
-          const labels = { data: "Data Preview", sources: "Data Sources", skills: "SOPs" };
+        {(["data", "sources", "assets"] as const).map((tab) => {
+          const labels = { data: "Data Preview", sources: "Data Sources", assets: "Assets" };
           const isActive = tab === activeTab;
           return (
             <button
@@ -232,15 +233,8 @@ export default function DataPanel({ onClose }: { onClose?: () => void } = {}) {
         <DataSourcesTab />
       )}
 
-      {activeTab === "skills" && (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
-          <FileText className="h-10 w-10 opacity-30" />
-          <p className="text-sm font-medium">SOPs — Coming Soon</p>
-          <p className="text-xs text-center max-w-[240px]">
-            Use <code className="bg-muted px-1 rounded text-[11px]">/sop</code> in chat
-            to extract Standard Operating Procedures from your analysis.
-          </p>
-        </div>
+      {activeTab === "assets" && (
+        <AssetPanel />
       )}
     </div>
   );

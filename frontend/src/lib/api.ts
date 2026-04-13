@@ -160,6 +160,7 @@ export interface SSEEvent {
   step?: Record<string, unknown>;
   steps?: Record<string, unknown>[];
   // HITL fields
+  hitl_type?: string;
   hitl_title?: string;
   hitl_description?: string;
   hitl_options?: Array<{
@@ -167,6 +168,15 @@ export interface SSEEvent {
     value: string;
     badge?: string;
   }>;
+  // Script HITL fields
+  script?: {
+    name: string;
+    description: string;
+    code: string;
+    script_type: string;
+    env_vars: Record<string, string>;
+    allowed_modules: string[];
+  };
 }
 
 /**
@@ -674,3 +684,66 @@ export const removeTableFromContext = async (
   (await getApi()).post(`/warehouse/tables/${tableId}/remove-from-context`, null, {
     params: { task_id: taskId },
   });
+
+// ===== Assets =====
+export interface AssetData {
+  id: string;
+  name: string;
+  description: string | null;
+  asset_type: "script" | "sop";
+  source_task_id: string | null;
+  code: string | null;
+  script_type: "general" | "pipeline" | null;
+  env_vars: Record<string, string>;
+  allowed_modules: string[];
+  content_markdown: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export const fetchAssets = async (params?: {
+  asset_type?: "script" | "sop";
+  script_type?: "general" | "pipeline";
+}) => {
+  const query = new URLSearchParams();
+  if (params?.asset_type) query.append("asset_type", params.asset_type);
+  if (params?.script_type) query.append("script_type", params.script_type);
+  return (await getApi()).get<AssetData[]>(`/assets?${query.toString()}`);
+};
+export const createAsset = async (data: {
+  name: string;
+  description?: string;
+  asset_type: "script" | "sop";
+  source_task_id?: string;
+  code?: string;
+  script_type?: "general" | "pipeline";
+  env_vars?: Record<string, string>;
+  allowed_modules?: string[];
+  content_markdown?: string;
+}) => (await getApi()).post<AssetData>("/assets", data);
+
+export const updateAsset = async (
+  assetId: string,
+  data: {
+    name?: string;
+    description?: string;
+    code?: string;
+    env_vars?: Record<string, string>;
+    allowed_modules?: string[];
+    content_markdown?: string;
+  }
+) => (await getApi()).patch<AssetData>(`/assets/${assetId}`, data);
+
+export const deleteAsset = async (assetId: string) =>
+  (await getApi()).delete(`/assets/${assetId}`);
+
+export const runAsset = async (
+  assetId: string,
+  data?: {
+    user_message?: string;
+    env_vars_override?: Record<string, string>;
+  }
+) =>
+  (await getApi()).post<{ task_id: string; task_type: string }>(
+    `/assets/${assetId}/run`,
+    data || {}
+  );

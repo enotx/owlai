@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field
 class TaskCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
+    task_type: str = Field(default="ad_hoc", pattern="^(ad_hoc|script|pipeline|routine)$")
+    asset_id: str | None = None
 
 
 class TaskUpdate(BaseModel):
@@ -27,7 +29,10 @@ class TaskResponse(BaseModel):
     current_subtask_id: str | None
     created_at: datetime
     updated_at: datetime
-
+    task_type: str  # 新增
+    asset_id: str | None  # 新增
+    last_run_at: datetime | None  # 新增
+    last_run_status: str | None  # 新增
     model_config = {"from_attributes": True}
 
 
@@ -340,3 +345,71 @@ class DataPipelineResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+# ===== Asset =====
+class AssetCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: str | None = None
+    asset_type: str = Field(..., pattern="^(script|sop)$")
+    source_task_id: str | None = None
+    
+    # Script 字段
+    code: str | None = None
+    script_type: str | None = Field(None, pattern="^(general|pipeline)$")
+    env_vars: dict[str, str] = Field(default_factory=dict)
+    allowed_modules: list[str] = Field(default_factory=list)
+    
+    # SOP 字段
+    content_markdown: str | None = None
+class AssetUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=255)
+    description: str | None = None
+    code: str | None = None
+    env_vars: dict[str, str] | None = None
+    allowed_modules: list[str] | None = None
+    content_markdown: str | None = None
+class AssetResponse(BaseModel):
+    id: str
+    name: str
+    description: str | None
+    asset_type: str
+    source_task_id: str | None
+    
+    # Script 字段
+    code: str | None
+    script_type: str | None
+    env_vars: dict[str, str]
+    allowed_modules: list[str]
+    
+    # SOP 字段
+    content_markdown: str | None
+    
+    created_at: datetime
+    updated_at: datetime
+    model_config = {"from_attributes": True}
+    
+    @classmethod
+    def from_orm(cls, obj):
+        """自定义 ORM 转换，处理 JSON 字段"""
+        import json
+        data = {
+            "id": obj.id,
+            "name": obj.name,
+            "description": obj.description,
+            "asset_type": obj.asset_type,
+            "source_task_id": obj.source_task_id,
+            "code": obj.code,
+            "script_type": obj.script_type,
+            "env_vars": json.loads(obj.env_vars_json) if obj.env_vars_json else {},
+            "allowed_modules": json.loads(obj.allowed_modules_json) if obj.allowed_modules_json else [],
+            "content_markdown": obj.content_markdown,
+            "created_at": obj.created_at,
+            "updated_at": obj.updated_at,
+        }
+        return cls(**data)
+
+class RunAssetRequest(BaseModel):
+    """执行资产的请求"""
+    user_message: str | None = None
+    env_vars_override: dict[str, str] | None = None
+    data_source_ids: list[str] | None = None  # Knowledge 或 DuckDB table IDs

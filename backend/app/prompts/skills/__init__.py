@@ -2,6 +2,7 @@
 """内置 Skill 定义模块"""
 from app.prompts.skills.derive_data_source import get_skill_definition as get_derive_skill
 from app.prompts.skills.extract_sop import get_skill_definition as get_sop_skill
+from app.prompts.skills.extract_scripts import get_skill_definition as get_script_skill
 def get_builtin_skills() -> list[dict]:
     """
     获取所有内置 Skill 定义
@@ -15,4 +16,5 @@ def get_builtin_skills() -> list[dict]:
     return [
         get_derive_skill(),
         get_sop_skill(),
+        get_script_skill(),
     ]

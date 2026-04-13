@@ -5,6 +5,7 @@
  * 支持 ReAct Agent 的多种 Step 类型
  */
 import { create } from "zustand";
+import {AssetData} from "@/lib/api";
 
 // ===== 类型定义 =====
 export interface Task {
@@ -111,8 +112,18 @@ export interface HITLRequest {
   title: string;
   description: string;
   options: HITLOption[];
-  hitl_type?: "default" | "pipeline_confirmation";
+  hitl_type?: "default" | "pipeline_confirmation" | "script_confirmation";
   pipeline?: PipelineProposal;
+  script?: ScriptProposal;
+}
+
+export interface ScriptProposal {
+  name: string;
+  description: string;
+  code: string;
+  script_type: string;
+  env_vars: Record<string, string>;
+  allowed_modules: string[];
 }
 
 export interface PipelineProposal {
@@ -200,8 +211,8 @@ interface TaskStore {
   /** 加载某个 Step 中捕获的 DataFrame 到数据面板 */
   loadStepDataframe: (stepId: string, dfName: string) => Promise<void>;
   // 右侧 Data Panel 当前 Tab
-  activeDataTab: "data" | "sources" | "skills";
-  setActiveDataTab: (tab: "data" | "sources" | "skills") => void;
+  activeDataTab: "data" | "sources" | "assets";
+  setActiveDataTab: (tab: "data" | "sources" | "assets") => void;
 
 
   // 加载状态
@@ -236,6 +247,13 @@ interface TaskStore {
   
   // 添加计算属性的 getter（可选，方便使用）
   getCurrentPendingTool: () => PendingToolExecution | null;
+
+  // Asset 状态
+  assets: AssetData[];
+  setAssets: (assets: AssetData[]) => void;
+  addAsset: (asset: AssetData) => void;
+  removeAsset: (id: string) => void;
+
 }
 
 export const useTaskStore = create<TaskStore>((set, get) => ({
@@ -398,5 +416,11 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   activeDataTab: "data",
   setActiveDataTab: (tab) => set({ activeDataTab: tab }),
 
+  // Asset
+  assets: [],
+  setAssets: (assets) => set({ assets }),
+  addAsset: (asset) => set((s) => ({ assets: [...s.assets, asset] })),
+  removeAsset: (id) =>
+    set((s) => ({ assets: s.assets.filter((a) => a.id !== id) })),
 
 }));

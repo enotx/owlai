@@ -20,6 +20,8 @@ import { MarkdownRenderer } from "./markdown-renderer";
 import HITLCard from "./hitl-card";
 import PipelineConfirmationCard from "./pipeline-confirmation-card";
 import type { ConfirmedPipelineConfig } from "./pipeline-confirmation-card";
+import ScriptConfirmationCard from "./script-confirmation-card";
+
 
 
 import {
@@ -242,11 +244,13 @@ function HITLBlock({
   onSubmit,
   onPipelineConfirm,
   onPipelineCancel,
+  onScriptRespond,
 }: {
   step: Step;
   onSubmit?: (choice: { type: "option" | "custom"; value: string; label: string }) => void;
   onPipelineConfirm?: (config: ConfirmedPipelineConfig) => void;
   onPipelineCancel?: () => void;
+  onScriptRespond?: (message: string) => void;
 }) {
   const parsed = useMemo(() => {
     if (!step.code_output) return null;
@@ -256,18 +260,15 @@ function HITLBlock({
       return null;
     }
   }, [step.code_output]);
-
   const { steps } = useTaskStore();
   const stepIndex = steps.findIndex((s) => s.id === step.id);
   const hasReply =
     stepIndex >= 0 &&
     stepIndex < steps.length - 1 &&
     steps[stepIndex + 1]?.step_type === "user_message";
-
   if (!parsed) {
     return <AssistantBubble content={step.content} />;
   }
-
   // Pipeline Confirmation routing
   if (parsed.hitl_type === "pipeline_confirmation" && parsed.pipeline) {
     return (
@@ -279,7 +280,21 @@ function HITLBlock({
       />
     );
   }
-
+  // Script Confirmation routing
+  if (parsed.hitl_type === "script_confirmation" && (parsed as any).script) {
+    return (
+      <ScriptConfirmationCard
+        data={{
+          title: parsed.title,
+          description: parsed.description,
+          script: (parsed as any).script,
+          options: parsed.options,
+        }}
+        onRespond={(msg) => onScriptRespond?.(msg)}
+        disabled={hasReply}
+      />
+    );
+  }
   // Default HITL card
   return (
     <HITLCard
@@ -291,6 +306,7 @@ function HITLBlock({
     />
   );
 }
+
 
 // ── 流式消息（正在打字） ──────────────────────────────────────
  function StreamingBubble({ message }: { message: StreamingMessage }) {
@@ -816,6 +832,15 @@ export default function ChatArea() {
     handleRegenerate(formattedMessage, currentTaskId);
   }, [currentTaskId, isSending, handleRegenerate]);
 
+  /** Script 确认/取消后，直接发送格式化消息 */
+  const handleScriptRespond = useCallback(
+    (message: string) => {
+      if (!currentTaskId || isSending) return;
+      useTaskStore.getState().setPendingHITL(null);
+      handleRegenerate(message, currentTaskId);
+    },
+    [currentTaskId, isSending, handleRegenerate]
+  );
 
   /** 监听滚动事件，更新 isNearBottom 标志 */
   useEffect(() => {
@@ -950,6 +975,7 @@ export default function ChatArea() {
                     onSubmit={handleHITLSubmit}
                     onPipelineConfirm={handlePipelineConfirm}
                     onPipelineCancel={handlePipelineCancel}
+                    onScriptRespond={handleScriptRespond}
                   />
                   {!isTemp && (
                     <div className="absolute -bottom-1 left-10">

@@ -25,6 +25,7 @@ _CONFIRM_PATTERN = re.compile(r"^\[([\w\s]+?)\s+Confirm\]\s*(\{.*\})", re.DOTALL
 _CONFIRM_SKILL_MAP: dict[str, str] = {
     "derive": "derive",
     "pipeline": "derive",     # Pipeline Confirm 也路由到 derive skill
+    "script": "script",
 }
 
 

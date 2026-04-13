@@ -119,7 +119,7 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
   currentView: "list",
   setCurrentView: (view) => set({ currentView: view }),
 
-    // Skill 状态
+  // Skill 状态
   skills: [],
   setSkills: (skills) => set({ skills }),
   addSkill: (skill) => set((s) => ({ skills: [...s.skills, skill] })),

@@ -46,6 +46,10 @@ class AnalystAgent(BaseAgent):
                 async for chunk in self._handle_derive_pipeline(context, handler_config):
                     yield chunk
                 return
+            elif handler_name == "extract_script":
+                async for chunk in self._handle_extract_script(context, handler_config):
+                    yield chunk
+                return
             elif handler_name == "extract_sop":
                 async for chunk in self._handle_extract_sop(context, handler_config):
                     yield chunk
@@ -1389,6 +1393,388 @@ class AnalystAgent(BaseAgent):
         except Exception as e:
             logger.error(f"SOP extraction failed: {e}")
             yield self._sse({"type": "error", "content": f"Failed to generate SOP: {str(e)}"})
+
+        yield self._sse({"type": "done"})
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Custom Handler: Extract Script
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    async def _handle_extract_script(
+        self, context: dict, handler_config: dict
+    ) -> AsyncGenerator[str, None]:
+        """Custom handler for /script command — extract reusable script from task history"""
+        user_instructions = context.get("user_message", "")
+        # ── Check if this is a confirmation message ──
+        confirm_match = re.match(
+            r"^\[Script\s+Confirm\]\s*(\{.*\})", user_instructions.strip(), re.DOTALL
+        )
+        if confirm_match:
+            try:
+                config = json.loads(confirm_match.group(1))
+            except json.JSONDecodeError:
+                yield self._sse({"type": "error", "content": "Invalid script confirmation payload."})
+                yield self._sse({"type": "done"})
+                return
+            if config.get("cancelled"):
+                yield self._sse({"type": "text", "content": "Script extraction cancelled."})
+                yield self._sse({"type": "done"})
+                return
+            async for chunk in self._save_script_asset(config):
+                yield chunk
+            return
+        
+        # ── Main extraction flow ──
+        yield self._sse({"type": "text", "content": "📝 Analyzing task history to extract a reusable script...\n"})
+        code_history = await self._collect_code_history()
+        if not code_history:
+            yield self._sse({
+                "type": "text",
+                "content": (
+                    "⚠️ No successful code executions found in this task. "
+                    "Please run some analysis first, then use `/script` to save it."
+                ),
+            })
+            yield self._sse({"type": "done"})
+            return
+        knowledge_ctx = await self._gather_knowledge_summary()
+        system_prompt = context.get("invoked_skill_prompt", "")
+        if not system_prompt:
+            logger.error("Extract Script skill prompt_markdown is empty")
+            yield self._sse({"type": "error", "content": "Script extraction skill is misconfigured."})
+            yield self._sse({"type": "done"})
+            return
+        max_react_rounds = handler_config.get("max_react_rounds", 3)
+        last_error: str | None = None
+        proposal: dict | None = None
+        validated_code: str | None = None
+        for attempt in range(max_react_rounds):
+            round_label = f"(attempt {attempt + 1}/{max_react_rounds})"
+            if attempt == 0:
+                yield self._sse({"type": "text", "content": f"🔧 Generating script {round_label}...\n"})
+            else:
+                yield self._sse({
+                    "type": "text",
+                    "content": (
+                        f"🔄 Previous attempt failed. Retrying {round_label}...\n"
+                        f"Error: `{last_error[:200] if last_error else 'unknown'}`\n"
+                    ),
+                })
+            # ── LLM extraction (with heartbeat) ──
+            proposal = None
+            async for item in self._extract_script_with_llm_heartbeat(
+                code_history, user_instructions, knowledge_ctx,
+                system_prompt, last_error,
+            ):
+                if isinstance(item, str):
+                    yield item  # heartbeat
+                else:
+                    proposal = item
+            if proposal is None:
+                yield self._sse({
+                    "type": "text",
+                    "content": "⚠️ Failed to extract script from the task history.",
+                })
+                yield self._sse({"type": "done"})
+                return
+            code = proposal.get("code", "")
+            if not code.strip():
+                last_error = "LLM returned empty code"
+                continue
+            # ── Sandbox validation ──
+            yield self._sse({
+                "type": "tool_start",
+                "code": code,
+                "purpose": f"Script validation {round_label}",
+            })
+            exec_result = None
+            async for item in self._execute_script_validation_with_heartbeat(code, context):
+                if isinstance(item, str):
+                    yield item
+                else:
+                    exec_result = item
+            if exec_result is None:
+                last_error = "Sandbox returned no result"
+                yield self._sse({"type": "tool_result", "success": False, "output": None, "error": last_error, "time": 0})
+                continue
+            yield self._sse({
+                "type": "tool_result",
+                "success": exec_result.get("success", False),
+                "output": exec_result.get("output"),
+                "error": exec_result.get("error"),
+                "time": exec_result.get("execution_time", 0),
+            })
+            if not exec_result.get("success"):
+                last_error = exec_result.get("error", "Unknown execution error")
+                continue
+            # ✅ Validation passed
+            validated_code = code
+            break
+        if validated_code is None:
+            yield self._sse({
+                "type": "text",
+                "content": (
+                    f"❌ Script extraction failed after {max_react_rounds} attempts.\n\n"
+                    f"Last error: `{last_error[:300] if last_error else 'unknown'}`\n\n"
+                    "Please fix the analysis and try `/script` again."
+                ),
+            })
+            yield self._sse({"type": "done"})
+            return
+        assert proposal is not None
+        # ── HITL confirmation card ──
+        script_payload = {
+            "name": proposal.get("name", "Untitled Script"),
+            "description": proposal.get("description", ""),
+            "code": validated_code,
+            "script_type": proposal.get("script_type", "general"),
+            "env_vars": proposal.get("env_vars", {}),
+            "allowed_modules": proposal.get("allowed_modules", []),
+        }
+        yield self._sse({
+            "type": "hitl_request",
+            "hitl_type": "script_confirmation",
+            "title": "💾 Save as Reusable Script",
+            "description": proposal.get("description", ""),
+            "script": script_payload,
+            "options": [
+                {"label": "Save Script", "value": "confirm", "badge": "recommended"},
+                {"label": "Cancel", "value": "cancel"},
+            ],
+        })
+        yield self._sse({"type": "done"})
+    # ── Script extraction helper methods ──
+    async def _extract_script_with_llm(
+        self,
+        code_history: list[dict],
+        user_instructions: str,
+        knowledge_context: str,
+        system_prompt: str,
+        previous_error: str | None = None,
+    ) -> dict | None:
+        """Use LLM to extract a reusable script from code history"""
+        user_prompt_parts: list[str] = []
+        user_prompt_parts.append("## Code History\n")
+        for i, item in enumerate(code_history, 1):
+            user_prompt_parts.append(f"### Execution {i}")
+            user_prompt_parts.append(f"**Purpose**: {item.get('purpose', 'N/A')}")
+            user_prompt_parts.append(f"```python\n{item['code']}\n```")
+            output = item.get("output", "")[:500]
+            if output:
+                user_prompt_parts.append(f"**Output**:\n```\n{output}\n```")
+            user_prompt_parts.append("")
+        if user_instructions:
+            user_prompt_parts.append(f"## User Instructions\n\n{user_instructions}\n")
+        if knowledge_context:
+            user_prompt_parts.append(f"## Available Data\n\n{knowledge_context}\n")
+        if previous_error:
+            user_prompt_parts.append(
+                f"## ⚠️ Previous Attempt Failed\n"
+                f"```\n{previous_error[:1000]}\n```\n\n"
+                f"Fix the code and try again."
+            )
+        user_prompt_parts.append(
+            "## Task\n\n"
+            "Extract a complete, self-contained Python script from the history above. "
+            "Return ONLY the JSON object."
+        )
+        user_prompt = "\n".join(user_prompt_parts)
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.1,
+                max_tokens=8192,
+            )
+            content = (response.choices[0].message.content or "").strip()
+            json_match = re.search(r"\{.*\}", content, re.DOTALL)
+            if not json_match:
+                logger.error("LLM did not return valid JSON for script extraction")
+                return None
+            proposal = json.loads(json_match.group())
+            required = ["name", "code"]
+            for field in required:
+                if field not in proposal:
+                    logger.error(f"Script proposal missing field: {field}")
+                    return None
+            # Defaults
+            proposal.setdefault("description", "")
+            proposal.setdefault("script_type", "general")
+            proposal.setdefault("env_vars", {})
+            proposal.setdefault("allowed_modules", [])
+            return proposal
+        except Exception as e:
+            logger.error(f"Script extraction LLM call failed: {e}")
+            return None
+    async def _extract_script_with_llm_heartbeat(
+        self,
+        code_history: list[dict],
+        user_instructions: str,
+        knowledge_context: str,
+        system_prompt: str,
+        previous_error: str | None = None,
+    ) -> AsyncGenerator[str | dict | None, None]:
+        """Wrapper with heartbeat for LLM extraction"""
+        import asyncio
+        done_event = asyncio.Event()
+        result_holder: list[dict | None] = []
+        async def _do_extract():
+            r = await self._extract_script_with_llm(
+                code_history, user_instructions, knowledge_context,
+                system_prompt, previous_error,
+            )
+            result_holder.append(r)
+            done_event.set()
+        task = asyncio.create_task(_do_extract())
+        while not done_event.is_set():
+            try:
+                await asyncio.wait_for(asyncio.shield(done_event.wait()), timeout=15.0)
+            except asyncio.TimeoutError:
+                yield self._sse({"type": "heartbeat", "content": "llm_thinking"})
+        if task.done() and task.exception():
+            logger.error(f"Script extraction task failed: {task.exception()}")
+            yield None
+            return
+        yield result_holder[0] if result_holder else None
+    async def _execute_script_validation_with_heartbeat(
+        self, code: str, context: dict
+    ) -> AsyncGenerator[str | dict, None]:
+        """在沙箱中验证脚本可执行，带心跳"""
+        from app.services.data_processor import sanitize_variable_name
+        from app.models import Knowledge, Skill
+        from sqlalchemy import select
+
+        # ── 准备 data_var_map ──
+        data_var_map: dict[str, str] = {}
+        result = await self.db.execute(
+            select(Knowledge).where(Knowledge.task_id == self.task_id)
+        )
+        for k in result.scalars().all():
+            if k.type in ("csv", "excel") and k.file_path and os.path.exists(k.file_path):
+                var_name = sanitize_variable_name(k.name)
+                data_var_map[var_name] = os.path.abspath(k.file_path)
+
+        capture_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "script_validate")
+        os.makedirs(capture_dir, exist_ok=True)
+
+        # ── 准备 persistent_vars ──
+        persist_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "persist")
+        persisted_var_map: dict[str, str] = {}
+        if os.path.isdir(persist_dir):
+            import glob
+            for fpath in glob.glob(os.path.join(persist_dir, "*.parquet")):
+                var_name = os.path.splitext(os.path.basename(fpath))[0]
+                persisted_var_map[var_name] = fpath
+            for fpath in glob.glob(os.path.join(persist_dir, "*.json")):
+                var_name = os.path.splitext(os.path.basename(fpath))[0]
+                if var_name not in persisted_var_map:
+                    persisted_var_map[var_name] = fpath
+
+        # ── 准备 skill_envs ──
+        skill_result = await self.db.execute(select(Skill).where(Skill.is_active == True))
+        skill_envs: dict[str, str] = {}
+        for skill in skill_result.scalars().all():
+            try:
+                envs = json.loads(skill.env_vars_json) if skill.env_vars_json else {}
+                skill_envs.update(envs)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            try:
+                modules = json.loads(skill.allowed_modules_json) if skill.allowed_modules_json else []
+                if modules:
+                    existing = json.loads(skill_envs.get("__allowed_modules__", "[]"))
+                    existing.extend(modules)
+                    skill_envs["__allowed_modules__"] = json.dumps(list(set(existing)))
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # 合并 context 中 extra_skill_envs（来自 /script 调用的 skill）
+        extra_envs = context.get("extra_skill_envs")
+        if extra_envs:
+            if "__allowed_modules__" in extra_envs and "__allowed_modules__" in skill_envs:
+                existing_m = set(json.loads(skill_envs["__allowed_modules__"]))
+                new_m = set(json.loads(extra_envs["__allowed_modules__"]))
+                skill_envs["__allowed_modules__"] = json.dumps(list(existing_m | new_m))
+                extra_clean = {k: v for k, v in extra_envs.items() if k != "__allowed_modules__"}
+                skill_envs.update(extra_clean)
+            else:
+                skill_envs.update(extra_envs)
+
+        # ── 复用 base 心跳包装器执行 ──
+        async for item in self._execute_code_with_heartbeat(
+            code=code,
+            data_var_map=data_var_map,
+            capture_dir=capture_dir,
+            skill_envs=skill_envs if skill_envs else None,
+            persistent_vars=persisted_var_map if persisted_var_map else None,
+        ):
+            yield item
+
+    async def _save_script_asset(self, config: dict) -> AsyncGenerator[str, None]:
+        """用户确认后，将 script 保存为 Asset"""
+        from app.models import Asset
+        from app.database import async_session
+        print(f"Saving script asset with config: {config}")
+        name = config.get("name", "Untitled Script")
+        description = config.get("description", "")
+        code = config.get("code", "")
+        script_type = config.get("script_type", "general")
+        env_vars = config.get("env_vars", {})
+        allowed_modules = config.get("allowed_modules", [])
+
+        if not code.strip():
+            yield self._sse({"type": "error", "content": "Cannot save script: code is empty."})
+            yield self._sse({"type": "done"})
+            return
+
+        yield self._sse({"type": "text", "content": f"💾 Saving script `{name}` as an asset...\n"})
+
+        try:
+            async with async_session() as db:
+                asset = Asset(
+                    name=name,
+                    description=description,
+                    asset_type="script",
+                    source_task_id=self.task_id,
+                    code=code,
+                    script_type=script_type,
+                    env_vars_json=json.dumps(env_vars, ensure_ascii=False),
+                    allowed_modules_json=json.dumps(allowed_modules, ensure_ascii=False),
+                )
+                db.add(asset)
+                await db.commit()
+                await db.refresh(asset)
+
+            env_summary = ""
+            if env_vars:
+                env_keys = ", ".join(f"`{k}`" for k in env_vars.keys())
+                env_summary = f"| Env Vars | {env_keys} |\n"
+
+            module_summary = ""
+            if allowed_modules:
+                module_summary = f"| Modules | {', '.join(f'`{m}`' for m in allowed_modules)} |\n"
+
+            code_lines = len(code.strip().split("\n"))
+
+            success_msg = (
+                f"✅ **Script saved successfully!**\n\n"
+                f"| Property | Value |\n"
+                f"|----------|-------|\n"
+                f"| Name | `{name}` |\n"
+                f"| Type | {script_type} |\n"
+                f"| Lines | {code_lines} |\n"
+                f"{env_summary}"
+                f"{module_summary}"
+                f"\nYou can find this script in the **Assets** tab on the right panel.\n"
+                f"Use the **Run** button to execute it independently."
+            )
+            yield self._sse({"type": "text", "content": success_msg})
+
+        except Exception as e:
+            logger.error(f"Script asset save failed: {e}")
+            yield self._sse({"type": "error", "content": f"Failed to save script: {str(e)}"})
 
         yield self._sse({"type": "done"})
 
