@@ -254,11 +254,17 @@ async def _load_history_messages(
 
     messages: list[ChatCompletionMessageParam] = []
     for s in recent:
+        # 防御性检查：跳过无效的 step
+        if not s.id or not s.step_type:
+            continue
+
         if s.step_type == "user_message":
-            messages.append({"role": "user", "content": s.content})
+            if s.content:  # 只添加有内容的消息
+                messages.append({"role": "user", "content": s.content})
+
         elif s.step_type == "tool_use":
             # 还原为 tool_call + tool_result 对
-            tool_call_id = f"call_{s.id[:20]}"
+            tool_call_id = f"call_{str(s.id)[:20]}"
             messages.append({
                 "role": "assistant",
                 "content": s.content or "",
@@ -281,11 +287,16 @@ async def _load_history_messages(
                 "tool_call_id": tool_call_id,
                 "content": s.code_output or "(no output)",
             })  # type: ignore
+
         elif s.step_type == "assistant_message":
-            messages.append({"role": "assistant", "content": s.content})
+            if s.content:  # 只添加有内容的消息
+                messages.append({"role": "assistant", "content": s.content})
+
         elif s.step_type == "visualization":
-            # 对 LLM 来说，可视化属于展示结果；这里作为 assistant 的简短描述即可
-            messages.append({"role": "assistant", "content": f"[Visualization created] {s.content}"})
+            # 可视化作为 assistant 的简短描述
+            if s.content:
+                messages.append({"role": "assistant", "content": f"[Visualization created] {s.content}"})
+
         elif s.step_type == "hitl_request":
             # HITL 请求在 LLM 历史中表现为 assistant 的说明
             hitl_info = ""
@@ -301,10 +312,13 @@ async def _load_history_messages(
                         f"Options presented: {options_text}"
                     )
                 except json.JSONDecodeError:
-                    hitl_info = f"[HITL Request] {s.content}"
+                    hitl_info = f"[HITL Request] {s.content or ''}"
             else:
-                hitl_info = f"[HITL Request] {s.content}"
-            messages.append({"role": "assistant", "content": hitl_info})
+                hitl_info = f"[HITL Request] {s.content or ''}"
+
+            if hitl_info.strip():
+                messages.append({"role": "assistant", "content": hitl_info})
+
     return messages
 
 

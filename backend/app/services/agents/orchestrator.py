@@ -1,6 +1,6 @@
 # backend/app/services/agents/orchestrator.py
 
-"""AgentOrchestrator - 多Agent调度器（Skill-Centric 版本）"""
+"""AgentOrchestrator - 多Agent调度器"""
 
 import json
 import re
@@ -20,11 +20,10 @@ logger = logging.getLogger(__name__)
 _SLASH_CMD_PATTERN = re.compile(r"^/(\w+)\s*(.*)", re.DOTALL)
 
 # Generic confirm pattern: [Derive Confirm] {...} / [Pipeline Confirm] {...}
-# 将 confirm_type 映射到 skill 的 slash_command
 _CONFIRM_PATTERN = re.compile(r"^\[([\w\s]+?)\s+Confirm\]\s*(\{.*\})", re.DOTALL)
 _CONFIRM_SKILL_MAP: dict[str, str] = {
     "derive": "derive",
-    "pipeline": "derive",     # Pipeline Confirm 也路由到 derive skill
+    "pipeline": "derive",
     "script": "script",
 }
 
@@ -43,14 +42,7 @@ class AgentOrchestrator:
         self.model_override = model_override
     
     async def _get_agent_config(self, agent_type: str) -> tuple[AsyncOpenAI, str]:
-        """
-        获取指定Agent类型的LLM配置
-        
-        优先级：
-        1. 用户显式指定的model_override
-        2. 数据库中该agent_type的配置
-        3. 数据库中default agent的配置
-        """
+        """获取指定Agent类型的LLM配置"""
         from app.models import LLMProvider
         from sqlalchemy import select
         
@@ -197,11 +189,7 @@ class AgentOrchestrator:
         user_instructions: str,
         context: dict,
     ) -> AsyncGenerator[str, None]:
-        """
-        统一的 Skill 调用入口。
-        - custom_handler → 注入 handler 信息，由 AnalystAgent 内部路由
-        - standard       → 注入 skill prompt，走标准 analyst ReAct 流程
-        """
+        """统一的 Skill 调用入口"""
         handler_type = "standard"
         handler_config: dict = {}
         try:
@@ -235,7 +223,7 @@ class AgentOrchestrator:
             pass
         context["extra_skill_envs"] = extra_envs
         
-        # 构建增强消息（仅 standard handler 需要前缀；custom handler 直接用原始指令）
+        # 构建增强消息
         if handler_type == "custom_handler":
             context["user_message"] = user_instructions
         else:
@@ -261,11 +249,11 @@ class AgentOrchestrator:
             yield event
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # Intent classification
+    # Intent classification (修正版)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     
     async def _classify_intent(self, user_message: str) -> tuple[str, str, bool]:
-        """使用LLM进行意图识别"""
+        """使用LLM进行意图识别（收紧 plan 门槛）"""
         try:
             client, model = await self._get_agent_config("misc")
         except ValueError:
@@ -275,18 +263,36 @@ class AgentOrchestrator:
         context_summary = await self._get_context_summary()
         
         classification_prompt = f"""You are a task router. Analyze the user's request and return TWO decisions:
+
 **1. mode** — Which agent should handle this?
-- **plan**: Complex, multi-step analysis that needs requirement clarification, breaking down into sub-tasks, strategic thinking, or involves multiple datasets.
-- **analyst**: Straightforward analysis that can be answered directly with 1-3 code executions, clearly defined without ambiguity.
+- **analyst**: The DEFAULT choice. Use for:
+  - Direct data analysis questions (even if multi-step)
+  - Exploratory data analysis
+  - Statistical calculations
+  - Data visualization requests
+  - Questions that can be answered through code execution
+  - ANY request where the user has clear intent and sufficient data
+  
+- **plan**: ONLY use when:
+  - User explicitly asks for help planning or breaking down a complex project
+  - Requirements are genuinely unclear and need structured clarification
+  - Data availability is uncertain and needs systematic assessment
+  - User asks "how should I approach this?" or "help me plan"
+  
+**IMPORTANT**: Default to 'analyst' unless there's strong evidence the user needs planning help.
+
 **2. viz_examples** — Does the request likely involve creating charts, maps, or other visualizations?
-- **true**: User explicitly or implicitly wants visual output (charts, plots, maps, geographic analysis, distribution diagrams, trend lines, etc.)
-- **false**: User wants numbers, tables, text answers, data exploration, or it's too early to tell.
+- **true**: User explicitly or implicitly wants visual output
+- **false**: User wants numbers, tables, text answers, or it's too early to tell
+
 ## Available Context
 {context_summary}
+
 ## User Message
 {user_message}
+
 Respond with ONLY a JSON object, no markdown fences:
-{{"mode": "plan" or "analyst", "reason": "one-sentence explanation", "viz_examples": true or false}}"""
+{{"mode": "analyst" or "plan", "reason": "one-sentence explanation", "viz_examples": true or false}}"""
 
         try:
             response = await client.chat.completions.create(
@@ -343,19 +349,21 @@ Respond with ONLY a JSON object, no markdown fences:
         return "\n".join(lines) if lines else "No knowledge items uploaded yet."
     
     def _keyword_fallback(self, user_message: str) -> tuple[str, str]:
-        """关键词兜底分类"""
-        complex_keywords = [
-            "多个", "multiple", "关联", "join", "merge", "combine",
-            "对比", "compare", "趋势", "trend", "预测", "predict",
-            "分类", "classify", "聚类", "cluster", "思路", "brainstorm",
-            "give me some ideas", "分析方案", "分析计划", "怎么分析",
-            "how to analyze", "help me plan",
+        """关键词兜底分类（收紧 plan 关键词）"""
+        # 只有真正需要规划的关键词才触发 plan
+        plan_keywords = [
+            "help me plan", "how should i approach", "break down",
+            "what's the best way to", "guide me through",
+            "帮我规划", "如何着手", "分解任务", "最佳方案",
         ]
+        
         msg_lower = user_message.lower()
-        matched = [kw for kw in complex_keywords if kw in msg_lower]
+        matched = [kw for kw in plan_keywords if kw in msg_lower]
         if matched:
-            return "plan", f"Keyword match: {', '.join(matched[:3])}"
-        return "analyst", "No complex indicators detected"
+            return "plan", f"Keyword match: {', '.join(matched[:2])}"
+        
+        # 默认走 analyst
+        return "analyst", "Default to analyst for direct analysis"
     
     def _sse(self, data: dict) -> str:
         return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
