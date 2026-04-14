@@ -49,6 +49,11 @@ class Task(Base):
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_run_status: Mapped[str | None] = mapped_column(String(20), nullable=True) # "success" | "failed"
 
+    # 新增：上下文压缩
+    compact_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    compact_anchor_step_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    compact_anchor_created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
 
 
 class SubTask(Base):

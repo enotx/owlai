@@ -19,6 +19,8 @@ import { useSettingsStore } from "@/stores/use-settings-store";
 import { cn } from "@/lib/utils";
 import { fetchSkills, type SkillData } from "@/lib/api";
 import { Zap } from "lucide-react";
+import ContextRing from "./context-ring";
+
 
 // ── Slash Command Definitions ─────────────────────────────
 // ── Dynamic Slash Command from Skills ─────────────────
@@ -576,6 +578,9 @@ export default function MessageInput() {
 
       {/* Mode selector + Model selector + Extract buttons + shortcut hint */}
       <div className="flex items-center gap-2">
+        {/* Context Ring */}
+        <ContextRing />
+
         {/* Mode selector */}
         <Select
           value={currentMode}

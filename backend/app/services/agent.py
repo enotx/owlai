@@ -85,36 +85,83 @@ async def _get_client_from_db(
 
 
 async def _load_history_messages(
-    task_id: str, db: AsyncSession
+    task_id: str,
+    db: AsyncSession,
+    exclude_latest_user: bool = False,
 ) -> list[ChatCompletionMessageParam]:
-    """加载对话历史，转换为 OpenAI messages 格式"""
-    from app.models import Step
+    """
+    加载对话历史，转换为 OpenAI messages 格式
+    
+    Args:
+        task_id: 任务 ID
+        db: 数据库会话
+        exclude_latest_user: 是否排除最后一条 user_message（避免重复注入当前消息）
+    
+    如果 Task 有 compact_context，则：
+    1. 用 compact_context 作为第一条 assistant 消息
+    2. 只加载 compact_anchor_created_at 之后的新 steps
+    """
+    from app.models import Step, Task
     from sqlalchemy import select
     
-    result = await db.execute(
-        select(Step)
-        .where(Step.task_id == task_id)
-        .order_by(Step.created_at.asc())
-    )
-    all_steps = list(result.scalars().all())
-    recent = all_steps[-MAX_HISTORY_STEPS:]
-
+    # 获取 Task
+    result = await db.execute(select(Task).where(Task.id == task_id))
+    task = result.scalar_one_or_none()
+    
     messages: list[ChatCompletionMessageParam] = []
-    for s in recent:
-        # 防御性检查
+    
+    # 如果有压缩上下文，先添加它
+    if task and task.compact_context and task.compact_anchor_created_at:
+        messages.append({
+            "role": "assistant",
+            "content": (
+                "[COMPRESSED_CONTEXT_SUMMARY]\n"
+                "This summary replaces earlier detailed history.\n"
+                "It preserves: user goals, code artifacts, key outputs, decisions.\n"
+                "It omits: visualization configs, verbose prose, redundant tool outputs.\n"
+                "---\n\n"
+                + task.compact_context
+            ),
+        })
+        
+        # 只加载 anchor 之后的 steps
+        result = await db.execute(
+            select(Step)
+            .where(
+                Step.task_id == task_id,
+                Step.created_at > task.compact_anchor_created_at,
+            )
+            .order_by(Step.created_at.asc())
+        )
+        recent_steps = list(result.scalars().all())
+    else:
+        # 没有压缩上下文，加载全部历史（移除 MAX_HISTORY_STEPS 限制）
+        result = await db.execute(
+            select(Step)
+            .where(Step.task_id == task_id)
+            .order_by(Step.created_at.asc())
+        )
+        recent_steps = list(result.scalars().all())
+    
+    # 如果需要排除最后一条 user_message
+    if exclude_latest_user and recent_steps:
+        # 从后往前找第一条 user_message
+        for i in range(len(recent_steps) - 1, -1, -1):
+            if recent_steps[i].step_type == "user_message":
+                recent_steps = recent_steps[:i] + recent_steps[i+1:]
+                break
+    
+    # 转换 steps 为 messages
+    for s in recent_steps:
         if not s.id or not s.step_type:
             continue
         
-        # 防御 None content
         content = s.content or ""
-
         if s.step_type == "user_message":
-            if content.strip():  # 只添加有内容的消息
+            if content.strip():
                 messages.append({"role": "user", "content": content})
-
         elif s.step_type == "tool_use":
-            # 还原为 tool_call + tool_result 对
-            tool_call_id = f"call_{str(s.id)}"  # 使用完整 ID
+            tool_call_id = f"call_{str(s.id)}"
             code = s.code or ""
             code_output = s.code_output or "(no output)"
             
@@ -140,15 +187,12 @@ async def _load_history_messages(
                 "tool_call_id": tool_call_id,
                 "content": code_output,
             })  # type: ignore
-
         elif s.step_type == "assistant_message":
             if content.strip():
                 messages.append({"role": "assistant", "content": content})
-
         elif s.step_type == "visualization":
             if content.strip():
                 messages.append({"role": "assistant", "content": f"[Visualization created] {content}"})
-
         elif s.step_type == "hitl_request":
             hitl_info = ""
             if s.code_output:
@@ -166,10 +210,8 @@ async def _load_history_messages(
                     hitl_info = f"[HITL Request] {content}"
             else:
                 hitl_info = f"[HITL Request] {content}"
-
             if hitl_info.strip():
                 messages.append({"role": "assistant", "content": hitl_info})
-
     return messages
 
 # ── SSE 事件类型定义 ──────────────────────────────────────────
@@ -268,7 +310,7 @@ async def run_agent_stream(
     client, model = client_result
     
     # ── 加载历史消息 ──────────────────────────────────────
-    history_messages = await _load_history_messages(task_id, db)
+    history_messages = await _load_history_messages(task_id, db, exclude_latest_user=True)
     
     # ── 使用 Orchestrator 调度 ────────────────────────────
     orchestrator = AgentOrchestrator(

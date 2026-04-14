@@ -28,7 +28,7 @@ class Base(DeclarativeBase):
 
 # ===== Schema Migration (in-app) =====
 # 使用 SQLite PRAGMA user_version 记录 schema 版本，避免外部迁移脚本依赖
-LATEST_SCHEMA_VERSION = 9
+LATEST_SCHEMA_VERSION = 10
 # v2: multi-agent (tasks.mode/plan_confirmed/current_subtask_id + subtasks + steps.subtask_id)
 # v3: visualization (visualizations table)
 # v4: skill reference_markdown (lazy-loaded reference doc)
@@ -37,6 +37,7 @@ LATEST_SCHEMA_VERSION = 9
 # v7: skills.is_system + skills.slash_command
 # v8: skills.handler_type + skills.handler_config (支持 custom_handler 类型的 Skill)
 # v9: assets table + task.task_type/asset_id/last_run_*
+# v10: tasks.compact_context + tasks.compact_anchor_step_id + tasks.compact_anchor_created_at
 
 
 async def _get_user_version(conn) -> int:
@@ -349,6 +350,30 @@ async def upgrade_db_schema() -> dict:
                 await _set_user_version(conn, 9)
                 applied.append("set user_version=9")
                 current = 9
+
+            # 在 upgrade_db_schema() 函数的最后一个 if current < X 块之后添加
+            # ── v10 migration: context compaction fields ──
+            if current < 10:
+                task_cols = await _get_table_columns(conn, "tasks")
+                if "compact_context" not in task_cols:
+                    await conn.execute(text(
+                        "ALTER TABLE tasks ADD COLUMN compact_context TEXT"
+                    ))
+                    applied.append("ALTER TABLE tasks ADD COLUMN compact_context")
+                if "compact_anchor_step_id" not in task_cols:
+                    await conn.execute(text(
+                        "ALTER TABLE tasks ADD COLUMN compact_anchor_step_id VARCHAR(36)"
+                    ))
+                    applied.append("ALTER TABLE tasks ADD COLUMN compact_anchor_step_id")
+                if "compact_anchor_created_at" not in task_cols:
+                    await conn.execute(text(
+                        "ALTER TABLE tasks ADD COLUMN compact_anchor_created_at DATETIME"
+                    ))
+                    applied.append("ALTER TABLE tasks ADD COLUMN compact_anchor_created_at")
+                
+                await _set_user_version(conn, 10)
+                applied.append("set user_version=10")
+                current = 10
 
 
             return {

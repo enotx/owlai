@@ -802,3 +802,51 @@ export const runAsset = async (
     `/assets/${assetId}/run`,
     data || {}
   );
+
+// ===== Context Management =====
+export interface ContextSizeResponse {
+  total_tokens: number;
+  system_tokens: number;
+  history_tokens: number;
+  compact_active: boolean;
+  needs_compact: boolean;
+  max_tokens: number;
+}
+export interface CompactContextResponse {
+  success: boolean;
+  original_tokens: number;
+  compressed_tokens: number;
+  compression_ratio: number;
+  compact_anchor_step_id: string;
+  compact_anchor_created_at: string;
+  warning?: string;
+}
+export const fetchContextSize = async (taskId: string, mode: string = "analyst") =>
+  (await getApi()).get<ContextSizeResponse>(`/chat/context-size`, {
+    params: { task_id: taskId, mode },
+  });
+
+export interface CompactStatusResponse {
+  status: "idle" | "running" | "completed" | "failed";
+  progress: number;
+  phase: string;
+  message: string;
+  result?: {
+    success: boolean;
+    original_tokens: number;
+    compressed_tokens: number;
+    compression_ratio: number;
+    compact_anchor_step_id: string;
+    compact_anchor_created_at: string;
+    warning?: string;
+  };
+  error?: string;
+}
+export const startCompact = async (taskId: string) =>
+  (await getApi()).post<{ status: string; task_id: string }>(
+    `/chat/tasks/${taskId}/compact/start`
+  );
+export const getCompactStatus = async (taskId: string) =>
+  (await getApi()).get<CompactStatusResponse>(
+    `/chat/tasks/${taskId}/compact/status`
+  );

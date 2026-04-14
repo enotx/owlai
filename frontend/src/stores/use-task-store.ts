@@ -254,6 +254,14 @@ interface TaskStore {
   addAsset: (asset: AssetData) => void;
   removeAsset: (id: string) => void;
 
+  // Context management
+  contextTokens: number;
+  contextLoading: boolean;
+  needsCompact: boolean;
+  setContextTokens: (tokens: number, needsCompact: boolean) => void;
+  setContextLoading: (loading: boolean) => void;
+  refreshContextSize: () => Promise<void>;
+
 }
 
 export const useTaskStore = create<TaskStore>((set, get) => ({
@@ -422,5 +430,32 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   addAsset: (asset) => set((s) => ({ assets: [...s.assets, asset] })),
   removeAsset: (id) =>
     set((s) => ({ assets: s.assets.filter((a) => a.id !== id) })),
-
+  // Context management
+  contextTokens: 0,
+  contextLoading: false,
+  needsCompact: false,
+  
+  setContextTokens: (tokens, needsCompact) => 
+    set({ contextTokens: tokens, needsCompact }),
+  
+  setContextLoading: (loading) => set({ contextLoading: loading }),
+  
+  refreshContextSize: async () => {
+    const { currentTaskId, currentMode } = get();
+    if (!currentTaskId) return;
+    
+    set({ contextLoading: true });
+    try {
+      const { fetchContextSize } = await import("@/lib/api");
+      const res = await fetchContextSize(currentTaskId, currentMode);
+      set({ 
+        contextTokens: res.data.total_tokens,
+        needsCompact: res.data.needs_compact,
+      });
+    } catch (err) {
+      console.error("Failed to fetch context size:", err);
+    } finally {
+      set({ contextLoading: false });
+    }
+  },
 }));

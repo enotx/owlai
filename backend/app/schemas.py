@@ -29,10 +29,13 @@ class TaskResponse(BaseModel):
     current_subtask_id: str | None
     created_at: datetime
     updated_at: datetime
-    task_type: str  # 新增
-    asset_id: str | None  # 新增
-    last_run_at: datetime | None  # 新增
-    last_run_status: str | None  # 新增
+    task_type: str 
+    asset_id: str | None  
+    last_run_at: datetime | None  
+    last_run_status: str | None  
+    compact_context: str | None  
+    compact_anchor_step_id: str | None  
+    compact_anchor_created_at: datetime | None  
     model_config = {"from_attributes": True}
 
 
@@ -64,7 +67,7 @@ class ChatRequest(BaseModel):
 class StepResponse(BaseModel):
     id: str
     task_id: str
-    subtask_id: str | None  # 新增：关联的SubTask ID
+    subtask_id: str | None
     role: str
     step_type: str
     content: str
