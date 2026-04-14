@@ -474,24 +474,87 @@ export const updateTaskMode = async (
   mode: "auto" | "plan" | "analyst"
 ) => (await getApi()).patch(`/tasks/${taskId}/mode`, { mode });
 
+// ===== File Download Helper =====
+/**
+ * 从 Content-Disposition 响应头中提取文件名
+ */
+function extractFilename(resp: Response, fallback: string): string {
+  const disposition = resp.headers.get("content-disposition");
+  if (disposition) {
+    const utf8Match = disposition.match(/filename\*=UTF-8''(.+)/i);
+    if (utf8Match) return decodeURIComponent(utf8Match[1]);
+    const match = disposition.match(/filename="?([^";\n]+)"?/i);
+    if (match) return match[1].trim();
+  }
+  return fallback;
+}
+/**
+ * 通用文件下载
+ * - Tauri: fetch → save dialog → writeFile
+ * - Web:   fetch → Blob → <a> click
+ */
+async function downloadFile(url: string, defaultFilename: string): Promise<void> {
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    throw new Error(`Download failed: HTTP ${resp.status}`);
+  }
+  const filename = extractFilename(resp, defaultFilename);
+  if (isTauriDesktop()) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const { writeFile } = await import("@tauri-apps/plugin-fs");
+    const ext = filename.includes(".") ? filename.split(".").pop()! : "*";
+    const filePath = await save({
+      defaultPath: filename,
+      filters: [{ name: filename, extensions: [ext] }],
+    });
+    if (!filePath) return; // 用户取消了保存
+    const arrayBuffer = await resp.arrayBuffer();
+    await writeFile(filePath, new Uint8Array(arrayBuffer));
+  } else {
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      URL.revokeObjectURL(blobUrl);
+      document.body.removeChild(a);
+    }, 100);
+  }
+}
 // ===== Data Export =====
 /**
- * 下载Knowledge源文件
+ * 下载 Knowledge 源文件
  */
 export const downloadKnowledge = async (knowledgeId: string) => {
   const baseUrl = await getBaseUrl();
   const url = `${baseUrl}/knowledge/${knowledgeId}/download`;
-  window.open(url, '_blank');
+  await downloadFile(url, `knowledge-${knowledgeId}`);
 };
-
 /**
- * 导出DataFrame为Excel
+ * 导出 DataFrame 为 Excel
  */
 export const exportStepDataframe = async (stepId: string, dfName: string) => {
   const baseUrl = await getBaseUrl();
   const url = `${baseUrl}/chat/steps/${stepId}/dataframe/${dfName}/export`;
-  window.open(url, '_blank');
+  await downloadFile(url, `${dfName}.xlsx`);
 };
+// ===== Chat Export =====
+/**
+ * 导出对话记录为 Markdown 或 Jupyter Notebook
+ */
+export const exportChat = async (
+  taskId: string,
+  format: "markdown" | "ipynb"
+) => {
+  const baseUrl = await getBaseUrl();
+  const url = `${baseUrl}/tasks/${taskId}/export?format=${format}`;
+  const ext = format === "markdown" ? "md" : "ipynb";
+  await downloadFile(url, `chat-export.${ext}`);
+};
+
 
 // ===== Skills =====
 export interface SkillData {
@@ -581,20 +644,6 @@ export const regenerateFromStep = async (stepId: string) =>
     task_id: string;
     deleted_ids: string[];
   }>(`/chat/steps/${stepId}/regenerate`);
-
-
-// ===== Chat Export =====
-/**
- * 导出对话记录为 Markdown 或 Jupyter Notebook
- */
-export const exportChat = async (
-  taskId: string,
-  format: "markdown" | "ipynb"
-) => {
-  const baseUrl = await getBaseUrl();
-  const url = `${baseUrl}/tasks/${taskId}/export?format=${format}`;
-  window.open(url, "_blank");
-};
 
 // ===== Software Updates =====
 

@@ -319,6 +319,8 @@ pub fn run() {
             }
         })
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![get_backend_port, open_log_directory])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
