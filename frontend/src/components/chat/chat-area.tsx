@@ -22,6 +22,15 @@ import PipelineConfirmationCard from "./pipeline-confirmation-card";
 import type { ConfirmedPipelineConfig } from "./pipeline-confirmation-card";
 import ScriptConfirmationCard from "./script-confirmation-card";
 
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 
 import {
@@ -45,7 +54,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CapturedDataFrame } from "@/stores/use-task-store";
-import { deleteStepAndAfter, regenerateFromStep, fetchChatHistory, streamChat, exportChat } from "@/lib/api";
+import { deleteStepAndAfter, deleteStep, regenerateFromStep, fetchChatHistory, streamChat, exportChat } from "@/lib/api";
 import type { SSEEvent } from "@/lib/api";
 
 
@@ -342,79 +351,74 @@ function WaitingBubble() {
   );
 }
 
-// ── Step 操作按钮（删除 / 重新生成）─────────────────────────
-function StepActions({
-  step,
-  onRegenerate,
-}: {
-  step: Step;
-  onRegenerate?: (userMessage: string, taskId: string) => void;
-}) {
+// ── Step 删除按钮 ─────────────────────────────────────────────
+function StepActions({ step }: { step: Step }) {
   const { removeStepsByIds, isSending } = useTaskStore();
   const [isDeleting, setIsDeleting] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
-  // 发送中时不显示操作按钮
   if (isSending) return null;
 
   const handleDelete = async () => {
     if (isDeleting) return;
     setIsDeleting(true);
     try {
-      const res = await deleteStepAndAfter(step.id);
+      const res = await deleteStep(step.id);
       const deletedIds: string[] = res.data.deleted_ids;
       if (deletedIds.length > 0) {
-        // 从 store 中移除被删除的 steps
         removeStepsByIds(deletedIds);
       }
     } catch (err) {
       console.error("Delete step failed:", err);
     } finally {
       setIsDeleting(false);
-    }
-  };
-
-  const handleRegenerate = async () => {
-    if (isDeleting) return;
-    setIsDeleting(true);
-    try {
-      const res = await regenerateFromStep(step.id);
-      const { user_message, task_id, deleted_ids } = res.data;
-      if (deleted_ids.length > 0) {
-        removeStepsByIds(deleted_ids);
-      }
-      // 触发重新发送
-      if (user_message && onRegenerate) {
-        onRegenerate(user_message, task_id);
-      }
-    } catch (err) {
-      console.error("Regenerate failed:", err);
-    } finally {
-      setIsDeleting(false);
+      setShowConfirm(false);
     }
   };
 
   return (
-    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-      {/* 只有 assistant 消息和 tool_use 才显示重新生成 */}
-      {(step.step_type === "assistant_message" || step.step_type === "tool_use" || step.step_type === "visualization") && (
+    <>
+      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
         <button
-          onClick={handleRegenerate}
+          onClick={() => setShowConfirm(true)}
           disabled={isDeleting}
-          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-          title="Regenerate from here"
+          className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+          title="Delete this step"
         >
-          <RotateCcw className="h-3.5 w-3.5" />
+          <Trash2 className="h-3.5 w-3.5" />
         </button>
-      )}
-      <button
-        onClick={handleDelete}
-        disabled={isDeleting}
-        className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-        title="Delete this and all following steps"
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-      </button>
-    </div>
+      </div>
+
+      <Dialog open={showConfirm} onOpenChange={setShowConfirm}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Delete this message?</DialogTitle>
+            <DialogDescription>
+              This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setShowConfirm(false)}
+              disabled={isDeleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={isDeleting}
+            >
+              {isDeleting ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+              ) : null}
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -937,7 +941,7 @@ export default function ChatArea() {
                   <UserBubble step={step} />
                   {!isTemp && (
                     <div className="absolute -bottom-1 right-10">
-                      <StepActions step={step} onRegenerate={handleRegenerate} />
+                      <StepActions step={step} />
                     </div>
                   )}
                 </div>
@@ -949,7 +953,7 @@ export default function ChatArea() {
                   <ToolUseBlock step={step} />
                   {!isTemp && (
                     <div className="absolute -bottom-1 left-10">
-                      <StepActions step={step} onRegenerate={handleRegenerate} />
+                      <StepActions step={step} />
                     </div>
                   )}
                 </div>
@@ -961,7 +965,7 @@ export default function ChatArea() {
                   <VisualizationBlock step={step} />
                   {!isTemp && (
                     <div className="absolute -bottom-1 left-10">
-                      <StepActions step={step} onRegenerate={handleRegenerate} />
+                      <StepActions step={step} />
                     </div>
                   )}
                 </div>
@@ -979,7 +983,7 @@ export default function ChatArea() {
                   />
                   {!isTemp && (
                     <div className="absolute -bottom-1 left-10">
-                      <StepActions step={step} onRegenerate={handleRegenerate} />
+                      <StepActions step={step} />
                     </div>
                   )}
                 </div>
@@ -990,7 +994,7 @@ export default function ChatArea() {
                 <AssistantBubble content={step.content} />
                 {!isTemp && (
                   <div className="absolute -bottom-1 left-10">
-                    <StepActions step={step} onRegenerate={handleRegenerate} />
+                    <StepActions step={step} />
                   </div>
                 )}
               </div>

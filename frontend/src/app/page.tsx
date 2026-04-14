@@ -405,13 +405,15 @@ export default function HomePage() {
           "fixed inset-y-0 left-0 z-50 transition-transform duration-300 ease-in-out",
           isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full",
           // Desktop: relative, restore position
-          "md:relative md:z-auto md:translate-x-0 md:transition-[width] md:duration-200 md:ease-out"
+          "md:relative md:z-20 md:translate-x-0 md:transition-[width] md:duration-200 md:ease-out"
         )}
         style={{ width: effectiveLeft }}
       >
         {/* overflow-hidden 放在内容容器上，不裁剪 chevron */}
         <div className="h-full w-full overflow-hidden">
-          {leftCollapsed ? (
+          {isMobile ? (
+            <TaskSidebar onClose={() => setIsMobileSidebarOpen(false)} />
+          ) : leftCollapsed ? (
             <CollapsedSidebar
               onNewTask={handleCollapsedNewTask}
               onOpenSettings={() => setSettingsOpen(true)}

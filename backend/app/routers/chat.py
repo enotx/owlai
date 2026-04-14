@@ -204,6 +204,46 @@ async def export_step_dataframe(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
+# ── 删除单条 Step ──────────────────────────────────────────────
+@router.delete("/steps/{step_id}")
+async def delete_step(
+    step_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    删除指定的单条 Step，同时清理关联的 Visualization 和 capture 文件。
+    """
+    from fastapi import HTTPException
+    # 1. 查找目标 Step
+    result = await db.execute(select(Step).where(Step.id == step_id))
+    step = result.scalar_one_or_none()
+    if not step:
+        raise HTTPException(status_code=404, detail="Step not found")
+    # 2. 清理关联的 capture 文件
+    if step.step_type == "tool_use" and step.code_output:
+        try:
+            output_data = _json.loads(step.code_output)
+            for df_meta in output_data.get("dataframes", []):
+                capture_id = df_meta.get("capture_id", "")
+                df_name = df_meta.get("name", "")
+                capture_dir = os.path.join(UPLOADS_DIR, step.task_id, "captures")
+                file_path = os.path.join(capture_dir, f"{capture_id}_{df_name}.json")
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+        except (_json.JSONDecodeError, Exception):
+            pass
+    # 3. 删除关联的 Visualization
+    viz_result = await db.execute(
+        select(Visualization).where(Visualization.step_id == step_id)
+    )
+    for viz in viz_result.scalars().all():
+        await db.delete(viz)
+    # 4. 删除 Step
+    await db.delete(step)
+    await db.commit()
+    return {"deleted_ids": [step_id]}
+
+
 # ── 删除 Step 及其之后的所有 Step ──────────────────────────────
 @router.delete("/steps/{step_id}")
 async def delete_step_and_after(
@@ -215,25 +255,24 @@ async def delete_step_and_after(
     用于用户清理不理想的对话/执行结果，避免污染上下文。
     """
     from fastapi import HTTPException
-
     # 1. 查找目标 Step
     result = await db.execute(select(Step).where(Step.id == step_id))
     target_step = result.scalar_one_or_none()
     if not target_step:
         raise HTTPException(status_code=404, detail="Step not found")
-
-    # 2. 查找该 Step 及其之后的所有 Step（同一 task）
+    print(f"[DELETE] Found target step: {step_id}, task_id={target_step.task_id}, created_at={target_step.created_at}")
+    # 2. 查找该 Step 及其之后的所有 Step
     result = await db.execute(
         select(Step)
         .where(
             Step.task_id == target_step.task_id,
-            Step.created_at >= target_step.created_at,
+            Step.created_at >= target_step.created_at.strftime("%Y-%m-%d %H:%M:%S"),
         )
         .order_by(Step.created_at.asc())
     )
     steps_to_delete = result.scalars().all()
-
     deleted_ids = [s.id for s in steps_to_delete]
+    print(f"[DELETE] Steps to delete: {len(deleted_ids)} ids={deleted_ids}")
 
     # 3. 删除关联的 capture 文件（可选，清理磁盘）
     for step in steps_to_delete:
@@ -262,9 +301,17 @@ async def delete_step_and_after(
     # 4. 批量删除
     for step in steps_to_delete:
         await db.delete(step)
+    
+    print(f"[DELETE] About to commit, session.dirty={db.dirty}, session.deleted={db.deleted}")
     await db.commit()
-
+    print(f"[DELETE] Commit done")
+    # 5. 验证删除结果
+    verify = await db.execute(select(Step).where(Step.id == step_id))
+    still_exists = verify.scalar_one_or_none()
+    print(f"[DELETE] Verify after commit: step still exists = {still_exists is not None}")
     return {"deleted_ids": deleted_ids}
+
+
 
 
 # ── 重新生成：删除 Step 并返回需要重发的用户消息 ──────────────
@@ -299,7 +346,7 @@ async def regenerate_from_step(
             .where(
                 Step.task_id == task_id,
                 Step.step_type == "user_message",
-                Step.created_at <= target_step.created_at,
+                Step.created_at <= target_step.created_at.strftime("%Y-%m-%d %H:%M:%S"),
             )
             .order_by(Step.created_at.desc())
             .limit(1)
@@ -318,7 +365,7 @@ async def regenerate_from_step(
         select(Step)
         .where(
             Step.task_id == task_id,
-            Step.created_at >= anchor_step.created_at,
+            Step.created_at >= anchor_step.created_at.strftime("%Y-%m-%d %H:%M:%S"),
         )
         .order_by(Step.created_at.asc())
     )

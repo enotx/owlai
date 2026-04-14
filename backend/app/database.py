@@ -531,7 +531,13 @@ async def _create_default_agent_configs() -> None:
 async def get_db():
     """获取数据库会话的依赖注入"""
     async with async_session() as session:
-        yield session
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
 
 async def _seed_builtin_skills() -> None:
     """Seed 内置系统 Skill（幂等：仅在不存在时创建，已存在则同步配置）"""

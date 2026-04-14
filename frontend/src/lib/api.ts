@@ -567,6 +567,12 @@ export const fetchVisualizations = async (taskId: string) =>
 export const deleteStepAndAfter = async (stepId: string) =>
   (await getApi()).delete<{ deleted_ids: string[] }>(`/chat/steps/${stepId}`);
 /**
+ * 删除指定的单条 Step
+ */
+export const deleteStep = async (stepId: string) =>
+  (await getApi()).delete<{ deleted_ids: string[] }>(`/chat/steps/${stepId}`);
+
+/**
  * 重新生成：删除指定 Step 及其之后的所有 Step，返回需要重发的用户消息
  */
 export const regenerateFromStep = async (stepId: string) =>
