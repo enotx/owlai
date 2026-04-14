@@ -17,7 +17,7 @@ class SecurityCheckResult:
 # 禁止 import 的顶级模块
 FORBIDDEN_MODULES = frozenset({
     "os", "sys", "subprocess", "shutil", "pathlib",
-    "socket", "http", "urllib", "requests", "httpx",
+    "socket", "http", "urllib", "httpx", # 我允许了requests，因为有时需要agent调用某些线上接口
     "ftplib", "smtplib", "ctypes", "multiprocessing",
     "threading", "signal", "importlib", "pkgutil",
     "code", "codeop", "compile", "compileall",

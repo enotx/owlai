@@ -90,6 +90,7 @@ async def get_step_dataframe(
     result = await db.execute(select(Step).where(Step.id == step_id))
     step = result.scalar_one_or_none()
     if not step:
+        print('HEY, Step not found:', step_id)
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Step not found")
     if step.step_type != "tool_use" or not step.code_output:

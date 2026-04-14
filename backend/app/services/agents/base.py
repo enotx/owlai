@@ -484,7 +484,7 @@ class BaseAgent(ABC):
     async def _prepare_sandbox_env(
         self,
         *,
-        capture_subdir: str = "default",
+        capture_subdir: str = "",
         extra_skill_envs: dict[str, str] | None = None,
     ) -> SandboxEnv:
         """
@@ -528,7 +528,10 @@ class BaseAgent(ABC):
                 persistent_vars[var_name] = fpath
         
         # 准备 capture_dir
-        capture_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", capture_subdir)
+        if capture_subdir:
+            capture_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", capture_subdir)
+        else:
+            capture_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures")
         os.makedirs(capture_dir, exist_ok=True)
         
         return SandboxEnv(

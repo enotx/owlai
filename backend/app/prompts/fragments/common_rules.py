@@ -24,7 +24,7 @@ Your code runs in a **restricted sandbox**. The following are **BLOCKED and will
 
 **Blocked modules** — Do NOT import:
 - `os`, `sys`, `subprocess`, `shutil`, `pathlib`, `glob`, `io` (file-related)
-- `socket`, `http`, `urllib`, `requests`, `asyncio` (network-related)
+- `socket`, `http`, `urllib`, `asyncio` (network-related)
 - `pickle`, `shelve`, `sqlite3` (serialization / raw DB access)
 
 **Blocked built-in functions** — Do NOT use:
@@ -39,7 +39,6 @@ Your code runs in a **restricted sandbox**. The following are **BLOCKED and will
 | `open('file.csv')` / `pd.read_csv('path')` | Use the **pre-loaded DataFrame variables** listed in "Available Datasets" |
 | `os.listdir()` / `glob.glob()` | Ask the user to upload files, or check "Variable Reference" for available data |
 | `eval(expression)` | Write the expression directly in Python code |
-| `import requests; requests.get(url)` | Use skills with `getenv()` for API credentials, or ask user to provide data |
 | `import sqlite3` | Use `import duckdb; con = duckdb.connect(getenv('WAREHOUSE_PATH'), read_only=True)` |
 
 **Allowed modules**: `pandas`, `numpy`, `math`, `statistics`, `collections`, \

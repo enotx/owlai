@@ -124,7 +124,7 @@ class AnalystAgent(BaseAgent):
         # 准备沙箱环境
         extra_skill_envs = context.get("extra_skill_envs")
         sandbox_env = await self._prepare_sandbox_env(
-            capture_subdir="default",
+            capture_subdir="",
             extra_skill_envs=extra_skill_envs,
         )
         
