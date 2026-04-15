@@ -88,13 +88,16 @@ function normalizeOption(rawOption: EChartsOption): EChartsOption {
     // ── legend 移到底部 ──
     if (option.legend) {
       const patchLegend = (leg: Record<string, unknown>) => {
-        const patched = {
+        const patched: Record<string, unknown> = {
           ...leg,
           bottom: 0,
           left: "center",
           orient: leg.orient || "horizontal",
-          type: "scroll" as const, // 图例过多时可滚动
-          textStyle: { fontSize: 11, ...(typeof leg.textStyle === "object" ? leg.textStyle : {}) },
+          type: "scroll", // 图例过多时可滚动
+          textStyle: {
+            fontSize: 11,
+            ...(typeof leg.textStyle === "object" ? leg.textStyle : {}),
+          },
         };
         delete patched.top;
         return patched;
@@ -373,7 +376,7 @@ export default function EChartsView({
       <div
         ref={divRef}
         className="w-full rounded-md border bg-background"
-        style={{ height }}
+        style={{ height: effectiveHeight }}
       />
 
       {/* 导出工具栏 */}
