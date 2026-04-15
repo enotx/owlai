@@ -5,9 +5,6 @@
 import React, { useEffect, useRef } from "react";
 import { FileCode2 } from "lucide-react";
 
-// 必须引入 Leaflet CSS，否则瓦片错位
-import leafletCssHref from "leaflet/dist/leaflet.css?url";
-
 type MarkerConfig = {
   latlng: [number, number];
   type?: "circle" | "pin";
@@ -115,7 +112,7 @@ export default function LeafletMapView({
 
     const link = document.createElement("link");
     link.rel = "stylesheet";
-    link.href = leafletCssHref;
+    link.href = "https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.css";
     link.dataset.leafletCss = "true";
     document.head.appendChild(link);
 
