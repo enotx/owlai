@@ -26,14 +26,12 @@ import {
   HelpCircle,
   BarChart3,
   Clock,
-  X, 
-  ClipboardList, 
-  FileCode2, 
-  RefreshCw
+  X,
+  ClipboardList,
+  FileCode2,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import TaskCreateDialog from "@/components/tasks/task-create-dialog";
-
 
 type FilterTab = "all" | "ad-hoc" | "routine";
 
@@ -65,7 +63,9 @@ export default function TaskSidebar({ onClose }: { onClose?: () => void } = {}) 
   const editInputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const createMenuRef = useRef<HTMLDivElement>(null);
+
 
   /* 后端就绪后加载 Task 列表 */
   useEffect(() => {
@@ -86,6 +86,19 @@ export default function TaskSidebar({ onClose }: { onClose?: () => void } = {}) 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [menuOpenId]);
+
+  // 点击外部关闭 Create Menu
+  useEffect(() => {
+    if (!createMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (createMenuRef.current && !createMenuRef.current.contains(e.target as Node)) {
+        setCreateMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [createMenuOpen]);
+
 
   /* 进入编辑模式后自动聚焦 */
   useEffect(() => {
@@ -123,9 +136,36 @@ export default function TaskSidebar({ onClose }: { onClose?: () => void } = {}) 
   //   addTask(res.data);
   //   await handleSelect(res.data.id);
   // };
-  const handleCreate = () => {
-    setCreateDialogOpen(true);
-  };
+  const { setPendingTaskSetup } = useTaskStore();
+  const handleCreateAdHoc = useCallback(async () => {
+    const title = `Task ${tasks.length + 1}`;
+    const res = await createTask(title, { task_type: "ad_hoc" });
+    addTask(res.data);
+    await handleSelect(res.data.id);
+    setCreateMenuOpen(false);
+    onClose?.();
+  }, [tasks.length, addTask, handleSelect, onClose]);
+  const handleCreateTypedTask = useCallback(
+    async (taskType: "routine" | "script" | "pipeline") => {
+      const prefixMap = {
+        routine: "Routine",
+        script: "Script",
+        pipeline: "Pipeline",
+      };
+      const res = await createTask(`${prefixMap[taskType]} Task`, {
+        task_type: taskType,
+      });
+      addTask(res.data);
+      setPendingTaskSetup({
+        taskId: res.data.id,
+        taskType,
+      });
+      await handleSelect(res.data.id);
+      setCreateMenuOpen(false);
+      onClose?.();
+    },
+    [addTask, handleSelect, onClose, setPendingTaskSetup]
+  );
 
 
   /* 删除 Task */
@@ -191,6 +231,51 @@ export default function TaskSidebar({ onClose }: { onClose?: () => void } = {}) 
     { id: "ad-hoc", label: "Ad-hoc" },
     { id: "routine", label: "Routine" },
   ];
+
+  const renderCreateMenuItem = (
+    config: {
+      icon: React.ComponentType<{
+        className?: string;
+        style?: React.CSSProperties;
+      }>;
+      title: string;
+      description: string;
+      onClick: () => void;
+    }
+  ) => {
+    const Icon = config.icon;
+
+    return (
+      <button
+        onClick={config.onClick}
+        className="flex w-full items-start gap-2.5 rounded-md px-3 py-2.5 text-left transition-colors"
+        style={{ color: "var(--owl-sidebar-fg)" }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLElement).style.background =
+            "var(--owl-sidebar-hover-bg)";
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLElement).style.background = "transparent";
+        }}
+      >
+        <Icon
+          className="mt-0.5 h-4 w-4 shrink-0"
+          style={{ color: "var(--owl-sidebar-muted)" }}
+        />
+        <div className="min-w-0">
+          <div className="text-sm font-medium leading-5">
+            {config.title}
+          </div>
+          <div
+            className="text-[11px] leading-4"
+            style={{ color: "var(--owl-sidebar-muted)" }}
+          >
+            {config.description}
+          </div>
+        </div>
+      </button>
+    );
+  };
 
   /* Context Menu Portal */
   const contextMenu =
@@ -258,18 +343,63 @@ export default function TaskSidebar({ onClose }: { onClose?: () => void } = {}) 
 
       {/* ─── New Action Button ─── */}
       <div className="px-4 pb-4">
-        <Button
-          className="w-full gap-2 font-semibold"
-          style={{
-            background: "var(--owl-btn-primary-bg)",
-            color: "var(--owl-btn-primary-fg)",
-          }}
-          onClick={handleCreate}
-          disabled={!backendReady}
-        >
-          <Plus className="h-4 w-4" />
-          New Action
-        </Button>
+        <div className="relative flex w-full" ref={createMenuRef}>
+          <Button
+            className="flex-1 justify-center gap-2 rounded-r-none font-semibold"
+            style={{
+              background: "var(--owl-btn-primary-bg)",
+              color: "var(--owl-btn-primary-fg)",
+            }}
+            onClick={handleCreateAdHoc}
+            disabled={!backendReady}
+          >
+            <Plus className="h-4 w-4" />
+            New Action
+          </Button>
+          <Button
+            className="w-10 rounded-l-none px-0"
+            style={{
+              background: "var(--owl-btn-primary-bg)",
+              color: "var(--owl-btn-primary-fg)",
+              borderLeft: "1px solid color-mix(in srgb, var(--owl-btn-primary-fg) 16%, transparent)",
+            }}
+            onClick={() => setCreateMenuOpen((v) => !v)}
+            disabled={!backendReady}
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+          {createMenuOpen && (
+            <div
+              className="absolute top-full z-30 mt-2 w-full rounded-xl border p-1.5 shadow-lg"
+              style={{
+                background: "var(--owl-sidebar-bg)",
+                color: "var(--owl-sidebar-fg)",
+                borderColor: "var(--owl-sidebar-border)",
+              }}
+            >
+              {renderCreateMenuItem({
+                icon: ClipboardList,
+                title: "Routine Task",
+                description: "AI follows a saved SOP to analyze data",
+                onClick: () => handleCreateTypedTask("routine"),
+              })}
+
+              {renderCreateMenuItem({
+                icon: FileCode2,
+                title: "Script Task",
+                description: "Re-run a saved script on data",
+                onClick: () => handleCreateTypedTask("script"),
+              })}
+
+              {renderCreateMenuItem({
+                icon: RefreshCw,
+                title: "Pipeline Task",
+                description: "Run a pipeline script to update data",
+                onClick: () => handleCreateTypedTask("pipeline"),
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ─── Filter Tabs ─── */}
@@ -465,10 +595,7 @@ export default function TaskSidebar({ onClose }: { onClose?: () => void } = {}) 
       </div>
 
       {contextMenu}
-      <TaskCreateDialog
-        open={createDialogOpen}
-        onOpenChange={setCreateDialogOpen}
-      />
+
     </div>
   );
 }

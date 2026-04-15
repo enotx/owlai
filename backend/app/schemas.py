@@ -19,6 +19,9 @@ class TaskCreate(BaseModel):
 class TaskUpdate(BaseModel):
     title: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = None
+    task_type: str | None = Field(None, pattern="^(ad_hoc|script|pipeline|routine)$")
+    asset_id: str | None = None
+    data_source_ids: list[str] | None = None
 
 
 class TaskResponse(BaseModel):

@@ -89,6 +89,18 @@ export const renameTask = async (taskId: string, title: string) =>
 export const autoRenameTask = async (taskId: string) =>
   (await getApi()).post(`/tasks/${taskId}/auto-rename`);
 
+export const updateTask = async (
+  taskId: string,
+  data: {
+    title?: string;
+    description?: string;
+    task_type?: "ad_hoc" | "script" | "pipeline" | "routine";
+    asset_id?: string | null;
+    data_source_ids?: string[];
+  }
+) => (await getApi()).put(`/tasks/${taskId}`, data);
+
+
 /**
  * 执行任务（script/pipeline/routine）
  * 返回 SSE stream，事件格式与 streamChat 相同

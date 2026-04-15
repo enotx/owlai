@@ -21,6 +21,7 @@ import HITLCard from "./hitl-card";
 import PipelineConfirmationCard from "./pipeline-confirmation-card";
 import type { ConfirmedPipelineConfig } from "./pipeline-confirmation-card";
 import ScriptConfirmationCard from "./script-confirmation-card";
+import TaskSetupInline from "@/components/tasks/task-setup-inline";
 
 import {
   Dialog,
@@ -31,8 +32,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-
-
 import {
   Bot,
   User,
@@ -651,6 +650,7 @@ export default function ChatArea() {
     updatePendingToolResult,
     currentMode,
     selectedModel,
+    pendingTaskSetup,
   } = useTaskStore();
   const pendingTool = getCurrentPendingTool();
   // 新增：移动端 Knowledge Zone 折叠状态
@@ -671,6 +671,18 @@ export default function ChatArea() {
     () => tasks.find((t) => t.id === currentTaskId),
     [tasks, currentTaskId]
   );
+  const isCurrentTaskPendingSetup =
+    !!currentTaskId && pendingTaskSetup?.taskId === currentTaskId;
+  const isTypedTaskMissingAsset =
+    !!currentTask &&
+    currentTask.task_type !== "ad_hoc" &&
+    !currentTask.asset_id;
+  const shouldShowEmptyState =
+    !!currentTaskId &&
+    steps.length === 0 &&
+    !streamingMessage &&
+    !isCurrentTaskPendingSetup &&
+    !isTypedTaskMissingAsset;
 
   function EmptyState({ taskType }: { taskType?: string }) {
     const messages: Record<string, { icon: typeof Bot; text: string }> = {
@@ -945,8 +957,11 @@ export default function ChatArea() {
         }}
       >
         <div className="mx-auto max-w-2xl space-y-4 py-4">
+          {/* 新增：待配置任务表单 */}
+          <TaskSetupInline />
+
           {/* 空状态 */}
-          {steps.length === 0 && currentTaskId && !streamingMessage && (
+          {shouldShowEmptyState && (
             <EmptyState taskType={currentTask?.task_type} />
           )}
 

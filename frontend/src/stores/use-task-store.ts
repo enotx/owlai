@@ -274,6 +274,18 @@ interface TaskStore {
   setContextLoading: (loading: boolean) => void;
   refreshContextSize: () => Promise<void>;
 
+  // Pending Task Setup（用于在创建新 Task 后但未进入 Chat 界面前，暂存一些配置信息）
+  pendingTaskSetup: {
+    taskId: string;
+    taskType: "routine" | "script" | "pipeline";
+  } | null;
+  setPendingTaskSetup: (
+    setup: {
+      taskId: string;
+      taskType: "routine" | "script" | "pipeline";
+    } | null
+  ) => void;
+
 }
 
 export const useTaskStore = create<TaskStore>((set, get) => ({
@@ -486,4 +498,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
       set({ contextLoading: false });
     }
   },
+  pendingTaskSetup: null,
+  setPendingTaskSetup: (setup) => set({ pendingTaskSetup: setup }),
+
 }));

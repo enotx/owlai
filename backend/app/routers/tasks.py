@@ -24,47 +24,42 @@ async def create_task(body: TaskCreate, db: AsyncSession = Depends(get_db)):
 
     # ── 校验 asset 绑定 ──
     if body.task_type != "ad_hoc":
-        if not body.asset_id:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{body.task_type} task requires asset_id",
-            )
-        asset = await db.get(Asset, body.asset_id)
-        if not asset:
-            raise HTTPException(status_code=404, detail="Asset not found")
+        if body.asset_id:
+            asset = await db.get(Asset, body.asset_id)
+            if not asset:
+                raise HTTPException(status_code=404, detail="Asset not found")
 
-        # 类型匹配校验
-        _ASSET_TYPE_RULES: dict[str, tuple[str, str | None]] = {
-            "routine":  ("sop",    None),
-            "script":   ("script", "general"),
-            "pipeline": ("script", "pipeline"),
-        }
-        expected = _ASSET_TYPE_RULES.get(body.task_type)
-        if expected:
-            exp_asset_type, exp_script_type = expected
-            if asset.asset_type != exp_asset_type:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"{body.task_type} task requires asset_type='{exp_asset_type}', "
-                        f"got '{asset.asset_type}'"
-                    ),
-                )
-            if exp_script_type and asset.script_type != exp_script_type:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"{body.task_type} task requires script_type='{exp_script_type}', "
-                        f"got '{asset.script_type}'"
-                    ),
-                )
+            _ASSET_TYPE_RULES: dict[str, tuple[str, str | None]] = {
+                "routine":  ("sop", None),
+                "script":   ("script", "general"),
+                "pipeline": ("script", "pipeline"),
+            }
+            expected = _ASSET_TYPE_RULES.get(body.task_type)
+            if expected:
+                exp_asset_type, exp_script_type = expected
+                if asset.asset_type != exp_asset_type:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"{body.task_type} task requires asset_type='{exp_asset_type}', "
+                            f"got '{asset.asset_type}'"
+                        ),
+                    )
+                if exp_script_type and asset.script_type != exp_script_type:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"{body.task_type} task requires script_type='{exp_script_type}', "
+                            f"got '{asset.script_type}'"
+                        ),
+                    )
     else:
         if body.asset_id:
             raise HTTPException(
                 status_code=400,
                 detail="ad_hoc task should not have asset_id",
             )
-
+        
     task = Task(
         title=body.title,
         description=body.description,
@@ -98,18 +93,64 @@ async def get_task(task_id: str, db: AsyncSession = Depends(get_db)):
 @router.put("/{task_id}", response_model=TaskResponse)
 async def update_task(task_id: str, body: TaskUpdate, db: AsyncSession = Depends(get_db)):
     """更新任务"""
+    import json as _json
+    from fastapi import HTTPException
+    from app.models import Asset
+
     task = await db.get(Task, task_id)
     if not task:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Task not found")
+
     if body.title is not None:
         task.title = body.title
+
     if body.description is not None:
         task.description = body.description
+
+    if body.task_type is not None:
+        task.task_type = body.task_type
+
+    if body.data_source_ids is not None:
+        task.data_source_ids = _json.dumps(body.data_source_ids, ensure_ascii=False)
+
+    if body.asset_id is not None:
+        if body.asset_id == "":
+            task.asset_id = None
+        else:
+            asset = await db.get(Asset, body.asset_id)
+            if not asset:
+                raise HTTPException(status_code=404, detail="Asset not found")
+
+            _ASSET_TYPE_RULES: dict[str, tuple[str, str | None]] = {
+                "routine": ("sop", None),
+                "script": ("script", "general"),
+                "pipeline": ("script", "pipeline"),
+            }
+            expected = _ASSET_TYPE_RULES.get(task.task_type)
+            if expected:
+                exp_asset_type, exp_script_type = expected
+                if asset.asset_type != exp_asset_type:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"{task.task_type} task requires asset_type='{exp_asset_type}', "
+                            f"got '{asset.asset_type}'"
+                        ),
+                    )
+                if exp_script_type and asset.script_type != exp_script_type:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"{task.task_type} task requires script_type='{exp_script_type}', "
+                            f"got '{asset.script_type}'"
+                        ),
+                    )
+
+            task.asset_id = body.asset_id
+
     await db.commit()
     await db.refresh(task)
     return task
-
 
 @router.delete("/{task_id}")
 async def delete_task(
