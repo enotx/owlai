@@ -17,6 +17,7 @@ export interface Task {
   current_subtask_id: string | null;
   task_type: "ad_hoc" | "routine" | "script" | "pipeline";
   asset_id: string | null;
+  pipeline_id: string | null;
   data_source_ids: string[];
   last_run_at: string | null;
   last_run_status: string | null;
@@ -297,6 +298,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
       ...t,
       task_type: t.task_type || "ad_hoc",
       asset_id: t.asset_id || null,
+      pipeline_id: t.pipeline_id || null,
       data_source_ids: t.data_source_ids || [],
       last_run_at: t.last_run_at || null,
       last_run_status: t.last_run_status || null,

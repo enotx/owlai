@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import select
 
 from app.database import get_db
-from app.models import Task, Step, Knowledge
+from app.models import Task, Step, Knowledge, DataPipeline
 from app.schemas import TaskCreate, TaskUpdate, TaskResponse, TaskModeUpdate, ExecuteTaskRequest
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -21,50 +21,60 @@ async def create_task(body: TaskCreate, db: AsyncSession = Depends(get_db)):
     import json as _json
     from fastapi import HTTPException
     from app.models import Asset
-
-    # ── 校验 asset 绑定 ──
-    if body.task_type != "ad_hoc":
+    # ── 校验绑定对象 ──
+    if body.task_type == "ad_hoc":
+        if body.asset_id or body.pipeline_id:
+            raise HTTPException(
+                status_code=400,
+                detail="ad_hoc task should not have asset_id or pipeline_id",
+            )
+    elif body.task_type == "routine":
+        if body.pipeline_id:
+            raise HTTPException(
+                status_code=400,
+                detail="routine task should not have pipeline_id",
+            )
         if body.asset_id:
             asset = await db.get(Asset, body.asset_id)
             if not asset:
                 raise HTTPException(status_code=404, detail="Asset not found")
-
-            _ASSET_TYPE_RULES: dict[str, tuple[str, str | None]] = {
-                "routine":  ("sop", None),
-                "script":   ("script", "general"),
-                "pipeline": ("script", "pipeline"),
-            }
-            expected = _ASSET_TYPE_RULES.get(body.task_type)
-            if expected:
-                exp_asset_type, exp_script_type = expected
-                if asset.asset_type != exp_asset_type:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            f"{body.task_type} task requires asset_type='{exp_asset_type}', "
-                            f"got '{asset.asset_type}'"
-                        ),
-                    )
-                if exp_script_type and asset.script_type != exp_script_type:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            f"{body.task_type} task requires script_type='{exp_script_type}', "
-                            f"got '{asset.script_type}'"
-                        ),
-                    )
-    else:
+            if asset.asset_type != "sop":
+                raise HTTPException(
+                    status_code=400,
+                    detail="routine task requires asset_type='sop'",
+                )
+    elif body.task_type == "script":
+        if body.pipeline_id:
+            raise HTTPException(
+                status_code=400,
+                detail="script task should not have pipeline_id",
+            )
+        if body.asset_id:
+            asset = await db.get(Asset, body.asset_id)
+            if not asset:
+                raise HTTPException(status_code=404, detail="Asset not found")
+            if asset.asset_type != "script" or asset.script_type != "general":
+                raise HTTPException(
+                    status_code=400,
+                    detail="script task requires asset_type='script' and script_type='general'",
+                )
+    elif body.task_type == "pipeline":
         if body.asset_id:
             raise HTTPException(
                 status_code=400,
-                detail="ad_hoc task should not have asset_id",
+                detail="pipeline task should not use asset_id",
             )
+        if body.pipeline_id:
+            pipeline = await db.get(DataPipeline, body.pipeline_id)
+            if not pipeline:
+                raise HTTPException(status_code=404, detail="DataPipeline not found")
         
     task = Task(
         title=body.title,
         description=body.description,
         task_type=body.task_type,
         asset_id=body.asset_id,
+        pipeline_id=body.pipeline_id,
         data_source_ids=_json.dumps(body.data_source_ids, ensure_ascii=False),
     )
     db.add(task)
@@ -117,37 +127,43 @@ async def update_task(task_id: str, body: TaskUpdate, db: AsyncSession = Depends
         if body.asset_id == "":
             task.asset_id = None
         else:
+            if task.task_type == "pipeline":
+                raise HTTPException(
+                    status_code=400,
+                    detail="pipeline task should not use asset_id",
+                )
             asset = await db.get(Asset, body.asset_id)
             if not asset:
                 raise HTTPException(status_code=404, detail="Asset not found")
-
-            _ASSET_TYPE_RULES: dict[str, tuple[str, str | None]] = {
-                "routine": ("sop", None),
-                "script": ("script", "general"),
-                "pipeline": ("script", "pipeline"),
-            }
-            expected = _ASSET_TYPE_RULES.get(task.task_type)
-            if expected:
-                exp_asset_type, exp_script_type = expected
-                if asset.asset_type != exp_asset_type:
+            if task.task_type == "routine":
+                if asset.asset_type != "sop":
                     raise HTTPException(
                         status_code=400,
-                        detail=(
-                            f"{task.task_type} task requires asset_type='{exp_asset_type}', "
-                            f"got '{asset.asset_type}'"
-                        ),
+                        detail="routine task requires asset_type='sop'",
                     )
-                if exp_script_type and asset.script_type != exp_script_type:
+            elif task.task_type == "script":
+                if asset.asset_type != "script" or asset.script_type != "general":
                     raise HTTPException(
                         status_code=400,
-                        detail=(
-                            f"{task.task_type} task requires script_type='{exp_script_type}', "
-                            f"got '{asset.script_type}'"
-                        ),
+                        detail="script task requires asset_type='script' and script_type='general'",
                     )
-
             task.asset_id = body.asset_id
+    if body.pipeline_id is not None:
+        if body.pipeline_id == "":
+            task.pipeline_id = None
+        else:
+            if task.task_type != "pipeline":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{task.task_type} task should not use pipeline_id",
+                )
 
+            pipeline = await db.get(DataPipeline, body.pipeline_id)
+            if not pipeline:
+                raise HTTPException(status_code=404, detail="DataPipeline not found")
+
+            task.pipeline_id = body.pipeline_id
+            
     await db.commit()
     await db.refresh(task)
     return task

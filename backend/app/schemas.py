@@ -13,6 +13,7 @@ class TaskCreate(BaseModel):
     description: str | None = None
     task_type: str = Field(default="ad_hoc", pattern="^(ad_hoc|script|pipeline|routine)$")
     asset_id: str | None = None
+    pipeline_id: str | None = None
     data_source_ids: list[str] = Field(default_factory=list)
 
 
@@ -21,6 +22,7 @@ class TaskUpdate(BaseModel):
     description: str | None = None
     task_type: str | None = Field(None, pattern="^(ad_hoc|script|pipeline|routine)$")
     asset_id: str | None = None
+    pipeline_id: str | None = None
     data_source_ids: list[str] | None = None
 
 
@@ -34,7 +36,8 @@ class TaskResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     task_type: str 
-    asset_id: str | None  
+    asset_id: str | None
+    pipeline_id: str | None
     last_run_at: datetime | None  
     last_run_status: str | None  
     compact_context: str | None  

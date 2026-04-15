@@ -10,7 +10,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { fetchAssets, updateTask, type AssetData } from "@/lib/api";
+import {
+  fetchAssets,
+  fetchDataPipelines,
+  updateTask,
+  type AssetData,
+  type DataPipelineData,
+} from "@/lib/api";
 import { useTaskStore } from "@/stores/use-task-store";
 import { Loader2, ClipboardList, FileCode2, RefreshCw } from "lucide-react";
 
@@ -69,6 +75,7 @@ export default function TaskSetupInline() {
   const [description, setDescription] = useState("");
   const [selectedAssetId, setSelectedAssetId] = useState("");
   const [assets, setAssets] = useState<AssetData[]>([]);
+  const [pipelines, setPipelines] = useState<DataPipelineData[]>([]);
   const [loadingAssets, setLoadingAssets] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -76,12 +83,23 @@ export default function TaskSetupInline() {
     if (!setup || !currentTask) return;
     setTitle(currentTask.title || "");
     setDescription(currentTask.description || "");
-    setSelectedAssetId(currentTask.asset_id || "");
+    setSelectedAssetId(
+      taskType === "pipeline"
+        ? currentTask.pipeline_id || ""
+        : currentTask.asset_id || ""
+    );
   }, [setup, currentTask]);
 
   useEffect(() => {
     if (!setup) return;
     setLoadingAssets(true);
+    if (setup.taskType === "pipeline") {
+      fetchDataPipelines()
+        .then((res) => setPipelines(res.data))
+        .catch(() => setPipelines([]))
+        .finally(() => setLoadingAssets(false));
+      return;
+    }
     fetchAssets()
       .then((res) => setAssets(res.data))
       .catch(() => setAssets([]))
@@ -103,11 +121,19 @@ export default function TaskSetupInline() {
         );
     }
   }, [assets, taskType]);
+  
+  const filteredPipelines = useMemo(() => {
+    if (taskType !== "pipeline") return [];
+    return pipelines;
+  }, [pipelines, taskType]);
 
   useEffect(() => {
     if (!selectedAssetId || title.trim()) return;
-    const asset = filteredAssets.find((a) => a.id === selectedAssetId);
-    if (!asset || !taskType) return;
+    const selectedName =
+      taskType === "pipeline"
+        ? filteredPipelines.find((p) => p.id === selectedAssetId)?.name
+        : filteredAssets.find((a) => a.id === selectedAssetId)?.name;
+    if (!selectedName || !taskType) return;
 
     const prefixMap: Record<TypedTaskType, string> = {
       routine: "Routine",
@@ -115,8 +141,8 @@ export default function TaskSetupInline() {
       pipeline: "Pipeline",
     };
 
-    setTitle(`${prefixMap[taskType]}: ${asset.name}`);
-  }, [selectedAssetId, filteredAssets, title, taskType]);
+    setTitle(`${prefixMap[taskType]}: ${selectedName}`);
+  }, [selectedAssetId, filteredAssets, filteredPipelines, title, taskType]);
 
   if (!setup || !taskType || !currentTaskId) return null;
 
@@ -131,7 +157,8 @@ export default function TaskSetupInline() {
       const res = await updateTask(currentTaskId, {
         title: title.trim(),
         description: description.trim() || undefined,
-        asset_id: selectedAssetId,
+        asset_id: taskType === "pipeline" ? undefined : selectedAssetId,
+        pipeline_id: taskType === "pipeline" ? selectedAssetId : undefined,
       });
 
       useTaskStore.setState((state) => ({
@@ -182,6 +209,25 @@ export default function TaskSetupInline() {
               <Loader2 className="h-4 w-4 animate-spin" />
               Loading assets...
             </div>
+          ) : taskType === "pipeline" ? (
+            filteredPipelines.length === 0 ? (
+              <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                {meta.emptyText}
+              </div>
+            ) : (
+              <Select value={selectedAssetId} onValueChange={setSelectedAssetId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose a pipeline..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {filteredPipelines.map((pipeline) => (
+                    <SelectItem key={pipeline.id} value={pipeline.id}>
+                      {pipeline.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )
           ) : filteredAssets.length === 0 ? (
             <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
               {meta.emptyText}

@@ -5,10 +5,13 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   fetchAssets,
+  fetchDataPipelines,
   deleteAsset,
   updateAsset,
   type AssetData,
+  type DataPipelineData,
 } from "@/lib/api";
+
 import { useTaskStore } from "@/stores/use-task-store";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -32,6 +35,7 @@ type TabId = "scripts" | "pipelines" | "sops";
 
 export default function AssetPanel() {
   const [assets, setAssets] = useState<AssetData[]>([]);
+  const [pipelines, setPipelines] = useState<DataPipelineData[]>([]);
   const [activeTab, setActiveTab] = useState<TabId>("scripts");
   const [loading, setLoading] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -43,21 +47,31 @@ export default function AssetPanel() {
   const loadAssets = useCallback(async () => {
     setLoading(true);
     try {
+      if (activeTab === "pipelines") {
+        const res = await fetchDataPipelines();
+        setPipelines(res.data);
+        setAssets([]);
+        return;
+      }
+
       let params: {
         asset_type?: "script" | "sop";
         script_type?: "general" | "pipeline";
       } = {};
+
       if (activeTab === "scripts") {
         params = { asset_type: "script", script_type: "general" };
-      } else if (activeTab === "pipelines") {
-        params = { asset_type: "script", script_type: "pipeline" };
       } else {
         params = { asset_type: "sop" };
       }
+
       const res = await fetchAssets(params);
       setAssets(res.data);
+      setPipelines([]);
     } catch (err) {
       console.error("Failed to load assets:", err);
+      setAssets([]);
+      setPipelines([]);
     } finally {
       setLoading(false);
     }
@@ -167,16 +181,80 @@ export default function AssetPanel() {
             <span className="text-xs">
               Use{" "}
               <code className="rounded bg-muted px-1 py-0.5">
-                /{activeTab === "sops" ? "sop" : "script"}
+                /{activeTab === "sops" ? "sop" : activeTab === "pipelines" ? "derive" : "script"}
               </code>{" "}
               in a task to extract one.
             </span>
           </div>
+        ) : activeTab === "pipelines" ? (
+          pipelines.map((pipeline) => {
+            const isExpanded = expandedId === pipeline.id;
+
+            return (
+              <Card key={pipeline.id} className="overflow-hidden">
+                <div className="p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                      <Database className="h-4 w-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-medium text-sm truncate">
+                        {pipeline.name}
+                      </h3>
+                      {pipeline.description && (
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                          {pipeline.description}
+                        </p>
+                      )}
+
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        <span className="text-[10px] rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
+                          target: {pipeline.target_table_name}
+                        </span>
+                        <span className="text-[10px] rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
+                          {pipeline.write_strategy}
+                        </span>
+                        <span className="text-[10px] rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
+                          {pipeline.status}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 mt-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            setExpandedId(isExpanded ? null : pipeline.id)
+                          }
+                          className="h-7 text-xs"
+                        >
+                          <Eye className="h-3 w-3 mr-1" />
+                          {isExpanded ? "Hide" : "View"}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {isExpanded && (
+                  <div className="border-t bg-muted/20">
+                    <div className="p-4">
+                      <div className="text-xs font-medium text-muted-foreground mb-2">
+                        Transform Code
+                      </div>
+                      <pre className="text-xs overflow-x-auto max-h-80 leading-relaxed">
+                        <code>{pipeline.transform_code}</code>
+                      </pre>
+                    </div>
+                  </div>
+                )}
+              </Card>
+            );
+          })
         ) : (
           assets.map((asset) => {
             const isExpanded = expandedId === asset.id;
             const isEditing = editingId === asset.id;
-
             return (
               <Card key={asset.id} className="overflow-hidden">
                 <div className="p-4">

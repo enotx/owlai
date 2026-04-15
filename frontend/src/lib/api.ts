@@ -67,6 +67,7 @@ export const createTask = async (
     description?: string;
     task_type?: "ad_hoc" | "script" | "pipeline" | "routine";
     asset_id?: string;
+    pipeline_id?: string;
     data_source_ids?: string[];
   }
 ) =>
@@ -75,6 +76,7 @@ export const createTask = async (
     description: options?.description,
     task_type: options?.task_type || "ad_hoc",
     asset_id: options?.asset_id,
+    pipeline_id: options?.pipeline_id,
     data_source_ids: options?.data_source_ids || [],
   });
 
@@ -96,6 +98,7 @@ export const updateTask = async (
     description?: string;
     task_type?: "ad_hoc" | "script" | "pipeline" | "routine";
     asset_id?: string | null;
+    pipeline_id?: string;
     data_source_ids?: string[];
   }
 ) => (await getApi()).put(`/tasks/${taskId}`, data);
@@ -918,6 +921,32 @@ export const runAsset = async (
     `/assets/${assetId}/run`,
     data || {}
   );
+
+export interface DataPipelineData {
+  id: string;
+  name: string;
+  description: string | null;
+  source_task_id: string | null;
+  source_type: string;
+  source_config: string;
+  transform_code: string;
+  transform_description: string | null;
+  target_table_name: string;
+  write_strategy: string;
+  upsert_key: string | null;
+  output_schema: string | null;
+  is_auto: boolean;
+  freshness_policy_json: string;
+  status: string;
+  last_run_at: string | null;
+  last_run_status: string | null;
+  last_run_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const fetchDataPipelines = async () =>
+  (await getApi()).get<DataPipelineData[]>("/data-pipelines");
 
 // ===== Context Management =====
 export interface ContextSizeResponse {

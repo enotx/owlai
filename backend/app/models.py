@@ -44,6 +44,9 @@ class Task(Base):
     asset_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("assets.id", ondelete="SET NULL"), nullable=True
     )
+    pipeline_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("data_pipelines.id", ondelete="SET NULL"), nullable=True
+    )
     data_source_ids: Mapped[str] = mapped_column(Text, nullable=True, default="[]")
 
     # 新增：最近一次执行状态（routine/script/pipeline 类型时使用）
