@@ -470,7 +470,7 @@ async def get_context_size(
     total_tokens = system_tokens + history_tokens
     
     # 检查是否超出限制
-    MAX_CONTEXT_TOKENS = 100_000
+    MAX_CONTEXT_TOKENS = 200_000
     needs_compact = total_tokens > MAX_CONTEXT_TOKENS
     
     return {

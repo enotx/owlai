@@ -7,7 +7,7 @@ import { startCompact, getCompactStatus } from "@/lib/api";
 import { Loader2, Zap, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const MAX_TOKENS = 100_000;
+const MAX_TOKENS = 200_000;
 const POLL_INTERVAL = 5000; // 5秒轮询一次
 
 export default function ContextRing() {
