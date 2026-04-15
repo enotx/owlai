@@ -9,6 +9,8 @@ from app.services.agents.base import BaseAgent
 from app.prompts import build_analyst_system_prompt
 from app.tools import get_tools_for_agent
 
+from sqlalchemy import select
+
 import logging
 logger = logging.getLogger(__name__)
 
@@ -111,6 +113,16 @@ class AnalystAgent(BaseAgent):
             warehouse_context=warehouse_context,
             include_viz_examples=include_viz_examples,
         )
+
+        # ── SOP 注入（routine task） ──
+        # 检查 context 中是否标记了 routine 任务
+        # 如果是，从 Task.asset_id 加载 SOP 并注入到 system prompt 前部
+        sop_context = await self._get_sop_context()
+        if sop_context:
+            system_prompt = sop_context + "\n\n" + system_prompt
+            # routine 模式下覆盖 current_task 描述
+            current_task = "[Routine analysis — follow the SOP strictly]"
+
         
         # 加载历史
         history = context.get("history_messages", [])
@@ -143,3 +155,21 @@ class AnalystAgent(BaseAgent):
             yield event
         
         yield self._sse({"type": "done"})
+
+    async def _get_sop_context(self) -> str | None:
+        """
+        如果当前 Task 是 routine 类型且绑定了 SOP，返回格式化 SOP 上下文。
+        非 routine task 返回 None。
+        """
+        from app.models import Task, Asset
+        from app.services.context_builder import format_sop_context
+        result = await self.db.execute(
+            select(Task).where(Task.id == self.task_id)
+        )
+        task = result.scalar_one_or_none()
+        if not task or task.task_type != "routine" or not task.asset_id:
+            return None
+        asset = await self.db.get(Asset, task.asset_id)
+        if not asset or asset.asset_type != "sop" or not asset.content_markdown:
+            return None
+        return format_sop_context(asset.name, asset.content_markdown)

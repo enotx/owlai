@@ -9,7 +9,10 @@ from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Asset, Step
+from app.services.data_processor import (
+    sanitize_variable_name
+)
+from app.models import Asset, Step, Visualization
 from app.services.sandbox import execute_code_in_sandbox
 from app.config import UPLOADS_DIR
 
@@ -76,6 +79,9 @@ async def run_script(
     if allowed_modules:
         extra_envs["__allowed_modules__"] = json.dumps(allowed_modules)
 
+    capture_dir = os.path.join(UPLOADS_DIR, task_id, "captures")
+    os.makedirs(capture_dir, exist_ok=True)
+
     # 3. 构建 data_var_map — 从选中的 data sources 加载
     from app.services.data_processor import sanitize_variable_name
     from app.models import Knowledge
@@ -84,16 +90,61 @@ async def run_script(
     data_var_map: dict[str, str] = {}
 
     if data_source_ids:
+        from app.models import DuckDBTable
+        from app.config import WAREHOUSE_PATH
+        from sqlalchemy import select as sa_select
         for ds_id in data_source_ids:
-            # 尝试作为 Knowledge 加载
+            # ── 尝试作为 Knowledge 加载 ──
             k = await db.get(Knowledge, ds_id)
             if k and k.type in ("csv", "excel") and k.file_path and os.path.exists(k.file_path):
                 var_name = sanitize_variable_name(k.name)
                 data_var_map[var_name] = os.path.abspath(k.file_path)
                 continue
-            
-            # 尝试作为 DuckDB table（不加载为文件，代码中用 SQL 访问）
-            # DuckDB tables 通过 WAREHOUSE_PATH env var 访问，无需预加载
+            # ── 尝试作为 DuckDB table 预加载 ──
+            result = await db.execute(
+                sa_select(DuckDBTable).where(DuckDBTable.id == ds_id)
+            )
+            duckdb_table = result.scalar_one_or_none()
+            if duckdb_table and duckdb_table.status == "ready":
+                try:
+                    temp_path = await _preload_duckdb_table(
+                        table_name=duckdb_table.table_name,
+                        display_name=duckdb_table.display_name,
+                        capture_dir=capture_dir,
+                    )
+                    if temp_path:
+                        var_name = sanitize_variable_name(duckdb_table.display_name)
+                        data_var_map[var_name] = temp_path
+                        yield _sse({
+                            "type": "text",
+                            "content": f"📊 Preloaded DuckDB table `{duckdb_table.table_name}` as `{var_name}`\n",
+                        })
+                except Exception as e:
+                    logger.warning(f"Failed to preload DuckDB table {duckdb_table.table_name}: {e}")
+                    yield _sse({
+                        "type": "text",
+                        "content": f"⚠️ Could not preload table `{duckdb_table.table_name}`: {e}\n",
+                    })
+                continue
+            # ── 尝试作为 DuckDB table (通过 table_name 匹配) ──
+            result = await db.execute(
+                sa_select(DuckDBTable).where(DuckDBTable.table_name == ds_id)
+            )
+            duckdb_table_by_name = result.scalar_one_or_none()
+            if duckdb_table_by_name:
+                try:
+                    temp_path = await _preload_duckdb_table(
+                        table_name=duckdb_table_by_name.table_name,
+                        display_name=duckdb_table_by_name.display_name,
+                        capture_dir=capture_dir,
+                    )
+                    if temp_path:
+                        var_name = sanitize_variable_name(duckdb_table_by_name.display_name)
+                        data_var_map[var_name] = temp_path
+                except Exception as e:
+                    logger.warning(f"Failed to preload DuckDB table: {e}")
+                continue
+
 
     # 4. 发送 tool_start 事件
     yield _sse({
@@ -103,9 +154,6 @@ async def run_script(
     })
 
     # 5. 执行代码
-    capture_dir = os.path.join(UPLOADS_DIR, task_id, "captures")
-    os.makedirs(capture_dir, exist_ok=True)
-
     try:
         result = await execute_code_in_sandbox(
             code=code,
@@ -167,31 +215,94 @@ async def run_script(
         "dataframes": result.get("dataframes", []),
     })
 
-    # 7. 处理沙箱内捕获的图表
+    # 7. 处理沙箱内捕获的图表：持久化为 visualization step
     from app.tools import validate_echarts_option
     from app.tools.visualization import validate_map_config
 
     for chart_meta in result.get("charts", []):
+        chart_title = chart_meta.get("title", "Untitled Chart")
+        chart_type = chart_meta.get("chart_type", "bar")
         chart_option = chart_meta.get("option", {})
+
         ok, err = validate_echarts_option(chart_option)
-        if ok:
-            yield _sse({
-                "type": "visualization",
-                "title": chart_meta.get("title", "Untitled Chart"),
-                "chart_type": chart_meta.get("chart_type", "bar"),
+        if not ok:
+            logger.warning(f"Invalid ECharts option in script replay: {err}")
+            continue
+
+        viz = Visualization(
+            task_id=task_id,
+            subtask_id=None,
+            step_id=None,  # 先建 step，后回填
+            title=chart_title,
+            chart_type=chart_type,
+            option_json=json.dumps(chart_option, ensure_ascii=False),
+        )
+        db.add(viz)
+        await db.flush()
+
+        step = Step(
+            task_id=task_id,
+            role="assistant",
+            step_type="visualization",
+            content=chart_title,
+            code=None,
+            code_output=json.dumps({
+                "visualization_id": viz.id,
+                "title": chart_title,
+                "chart_type": chart_type,
                 "option": chart_option,
-            })
+            }, ensure_ascii=False),
+        )
+        db.add(step)
+        await db.flush()
+
+        viz.step_id = step.id
+        await db.commit()
+        await db.refresh(step)
+
+        yield _sse({"type": "step_saved", "step": _step_to_dict(step)})
 
     for map_meta in result.get("maps", []):
+        map_title = map_meta.get("title", "Untitled Map")
         map_config = map_meta.get("config", {})
+
         ok, err = validate_map_config(map_config)
-        if ok:
-            yield _sse({
-                "type": "visualization",
-                "title": map_meta.get("title", "Untitled Map"),
+        if not ok:
+            logger.warning(f"Invalid map config in script replay: {err}")
+            continue
+
+        viz = Visualization(
+            task_id=task_id,
+            subtask_id=None,
+            step_id=None,
+            title=map_title,
+            chart_type="map",
+            option_json=json.dumps(map_config, ensure_ascii=False),
+        )
+        db.add(viz)
+        await db.flush()
+
+        step = Step(
+            task_id=task_id,
+            role="assistant",
+            step_type="visualization",
+            content=map_title,
+            code=None,
+            code_output=json.dumps({
+                "visualization_id": viz.id,
+                "title": map_title,
                 "chart_type": "map",
                 "option": map_config,
-            })
+            }, ensure_ascii=False),
+        )
+        db.add(step)
+        await db.flush()
+
+        viz.step_id = step.id
+        await db.commit()
+        await db.refresh(step)
+
+        yield _sse({"type": "step_saved", "step": _step_to_dict(step)})
 
     # 8. 保存执行结果为 Step
     step = Step(
@@ -236,3 +347,43 @@ async def run_script(
         })
 
     yield _sse({"type": "done"})
+
+async def _preload_duckdb_table(
+    table_name: str,
+    display_name: str,
+    capture_dir: str,
+    row_limit: int = 100_000,
+) -> str | None:
+    """
+    从 DuckDB warehouse 预加载表数据为临时 CSV 文件。
+    返回临时文件路径，供 sandbox 的 data_var_map 加载。
+    """
+    import duckdb
+    from app.config import WAREHOUSE_PATH
+
+    if not WAREHOUSE_PATH or not os.path.exists(WAREHOUSE_PATH):
+        logger.warning("WAREHOUSE_PATH not set or not found")
+        return None
+
+    preload_dir = os.path.join(capture_dir, "_preloaded")
+    os.makedirs(preload_dir, exist_ok=True)
+
+    safe_name = sanitize_variable_name(display_name)
+    temp_csv_path = os.path.join(preload_dir, f"{safe_name}.csv")
+
+    con = duckdb.connect(WAREHOUSE_PATH, read_only=True)
+    try:
+        df = con.execute(
+            f"SELECT * FROM \"{table_name}\" LIMIT {row_limit}"
+        ).fetchdf()
+        df.to_csv(temp_csv_path, index=False)
+        logger.info(
+            f"Preloaded DuckDB table '{table_name}' → {temp_csv_path} "
+            f"({len(df)} rows)"
+        )
+        return temp_csv_path
+    except Exception as e:
+        logger.error(f"DuckDB preload failed for '{table_name}': {e}")
+        return None
+    finally:
+        con.close()

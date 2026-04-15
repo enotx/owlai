@@ -27,8 +27,13 @@ import {
   BarChart3,
   Clock,
   X, 
+  ClipboardList, 
+  FileCode2, 
+  RefreshCw
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import TaskCreateDialog from "@/components/tasks/task-create-dialog";
+
 
 type FilterTab = "all" | "ad-hoc" | "routine";
 
@@ -59,6 +64,8 @@ export default function TaskSidebar({ onClose }: { onClose?: () => void } = {}) 
   const [editingTitle, setEditingTitle] = useState("");
   const editInputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   /* 后端就绪后加载 Task 列表 */
   useEffect(() => {
@@ -110,12 +117,16 @@ export default function TaskSidebar({ onClose }: { onClose?: () => void } = {}) 
   );
 
   /* 新建 Task */
-  const handleCreate = async () => {
-    const title = `Task ${tasks.length + 1}`;
-    const res = await createTask(title);
-    addTask(res.data);
-    await handleSelect(res.data.id);
+  // const handleCreate = async () => {
+  //   const title = `Task ${tasks.length + 1}`;
+  //   const res = await createTask(title);
+  //   addTask(res.data);
+  //   await handleSelect(res.data.id);
+  // };
+  const handleCreate = () => {
+    setCreateDialogOpen(true);
   };
+
 
   /* 删除 Task */
   const handleDelete = async (taskId: string) => {
@@ -316,6 +327,15 @@ export default function TaskSidebar({ onClose }: { onClose?: () => void } = {}) 
             {tasks.map((task) => {
               const isActive = currentTaskId === task.id;
               const isEditing = editingId === task.id;
+              const taskIcon = (() => {
+                const t = task as any; // 兼容旧类型
+                switch (t.task_type) {
+                  case "routine": return <ClipboardList className="h-4 w-4 shrink-0 mr-2.5 opacity-60" />;
+                  case "script": return <FileCode2 className="h-4 w-4 shrink-0 mr-2.5 opacity-60" />;
+                  case "pipeline": return <RefreshCw className="h-4 w-4 shrink-0 mr-2.5 opacity-60" />;
+                  default: return <BarChart3 className="h-4 w-4 shrink-0 mr-2.5 opacity-60" />;
+                }
+              })();
 
               return (
                 <div
@@ -343,7 +363,7 @@ export default function TaskSidebar({ onClose }: { onClose?: () => void } = {}) 
                   }}
                 >
                   {/* Task icon */}
-                  <BarChart3 className="h-4 w-4 shrink-0 mr-2.5 opacity-60" />
+                  {taskIcon}
 
                   {isEditing ? (
                     <input
@@ -445,6 +465,10 @@ export default function TaskSidebar({ onClose }: { onClose?: () => void } = {}) 
       </div>
 
       {contextMenu}
+      <TaskCreateDialog
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+      />
     </div>
   );
 }

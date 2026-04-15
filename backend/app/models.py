@@ -44,10 +44,12 @@ class Task(Base):
     asset_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("assets.id", ondelete="SET NULL"), nullable=True
     )
-    
+    data_source_ids: Mapped[str] = mapped_column(Text, nullable=True, default="[]")
+
     # 新增：最近一次执行状态（routine/script/pipeline 类型时使用）
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_run_status: Mapped[str | None] = mapped_column(String(20), nullable=True) # "success" | "failed"
+
 
     # 新增：上下文压缩
     compact_context: Mapped[str | None] = mapped_column(Text, nullable=True)

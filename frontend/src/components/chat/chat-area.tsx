@@ -51,6 +51,8 @@ import {
   FileText,
   FileCode2,
   FolderOpen,
+  RefreshCw,
+  ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CapturedDataFrame } from "@/stores/use-task-store";
@@ -664,6 +666,27 @@ export default function ChatArea() {
     if (!el) return true;
     return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   }, []);
+  const tasks = useTaskStore((s) => s.tasks);
+  const currentTask = useMemo(
+    () => tasks.find((t) => t.id === currentTaskId),
+    [tasks, currentTaskId]
+  );
+
+  function EmptyState({ taskType }: { taskType?: string }) {
+    const messages: Record<string, { icon: typeof Bot; text: string }> = {
+      ad_hoc: { icon: Bot, text: "Upload data and start asking questions" },
+      routine: { icon: ClipboardList, text: "Click the send button to run the bound SOP" },
+      script: { icon: FileCode2, text: "Click Execute to replay the bound script" },
+      pipeline: { icon: RefreshCw, text: "Click Execute to run the pipeline" },
+    };
+    const { icon: Icon, text } = messages[taskType || "ad_hoc"] || messages.ad_hoc;
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+        <Icon className="mb-3 h-10 w-10 opacity-30" />
+        <p className="text-sm">{text}</p>
+      </div>
+    );
+  }
 
   /** 重新生成：接收用户消息后自动重发 */
   const handleRegenerate = useCallback(async (userMessage: string, taskId: string) => {
@@ -924,10 +947,7 @@ export default function ChatArea() {
         <div className="mx-auto max-w-2xl space-y-4 py-4">
           {/* 空状态 */}
           {steps.length === 0 && currentTaskId && !streamingMessage && (
-            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-              <Bot className="mb-3 h-10 w-10 opacity-30" />
-              <p className="text-sm">Upload data and start asking questions</p>
-            </div>
+            <EmptyState taskType={currentTask?.task_type} />
           )}
 
           {/* 已持久化的 Steps — 带操作按钮 */}

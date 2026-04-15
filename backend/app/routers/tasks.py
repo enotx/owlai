@@ -11,15 +11,67 @@ from sqlalchemy import select
 
 from app.database import get_db
 from app.models import Task, Step, Knowledge
-from app.schemas import TaskCreate, TaskUpdate, TaskResponse, TaskModeUpdate
+from app.schemas import TaskCreate, TaskUpdate, TaskResponse, TaskModeUpdate, ExecuteTaskRequest
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
-
 @router.post("", response_model=TaskResponse)
 async def create_task(body: TaskCreate, db: AsyncSession = Depends(get_db)):
-    """创建新任务"""
-    task = Task(title=body.title, description=body.description)
+    """创建新任务（支持类型化创建）"""
+    import json as _json
+    from fastapi import HTTPException
+    from app.models import Asset
+
+    # ── 校验 asset 绑定 ──
+    if body.task_type != "ad_hoc":
+        if not body.asset_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{body.task_type} task requires asset_id",
+            )
+        asset = await db.get(Asset, body.asset_id)
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+
+        # 类型匹配校验
+        _ASSET_TYPE_RULES: dict[str, tuple[str, str | None]] = {
+            "routine":  ("sop",    None),
+            "script":   ("script", "general"),
+            "pipeline": ("script", "pipeline"),
+        }
+        expected = _ASSET_TYPE_RULES.get(body.task_type)
+        if expected:
+            exp_asset_type, exp_script_type = expected
+            if asset.asset_type != exp_asset_type:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"{body.task_type} task requires asset_type='{exp_asset_type}', "
+                        f"got '{asset.asset_type}'"
+                    ),
+                )
+            if exp_script_type and asset.script_type != exp_script_type:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"{body.task_type} task requires script_type='{exp_script_type}', "
+                        f"got '{asset.script_type}'"
+                    ),
+                )
+    else:
+        if body.asset_id:
+            raise HTTPException(
+                status_code=400,
+                detail="ad_hoc task should not have asset_id",
+            )
+
+    task = Task(
+        title=body.title,
+        description=body.description,
+        task_type=body.task_type,
+        asset_id=body.asset_id,
+        data_source_ids=_json.dumps(body.data_source_ids, ensure_ascii=False),
+    )
     db.add(task)
     await db.commit()
     await db.refresh(task)
@@ -271,7 +323,65 @@ async def export_task(
                 "Content-Disposition": f"attachment; filename*=UTF-8''{_url_encode(filename)}"
             },
         )
+    
+@router.post("/{task_id}/execute")
+async def execute_task_endpoint(
+    task_id: str,
+    body: ExecuteTaskRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    执行任务（根据 task_type 分发）
+    
+    - ad_hoc: 400, 请使用 /api/chat/stream
+    - script/pipeline: script_runner SSE stream
+    - routine: run_agent_stream + SOP 注入, SSE stream
+    """
+    from fastapi import HTTPException
+    from fastapi.responses import StreamingResponse
+    from app.services.task_executor import execute_task
+    from app.schemas import ExecuteTaskRequest as ETR
+
+    task = await db.get(Task, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if task.task_type == "ad_hoc":
+        raise HTTPException(
+            status_code=400,
+            detail="Ad-hoc tasks should use /api/chat/stream endpoint",
+        )
+
+    # 解析请求体（允许空 body）
+    env_vars_override = body.env_vars_override if body else None
+    user_message = body.user_message if body else None
+
+    async def event_generator():
+        try:
+            async for event in execute_task(
+                task_id=task_id,
+                db=db,
+                env_vars_override=env_vars_override,
+                user_message=user_message,
+            ):
+                yield event
+        except Exception as e:
+            import json as _json
+            yield f"data: {_json.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
+            yield f"data: {_json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
 def _url_encode(filename: str) -> str:
     """RFC 5987 编码文件名，支持中文"""
     from urllib.parse import quote
     return quote(filename, safe="")
+

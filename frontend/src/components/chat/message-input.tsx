@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { SendHorizonal, Square, Database, FileText } from "lucide-react";
+import { SendHorizonal, Square, Database, FileText, FileCode2 } from "lucide-react";
 import { streamChat, autoRenameTask } from "@/lib/api";
 import type { SSEEvent } from "@/lib/api";
 import { useTaskStore, Step } from "@/stores/use-task-store";
@@ -98,6 +98,9 @@ export default function MessageInput() {
     selectedModel,
     setSelectedModel,
     steps,
+    isExecuting,
+    setIsExecuting,
+    tasks,
   } = useTaskStore();
 
   const { providers, agentConfigs } = useSettingsStore();
@@ -111,6 +114,14 @@ export default function MessageInput() {
       modelId: model.id,
     }))
   );
+
+  // 获取当前 task 的 task_type
+  const currentTask = useMemo(
+    () => tasks.find((t) => t.id === currentTaskId),
+    [tasks, currentTaskId]
+  );
+  const taskType = (currentTask as any)?.task_type || "ad_hoc";
+
 
   // Filter slash commands based on typed text
   const filteredCommands = useMemo(() => {
@@ -426,6 +437,99 @@ export default function MessageInput() {
     }
   };
 
+  const handleExecute = async () => {
+    if (!currentTaskId || isExecuting) return;
+    setIsExecuting(true);
+    setIsWaitingResponse(true);
+
+    const controller = new AbortController();
+
+    try {
+      const { executeTask } = await import("@/lib/api");
+
+      await executeTask(
+        currentTaskId,
+        (event: SSEEvent) => {
+          switch (event.type) {
+            case "text":
+              if (useTaskStore.getState().isWaitingResponse) {
+                setIsWaitingResponse(false);
+              }
+              if (!useTaskStore.getState().streamingMessage) {
+                startStreaming();
+              }
+              if (event.content) appendStreamingToken(event.content);
+              break;
+
+            case "tool_start":
+              if (useTaskStore.getState().isWaitingResponse) {
+                setIsWaitingResponse(false);
+              }
+              clearStreaming();
+              setPendingTool(currentTaskId!, {
+                code: event.code || "",
+                purpose: event.purpose || "",
+                status: "running",
+              });
+              break;
+
+            case "tool_result":
+              updatePendingToolResult(currentTaskId!, {
+                success: event.success ?? false,
+                output: event.output ?? null,
+                error: event.error ?? null,
+                time: event.time ?? 0,
+                dataframes: event.dataframes,
+              });
+              break;
+
+            case "step_saved": {
+              const step = event.step as unknown as Step;
+              clearStreaming();
+              setPendingTool(currentTaskId!, null);
+              addStep(step);
+              break;
+            }
+
+            case "done":
+              clearStreaming();
+              setPendingTool(currentTaskId!, null);
+              setIsWaitingResponse(false);
+              break;
+
+            case "error":
+              clearStreaming();
+              setPendingTool(currentTaskId!, null);
+              setIsWaitingResponse(false);
+              addStep({
+                id: `error-${Date.now()}`,
+                task_id: currentTaskId!,
+                role: "assistant",
+                step_type: "assistant_message",
+                content: `⚠️ ${event.content || "Unknown error"}`,
+                code: null,
+                code_output: null,
+                created_at: new Date().toISOString(),
+              });
+              break;
+          }
+        },
+        {
+          user_message: text.trim() || undefined,
+        },
+        controller,
+      );
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === "AbortError")) {
+        console.error("Execute failed:", err);
+      }
+    } finally {
+      setIsExecuting(false);
+      setIsWaitingResponse(false);
+      setText("");
+    }
+  };
+
   function _flushStreaming() {
     clearStreaming();
   }
@@ -467,8 +571,9 @@ export default function MessageInput() {
 
   return (
     <div className="space-y-2">
-      {/* Input box + send button */}
+    {(taskType === "ad_hoc" || taskType === "routine") && (
       <div className="relative rounded-lg border bg-card shadow-sm focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-1">
+        {/* Input box + send button */}
         {/* Active command badge (overlaid on textarea) */}
         {activeCommand && (
           <div className="absolute top-2 left-3 z-10 pointer-events-none">
@@ -554,50 +659,82 @@ export default function MessageInput() {
         />
 
         {/* Send / abort button */}
-        {isSending ? (
+        {/* 发送/中止按钮：routine 用 handleExecute，ad_hoc 用 handleSend */}
+        {isSending || isExecuting ? (
           <Button
             size="icon"
             variant="destructive"
             onClick={handleAbort}
             className="absolute bottom-2 right-2 h-8 w-8"
-            title="Stop generating"
+            title="Stop"
           >
             <Square className="h-3.5 w-3.5 fill-current" />
           </Button>
         ) : (
           <Button
             size="icon"
-            disabled={!text.trim() || !currentTaskId}
-            onClick={handleSend}
+            disabled={
+              taskType === "ad_hoc"
+                ? !text.trim() || !currentTaskId
+                : !currentTaskId
+            }
+            onClick={taskType === "routine" ? handleExecute : handleSend}
             className="absolute bottom-2 right-2 h-8 w-8"
+            title={taskType === "routine" ? "Run SOP" : "Send"}
           >
             <SendHorizonal className="h-4 w-4" />
           </Button>
         )}
       </div>
-
-      {/* Mode selector + Model selector + Extract buttons + shortcut hint */}
+    )}
+    {/* ── script / pipeline: 只显示执行按钮 ── */}
+    {(taskType === "script" || taskType === "pipeline") && (
+      <div className="flex items-center gap-3 rounded-lg border bg-card px-4 py-3 shadow-sm">
+        <div className="flex-1 text-sm text-muted-foreground">
+          {taskType === "pipeline"
+            ? "Run pipeline to update data"
+            : "Replay script on bound data sources"}
+        </div>
+        {isExecuting ? (
+          <Button variant="destructive" size="sm" onClick={handleAbort}>
+            <Square className="mr-1.5 h-3.5 w-3.5 fill-current" />
+            Stop
+          </Button>
+        ) : (
+          <Button size="sm" onClick={handleExecute} disabled={!currentTaskId}>
+            <FileCode2 className="mr-1.5 h-3.5 w-3.5" />
+            Execute
+          </Button>
+        )}
+      </div>
+    )}
+    {/* ── 底部控制栏 ── */}
+    {/* ad_hoc: 完整的 mode + model 选择器 */}
+    {/* routine: 只显示 model 选择器（mode 固定 analyst） */}
+    {/* script/pipeline: 不显示 */}
+    {(taskType === "ad_hoc" || taskType === "routine") && (
       <div className="flex items-center gap-2">
         {/* Context Ring */}
         <ContextRing />
 
-        {/* Mode selector */}
-        <Select
-          value={currentMode}
-          onValueChange={(value: "auto" | "plan" | "analyst") =>
-            setCurrentMode(value)
-          }
-          disabled={isSending}
-        >
-          <SelectTrigger className="h-7 w-[120px] text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="auto">Auto</SelectItem>
-            <SelectItem value="plan">Plan</SelectItem>
-            <SelectItem value="analyst">Analyst</SelectItem>
-          </SelectContent>
-        </Select>
+        {taskType === "ad_hoc" && (
+          <Select
+            value={currentMode}
+            onValueChange={(value: "auto" | "plan" | "analyst") =>
+              setCurrentMode(value)
+            }
+            disabled={isSending}
+          >
+            <SelectTrigger className="h-7 w-[120px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Auto</SelectItem>
+              <SelectItem value="plan">Plan</SelectItem>
+              <SelectItem value="analyst">Analyst</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
 
         {/* Model selector */}
         <Select
@@ -638,6 +775,8 @@ export default function MessageInput() {
           +Enter
         </span>
       </div>
-    </div>
-  );
+    )}
+  </div>
+);
+
 }

@@ -6,7 +6,7 @@ import React, { useEffect, useRef } from "react";
 import { FileCode2 } from "lucide-react";
 
 // 必须引入 Leaflet CSS，否则瓦片错位
-import "leaflet/dist/leaflet.css";
+import leafletCssHref from "leaflet/dist/leaflet.css?url";
 
 type MarkerConfig = {
   latlng: [number, number];
@@ -106,6 +106,23 @@ export default function LeafletMapView({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const leafletMapRef = useRef<any>(null);
+
+  useEffect(() => {
+    const existingLink = document.querySelector<HTMLLinkElement>(
+      'link[data-leaflet-css="true"]'
+    );
+    if (existingLink) return;
+
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = leafletCssHref;
+    link.dataset.leafletCss = "true";
+    document.head.appendChild(link);
+
+    return () => {
+      link.remove();
+    };
+  }, []);
 
   useEffect(() => {
     let disposed = false;

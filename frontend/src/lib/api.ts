@@ -61,8 +61,22 @@ async function getApi(): Promise<AxiosInstance> {
 export const checkHealth = async () => (await getApi()).get("/health");
 
 // ===== Task =====
-export const createTask = async (title: string, description?: string) =>
-  (await getApi()).post("/tasks", { title, description });
+export const createTask = async (
+  title: string,
+  options?: {
+    description?: string;
+    task_type?: "ad_hoc" | "script" | "pipeline" | "routine";
+    asset_id?: string;
+    data_source_ids?: string[];
+  }
+) =>
+  (await getApi()).post("/tasks", {
+    title,
+    description: options?.description,
+    task_type: options?.task_type || "ad_hoc",
+    asset_id: options?.asset_id,
+    data_source_ids: options?.data_source_ids || [],
+  });
 
 export const fetchTasks = async () => (await getApi()).get("/tasks");
 
@@ -74,6 +88,96 @@ export const renameTask = async (taskId: string, title: string) =>
 
 export const autoRenameTask = async (taskId: string) =>
   (await getApi()).post(`/tasks/${taskId}/auto-rename`);
+
+/**
+ * 执行任务（script/pipeline/routine）
+ * 返回 SSE stream，事件格式与 streamChat 相同
+ */
+export async function executeTask(
+  taskId: string,
+  onEvent: (event: SSEEvent) => void,
+  options?: {
+    env_vars_override?: Record<string, string>;
+    user_message?: string;
+  },
+  externalAbortController?: AbortController,
+) {
+  const controller = externalAbortController || new AbortController();
+  const globalTimeout = setTimeout(() => controller.abort(), 2 * 60 * 60 * 1000);
+
+  try {
+    const baseUrl = await getBaseUrl();
+    const streamUrl = isTauriDesktop()
+      ? `${baseUrl}/tasks/${taskId}/execute`
+      : `/api/backend/tasks/${taskId}/execute`;
+
+    const res = await fetch(streamUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(options || {}),
+      signal: controller.signal,
+    });
+
+    if (!res.ok || !res.body) {
+      onEvent({ type: "error", content: `HTTP ${res.status}: ${res.statusText}` });
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let chunkTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const resetChunkTimer = () => {
+      if (chunkTimer) clearTimeout(chunkTimer);
+      chunkTimer = setTimeout(() => {
+        reader.cancel();
+        onEvent({ type: "error", content: "Response stream timed out (no data for 90s)." });
+        onEvent({ type: "done", steps: [] });
+      }, 90_000);
+    };
+
+    resetChunkTimer();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      resetChunkTimer();
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+      for (const part of parts) {
+        for (const line of part.split("\n")) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data: SSEEvent = JSON.parse(line.slice(6));
+              onEvent(data);
+            } catch { /* ignore */ }
+          }
+        }
+      }
+    }
+
+    if (chunkTimer) clearTimeout(chunkTimer);
+    if (buffer.trim()) {
+      for (const line of buffer.split("\n")) {
+        if (line.startsWith("data: ")) {
+          try {
+            onEvent(JSON.parse(line.slice(6)));
+          } catch { /* ignore */ }
+        }
+      }
+    }
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      onEvent({ type: "done", steps: [] });
+    } else {
+      throw err;
+    }
+  } finally {
+    clearTimeout(globalTimeout);
+  }
+}
 
 // ===== Knowledge =====
 export const fetchKnowledge = async (taskId: string) =>

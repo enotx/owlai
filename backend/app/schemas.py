@@ -4,7 +4,7 @@
 
 from datetime import datetime
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ===== Task =====
@@ -13,6 +13,7 @@ class TaskCreate(BaseModel):
     description: str | None = None
     task_type: str = Field(default="ad_hoc", pattern="^(ad_hoc|script|pipeline|routine)$")
     asset_id: str | None = None
+    data_source_ids: list[str] = Field(default_factory=list)
 
 
 class TaskUpdate(BaseModel):
@@ -35,8 +36,18 @@ class TaskResponse(BaseModel):
     last_run_status: str | None  
     compact_context: str | None  
     compact_anchor_step_id: str | None  
-    compact_anchor_created_at: datetime | None  
+    compact_anchor_created_at: datetime | None
+    data_source_ids: list[str] | None
     model_config = {"from_attributes": True}
+
+    @field_validator("data_source_ids", mode="before")
+    @classmethod
+    def parse_data_source_ids(cls, v):
+        if isinstance(v, str):
+            import json
+            return json.loads(v) if v else []
+        return v or []
+
 
 
 # ===== Knowledge =====
@@ -178,7 +189,6 @@ class SubTaskResponse(SubTaskBase):
     result: str | None
     created_at: datetime
     updated_at: datetime
-
     model_config = {"from_attributes": True}
 
 
@@ -416,3 +426,9 @@ class RunAssetRequest(BaseModel):
     user_message: str | None = None
     env_vars_override: dict[str, str] | None = None
     data_source_ids: list[str] | None = None  # Knowledge 或 DuckDB table IDs
+
+
+class ExecuteTaskRequest(BaseModel):
+    """手动触发任务执行"""
+    env_vars_override: dict[str, str] | None = None
+    user_message: str | None = None  # routine 时可选的额外指令

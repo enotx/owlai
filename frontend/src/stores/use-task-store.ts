@@ -12,6 +12,14 @@ export interface Task {
   id: string;
   title: string;
   description: string | null;
+  mode: "auto" | "plan" | "analyst";
+  plan_confirmed: boolean;
+  current_subtask_id: string | null;
+  task_type: "ad_hoc" | "routine" | "script" | "pipeline";
+  asset_id: string | null;
+  data_source_ids: string[];
+  last_run_at: string | null;
+  last_run_status: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -219,6 +227,10 @@ interface TaskStore {
   isSending: boolean;
   setIsSending: (v: boolean) => void;
 
+  // 执行状态
+  isExecuting: boolean;
+  setIsExecuting: (v: boolean) => void;
+
   // 等待LLM首次响应
   isWaitingResponse: boolean;
   setIsWaitingResponse: (v: boolean) => void;
@@ -268,7 +280,19 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   // Task
   tasks: [],
   currentTaskId: null,
-  setTasks: (tasks) => set({ tasks }),
+  setTasks: (tasks) => set({
+    tasks: tasks.map((t: any) => ({
+      ...t,
+      task_type: t.task_type || "ad_hoc",
+      asset_id: t.asset_id || null,
+      data_source_ids: t.data_source_ids || [],
+      last_run_at: t.last_run_at || null,
+      last_run_status: t.last_run_status || null,
+      mode: t.mode || "auto",
+      plan_confirmed: t.plan_confirmed ?? false,
+      current_subtask_id: t.current_subtask_id || null,
+    })),
+  }),
   // 切换 Task 时重置相关状态，避免数据混乱
   setCurrentTaskId: (id) =>
     set({
@@ -387,6 +411,10 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   // Loading
   isSending: false,
   setIsSending: (v) => set({ isSending: v }),
+
+  isExecuting: false,
+  setIsExecuting: (v) => set({ isExecuting: v }),
+
 
   isWaitingResponse: false,
   setIsWaitingResponse: (v) => set({ isWaitingResponse: v }),

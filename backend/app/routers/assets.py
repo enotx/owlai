@@ -105,7 +105,7 @@ async def delete_asset(asset_id: str, db: AsyncSession = Depends(get_db)):
     await db.commit()
     return {"detail": "Asset deleted"}
 
-
+## Deprecated Endpoints (for backward compatibility, will be removed in future)
 @router.post("/{asset_id}/run")
 async def run_asset(
     asset_id: str,

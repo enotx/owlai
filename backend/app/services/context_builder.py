@@ -45,7 +45,10 @@ async def build_task_context_snapshot(
     
     # 获取 Warehouse 上下文
     warehouse_ctx = await _get_warehouse_context(db)
-    
+
+    # ── 新增：检测 routine task 的 SOP ──
+    sop_ctx = await _get_sop_context_if_routine(task_id, db)
+
     # 构建 system prompt（根据 mode）
     if mode == "plan":
         system_prompt = build_plan_system_prompt(
@@ -67,6 +70,9 @@ async def build_task_context_snapshot(
             warehouse_context=warehouse_ctx,
             include_viz_examples=include_viz_examples,
         )
+        if sop_ctx:
+            system_prompt = sop_ctx + "\n\n" + system_prompt
+
     
     return {
         "dataset_context": dataset_ctx,
@@ -292,3 +298,40 @@ async def _get_warehouse_context(db: AsyncSession) -> str:
         )
     
     return "\n".join(lines)
+
+def format_sop_context(sop_name: str, sop_markdown: str) -> str:
+    """
+    将 SOP 格式化为 system prompt 注入段。
+    
+    这是一个纯函数，供 context_builder 和 analyst_agent 共用。
+    """
+    return f"""## Routine Execution Contract
+
+This task is a **routine analysis** bound to a formal Standard Operating Procedure (SOP).
+
+**Execution Rules:**
+1. Follow the SOP steps strictly and in order
+2. Do NOT improvise alternative analysis workflows beyond the SOP
+3. If required inputs are missing or ambiguous, STOP and explain what is needed
+4. Use only the data sources provided in this context
+5. Output results in the format specified by the SOP
+6. If a step fails, report the failure clearly rather than guessing alternatives
+
+## Bound SOP: {sop_name}
+
+{sop_markdown}
+
+---
+"""
+
+async def _get_sop_context_if_routine(task_id: str, db: AsyncSession) -> str | None:
+    """如果 task 是 routine 类型且绑定了 SOP asset，返回格式化的 SOP 上下文"""
+    from app.models import Task, Asset
+    result = await db.execute(select(Task).where(Task.id == task_id))
+    task = result.scalar_one_or_none()
+    if not task or task.task_type != "routine" or not task.asset_id:
+        return None
+    asset = await db.get(Asset, task.asset_id)
+    if not asset or asset.asset_type != "sop" or not asset.content_markdown:
+        return None
+    return format_sop_context(asset.name, asset.content_markdown)

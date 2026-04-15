@@ -28,7 +28,7 @@ class Base(DeclarativeBase):
 
 # ===== Schema Migration (in-app) =====
 # 使用 SQLite PRAGMA user_version 记录 schema 版本，避免外部迁移脚本依赖
-LATEST_SCHEMA_VERSION = 10
+LATEST_SCHEMA_VERSION = 11
 # v2: multi-agent (tasks.mode/plan_confirmed/current_subtask_id + subtasks + steps.subtask_id)
 # v3: visualization (visualizations table)
 # v4: skill reference_markdown (lazy-loaded reference doc)
@@ -38,7 +38,7 @@ LATEST_SCHEMA_VERSION = 10
 # v8: skills.handler_type + skills.handler_config (支持 custom_handler 类型的 Skill)
 # v9: assets table + task.task_type/asset_id/last_run_*
 # v10: tasks.compact_context + tasks.compact_anchor_step_id + tasks.compact_anchor_created_at
-
+# v11: tasks.data_source_ids (执行输入绑定)
 
 async def _get_user_version(conn) -> int:
     """读取 SQLite schema 版本（PRAGMA user_version）"""
@@ -374,6 +374,17 @@ async def upgrade_db_schema() -> dict:
                 await _set_user_version(conn, 10)
                 applied.append("set user_version=10")
                 current = 10
+            # ── v11 migration: tasks.data_source_ids ──
+            if current < 11:
+                task_cols = await _get_table_columns(conn, "tasks")
+                if "data_source_ids" not in task_cols:
+                    await conn.execute(text(
+                        "ALTER TABLE tasks ADD COLUMN data_source_ids TEXT DEFAULT '[]'"
+                    ))
+                    applied.append("ALTER TABLE tasks ADD COLUMN data_source_ids")
+                await _set_user_version(conn, 11)
+                applied.append("set user_version=11")
+                current = 11
 
 
             return {
