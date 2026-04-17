@@ -101,6 +101,7 @@ export default function MessageInput() {
     isExecuting,
     setIsExecuting,
     tasks,
+    isTaskReady,
   } = useTaskStore();
 
   const { providers, agentConfigs } = useSettingsStore();
@@ -121,6 +122,7 @@ export default function MessageInput() {
     [tasks, currentTaskId]
   );
   const taskType = (currentTask as any)?.task_type || "ad_hoc";
+  const taskReady = isTaskReady(currentTaskId);
 
 
   // Filter slash commands based on typed text
@@ -646,11 +648,13 @@ export default function MessageInput() {
           onChange={(e) => handleTextChange(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={
-            currentTaskId
-              ? "Ask Owl to analyze your data… (type / for commands)"
-              : "Select or create a task first"
+            !currentTaskId
+              ? "Select or create a task first"
+              : taskType !== "ad_hoc" && !taskReady
+              ? "Complete task setup before execution"
+              : "Ask Owl to analyze your data… (type / for commands)"
           }
-          disabled={!currentTaskId || isSending}
+          disabled={!currentTaskId || isSending || (taskType === "routine" && !taskReady)}
           className={cn(
             "min-h-[80px] max-h-[160px] resize-none border-0 pr-14 focus-visible:ring-0 focus-visible:ring-offset-0",
             activeCommand && "pt-8" // push text down when badge is shown
@@ -676,7 +680,7 @@ export default function MessageInput() {
             disabled={
               taskType === "ad_hoc"
                 ? !text.trim() || !currentTaskId
-                : !currentTaskId
+                : !currentTaskId || !taskReady
             }
             onClick={taskType === "routine" ? handleExecute : handleSend}
             className="absolute bottom-2 right-2 h-8 w-8"
@@ -691,7 +695,9 @@ export default function MessageInput() {
     {(taskType === "script" || taskType === "pipeline") && (
       <div className="flex items-center gap-3 rounded-lg border bg-card px-4 py-3 shadow-sm">
         <div className="flex-1 text-sm text-muted-foreground">
-          {taskType === "pipeline"
+          {!taskReady
+            ? "Complete task setup before execution"
+            : taskType === "pipeline"
             ? "Run pipeline to update data"
             : "Replay script on bound data sources"}
         </div>
@@ -701,7 +707,7 @@ export default function MessageInput() {
             Stop
           </Button>
         ) : (
-          <Button size="sm" onClick={handleExecute} disabled={!currentTaskId}>
+          <Button size="sm" onClick={handleExecute} disabled={!currentTaskId || !taskReady}>
             <FileCode2 className="mr-1.5 h-3.5 w-3.5" />
             Execute
           </Button>

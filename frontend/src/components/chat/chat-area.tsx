@@ -709,16 +709,11 @@ export default function ChatArea() {
   );
   const isCurrentTaskPendingSetup =
     !!currentTaskId && pendingTaskSetup?.taskId === currentTaskId;
-  const isTypedTaskMissingAsset =
-    !!currentTask &&
-    currentTask.task_type !== "ad_hoc" &&
-    !currentTask.asset_id;
   const shouldShowEmptyState =
     !!currentTaskId &&
     steps.length === 0 &&
     !streamingMessage &&
-    !isCurrentTaskPendingSetup &&
-    !isTypedTaskMissingAsset;
+    !isCurrentTaskPendingSetup;
 
   function EmptyState({ taskType }: { taskType?: string }) {
     const messages: Record<string, { icon: typeof Bot; text: string }> = {

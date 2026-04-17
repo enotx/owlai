@@ -192,6 +192,9 @@ interface TaskStore {
   addTask: (task: Task) => void;
   removeTask: (id: string) => void;
   updateTaskTitle: (id: string, title: string) => void;
+  updateTask: (id: string, updates: Partial<Task>) => void;
+  isTaskReady: (taskId: string | null) => boolean;
+
 
   // Knowledge 状态
   knowledgeList: Knowledge[];
@@ -343,7 +346,20 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
     set((s) => ({
       tasks: s.tasks.map((t) => (t.id === id ? { ...t, title } : t)),
     })),
-
+  updateTask: (id, updates) =>
+    set((s) => ({
+      tasks: s.tasks.map((t) => (t.id === id ? { ...t, ...updates } : t)),
+    })),
+  isTaskReady: (taskId) => {
+    if (!taskId) return false;
+    const task = get().tasks.find((t) => t.id === taskId);
+    if (!task) return false;
+    if (task.task_type === "ad_hoc") return true;
+    if (task.task_type === "routine") return !!task.asset_id;
+    if (task.task_type === "script") return !!task.asset_id;
+    if (task.task_type === "pipeline") return !!task.pipeline_id;
+    return false;
+  },
   // Knowledge
   knowledgeList: [],
   setKnowledgeList: (list) => set({ knowledgeList: list }),

@@ -98,7 +98,7 @@ export const updateTask = async (
     description?: string;
     task_type?: "ad_hoc" | "script" | "pipeline" | "routine";
     asset_id?: string | null;
-    pipeline_id?: string;
+    pipeline_id?: string | null;
     data_source_ids?: string[];
   }
 ) => (await getApi()).put(`/tasks/${taskId}`, data);
