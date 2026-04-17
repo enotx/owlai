@@ -121,9 +121,10 @@ export interface HITLRequest {
   title: string;
   description: string;
   options: HITLOption[];
-  hitl_type?: "default" | "pipeline_confirmation" | "script_confirmation";
+  hitl_type?: "default" | "pipeline_confirmation" | "script_confirmation" | "sop_confirmation";
   pipeline?: PipelineProposal;
   script?: ScriptProposal;
+  sop?: SOPProposal;
 }
 
 export interface ScriptProposal {
@@ -133,6 +134,12 @@ export interface ScriptProposal {
   script_type: string;
   env_vars: Record<string, string>;
   allowed_modules: string[];
+}
+
+export interface SOPProposal {
+  name: string;
+  description: string;
+  content_markdown: string;
 }
 
 export interface PipelineProposal {

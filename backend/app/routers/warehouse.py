@@ -29,6 +29,58 @@ from app.services import warehouse as wh
 router = APIRouter(prefix="/api/warehouse", tags=["warehouse"])
 
 
+async def _find_existing_pipeline_knowledge(
+    db: AsyncSession,
+    task_id: str,
+    pipeline_id: str,
+) -> Knowledge | None:
+    result = await db.execute(
+        select(Knowledge).where(
+            Knowledge.task_id == task_id,
+            Knowledge.type == "data_pipeline",
+        )
+    )
+    for item in result.scalars().all():
+        if not item.metadata_json:
+            continue
+        try:
+            meta = json.loads(item.metadata_json)
+        except json.JSONDecodeError:
+            continue
+        if meta.get("pipeline_id") == pipeline_id:
+            return item
+    return None
+
+
+async def _ensure_pipeline_in_context(
+    db: AsyncSession,
+    task_id: str,
+    pipeline: DataPipeline,
+) -> Knowledge | None:
+    existing = await _find_existing_pipeline_knowledge(db, task_id, pipeline.id)
+    if existing:
+        return existing
+
+    knowledge = Knowledge(
+        task_id=task_id,
+        type="data_pipeline",
+        name=pipeline.name,
+        file_path=None,
+        metadata_json=json.dumps(
+            {
+                "pipeline_id": pipeline.id,
+                "target_table_name": pipeline.target_table_name,
+                "source_type": pipeline.source_type,
+                "write_strategy": pipeline.write_strategy,
+                "description": pipeline.description,
+            },
+            ensure_ascii=False,
+        ),
+    )
+    db.add(knowledge)
+    await db.flush()
+    return knowledge
+
 # ━━━ DuckDB Tables ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @router.get("/tables", response_model=list[DuckDBTableResponse])
@@ -129,15 +181,29 @@ async def add_table_to_context(
             "schema": json.loads(table_meta.table_schema_json),
             "row_count": table_meta.row_count,
             "source_type": table_meta.source_type,
+            "pipeline_id": table_meta.pipeline_id,
             "data_updated_at": table_meta.data_updated_at.isoformat() if table_meta.data_updated_at else None,
             "sample_rows": sample_rows,
         }, ensure_ascii=False),
     )
     db.add(knowledge)
+    auto_pipeline_knowledge_id = None
+    if table_meta.pipeline_id:
+        p_result = await db.execute(
+            select(DataPipeline).where(DataPipeline.id == table_meta.pipeline_id)
+        )
+        pipeline = p_result.scalar_one_or_none()
+        if pipeline:
+            pipeline_knowledge = await _ensure_pipeline_in_context(db, task_id, pipeline)
+            if pipeline_knowledge:
+                auto_pipeline_knowledge_id = pipeline_knowledge.id
     await db.commit()
     await db.refresh(knowledge)
-
-    return {"status": "added", "knowledge_id": knowledge.id}
+    return {
+        "status": "added",
+        "knowledge_id": knowledge.id,
+        "auto_added_pipeline_knowledge_id": auto_pipeline_knowledge_id,
+    }
 
 
 @router.post("/tables/{table_id}/remove-from-context")

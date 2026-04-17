@@ -28,10 +28,14 @@ import {
   X,
   Eye,
   Copy,
+  GripVertical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type TabId = "scripts" | "pipelines" | "sops";
+export const ASSET_DRAG_TYPE = "application/x-owl-asset";
+export const PIPELINE_DRAG_TYPE = "application/x-owl-pipeline";
+
 
 export default function AssetPanel() {
   const [assets, setAssets] = useState<AssetData[]>([]);
@@ -130,6 +134,38 @@ export default function AssetPanel() {
     window.dispatchEvent(event);
   };
 
+  const handleAssetDragStart = (
+    e: React.DragEvent<HTMLDivElement>,
+    asset: AssetData
+  ) => {
+    e.dataTransfer.setData(
+      ASSET_DRAG_TYPE,
+      JSON.stringify({
+        id: asset.id,
+        name: asset.name,
+        asset_type: asset.asset_type,
+      })
+    );
+    e.dataTransfer.setData("text/plain", asset.name);
+    e.dataTransfer.effectAllowed = "copy";
+  };
+
+  const handlePipelineDragStart = (
+    e: React.DragEvent<HTMLDivElement>,
+    pipeline: DataPipelineData
+  ) => {
+    e.dataTransfer.setData(
+      PIPELINE_DRAG_TYPE,
+      JSON.stringify({
+        id: pipeline.id,
+        name: pipeline.name,
+        target_table_name: pipeline.target_table_name,
+      })
+    );
+    e.dataTransfer.setData("text/plain", pipeline.name);
+    e.dataTransfer.effectAllowed = "copy";
+  };
+
   const getIcon = () => {
     switch (activeTab) {
       case "scripts":
@@ -192,7 +228,14 @@ export default function AssetPanel() {
 
             return (
               <Card key={pipeline.id} className="overflow-hidden">
-                <div className="p-4">
+                <div
+                  className="p-4 group relative"
+                  draggable
+                  onDragStart={(e) => handlePipelineDragStart(e, pipeline)}
+                >
+                  <div className="absolute left-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-40 transition-opacity">
+                    <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
+                  </div>
                   <div className="flex items-start gap-3">
                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                       <Database className="h-4 w-4" />
@@ -257,7 +300,14 @@ export default function AssetPanel() {
             const isEditing = editingId === asset.id;
             return (
               <Card key={asset.id} className="overflow-hidden">
-                <div className="p-4">
+                <div
+                  className="p-4 group relative"
+                  draggable
+                  onDragStart={(e) => handleAssetDragStart(e, asset)}
+                >
+                  <div className="absolute left-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-40 transition-opacity">
+                    <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
+                  </div>
                   {/* Header row */}
                   <div className="flex items-start gap-3">
                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">

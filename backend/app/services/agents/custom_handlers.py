@@ -15,6 +15,42 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+async def _persist_hitl_step(
+    agent: "BaseAgent",
+    *,
+    title: str,
+    description: str,
+    payload: dict,
+) -> str:
+    """将 custom handler 生成的 HITL 请求保存为 Step，并返回 step_saved SSE"""
+    from app.models import Step
+
+    step = Step(
+        task_id=agent.task_id,
+        role="assistant",
+        step_type="hitl_request",
+        content=description or title,
+        code=None,
+        code_output=json.dumps(payload, ensure_ascii=False),
+    )
+    agent.db.add(step)
+    await agent.db.commit()
+    await agent.db.refresh(step)
+
+    return agent._sse({
+        "type": "step_saved",
+        "step": {
+            "id": step.id,
+            "task_id": step.task_id,
+            "role": step.role,
+            "step_type": step.step_type,
+            "content": step.content,
+            "code": step.code,
+            "code_output": step.code_output,
+            "created_at": step.created_at.isoformat() if step.created_at else None,
+        },
+    })
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Derive Pipeline Handler
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -624,9 +660,34 @@ async def handle_extract_sop(
 ) -> AsyncGenerator[str, None]:
     """Custom handler for /sop command"""
     user_instructions = agent._safe_str(context, "user_message")
-
+    # ── 确认消息分支 ──
+    confirm_match = re.match(
+        r"^\[SOP\s+Confirm\]\s*(\{.*\})", user_instructions.strip(), re.DOTALL
+    )
+    if confirm_match:
+        logger.info("SOP confirm message received: %s", user_instructions[:500])
+        try:
+            config = json.loads(confirm_match.group(1))
+            logger.info(
+                "Parsed SOP confirm payload: name=%s, cancelled=%s, markdown_len=%s",
+                config.get("name"),
+                config.get("cancelled"),
+                len(config.get("content_markdown", "") or ""),
+            )
+        except json.JSONDecodeError:
+            logger.exception("Invalid SOP confirmation payload")
+            yield agent._sse({"type": "error", "content": "Invalid SOP confirmation payload."})
+            yield agent._sse({"type": "done"})
+            return
+        if config.get("cancelled"):
+            yield agent._sse({"type": "text", "content": "SOP extraction cancelled."})
+            yield agent._sse({"type": "done"})
+            return
+        async for chunk in _save_sop_asset(agent, config):
+            yield chunk
+        return
+    # ── Main extraction flow ──
     yield agent._sse({"type": "text", "content": "📋 Analyzing task history to extract SOP...\n"})
-
     code_history = await _collect_code_history(agent)
     if not code_history:
         yield agent._sse({
@@ -635,14 +696,120 @@ async def handle_extract_sop(
         })
         yield agent._sse({"type": "done"})
         return
-
     knowledge_ctx = await _gather_knowledge_summary(agent)
-
     system_prompt = context.get("invoked_skill_prompt", "")
     if not system_prompt:
         system_prompt = "You are an expert at documenting data analysis procedures."
-
     user_prompt = _build_sop_extraction_prompt(code_history, user_instructions, knowledge_ctx)
+    try:
+        yield agent._sse({"type": "text", "content": "🧠 Generating SOP draft...\n"})
+        proposal = None
+        async for item in _extract_sop_with_llm_heartbeat(
+            agent=agent,
+            code_history=code_history,
+            user_instructions=user_instructions,
+            knowledge_context=knowledge_ctx,
+            system_prompt=system_prompt,
+        ):
+            if isinstance(item, str):
+                yield item
+            else:
+                proposal = item
+        if proposal is None:
+            yield agent._sse({
+                "type": "error",
+                "content": "Failed to generate SOP: model did not return a valid structured result.",
+            })
+            yield agent._sse({"type": "done"})
+            return
+        sop_name = proposal.get("name", "Untitled SOP")
+        sop_description = proposal.get("description", "").strip() or (
+            user_instructions.strip()
+            if user_instructions.strip()
+            else "Standard Operating Procedure extracted from task history"
+        )
+        content_markdown = proposal.get("content_markdown", "")
+        sop_payload = {
+            "name": sop_name,
+            "description": sop_description,
+            "content_markdown": content_markdown,
+        }
+        yield agent._sse({"type": "text", "content": "✅ SOP draft is ready. Preparing confirmation card...\n"})
+
+        hitl_payload = {
+            "hitl_type": "sop_confirmation",
+            "title": "💾 Save as SOP Asset",
+            "description": sop_description,
+            "sop": sop_payload,
+            "options": [
+                {"label": "Save SOP", "value": "confirm", "badge": "recommended"},
+                {"label": "Cancel", "value": "cancel"},
+            ],
+        }
+        # 只保留持久化 step，前端通过 step_saved 统一渲染卡片
+        yield await _persist_hitl_step(
+            agent,
+            title=hitl_payload["title"],
+            description=hitl_payload["description"],
+            payload=hitl_payload,
+        )
+    except Exception as e:
+        logger.error(f"SOP extraction failed: {e}")
+        yield agent._sse({"type": "error", "content": f"Failed to generate SOP: {str(e)}"})
+    yield agent._sse({"type": "done"})
+
+async def _extract_sop_with_llm_heartbeat(
+    agent: "BaseAgent",
+    code_history: list[dict],
+    user_instructions: str,
+    knowledge_context: str,
+    system_prompt: str,
+) -> AsyncGenerator[str | dict | None, None]:
+    """包装 SOP 提取，定期发送心跳，避免前端超时"""
+    import asyncio
+
+    done_event = asyncio.Event()
+    result_holder: list[dict | None] = []
+
+    async def _do_extract():
+        r = await _extract_sop_with_llm(
+            agent=agent,
+            code_history=code_history,
+            user_instructions=user_instructions,
+            knowledge_context=knowledge_context,
+            system_prompt=system_prompt,
+        )
+        result_holder.append(r)
+        done_event.set()
+
+    task = asyncio.create_task(_do_extract())
+
+    while not done_event.is_set():
+        try:
+            await asyncio.wait_for(asyncio.shield(done_event.wait()), timeout=15.0)
+        except asyncio.TimeoutError:
+            yield agent._sse({"type": "heartbeat", "content": "llm_thinking"})
+
+    if task.done() and task.exception():
+        logger.error(f"SOP extraction task failed: {task.exception()}")
+        yield None
+        return
+
+    yield result_holder[0] if result_holder else None
+
+async def _extract_sop_with_llm(
+    agent: "BaseAgent",
+    code_history: list[dict],
+    user_instructions: str,
+    knowledge_context: str,
+    system_prompt: str,
+) -> dict | None:
+    """调用 LLM 提取 SOP JSON"""
+    user_prompt = _build_sop_extraction_prompt(
+        code_history=code_history,
+        user_instructions=user_instructions,
+        knowledge_context=knowledge_context,
+    )
 
     try:
         response = await agent.client.chat.completions.create(
@@ -655,22 +822,89 @@ async def handle_extract_sop(
             max_tokens=8192,
         )
 
-        sop_content = (response.choices[0].message.content or "").strip()
-        if sop_content:
-            yield agent._sse({"type": "text", "content": "\n\n---\n\n" + sop_content + "\n\n---\n\n"})
-            yield agent._sse({
-                "type": "text",
-                "content": "💡 **Tip**: You can save this SOP as a text file in the Knowledge section for future reference."
-            })
-        else:
-            yield agent._sse({"type": "error", "content": "Failed to generate SOP: empty response"})
+        raw_content = (response.choices[0].message.content or "").strip()
+        if not raw_content:
+            logger.error("SOP extraction returned empty response")
+            return None
+
+        json_match = re.search(r"\{.*\}", raw_content, re.DOTALL)
+        if not json_match:
+            logger.error("LLM did not return valid JSON for SOP extraction")
+            return None
+
+        proposal = json.loads(json_match.group())
+
+        content_markdown = str(proposal.get("content_markdown", "")).strip()
+        if not content_markdown:
+            logger.error("SOP proposal missing content_markdown")
+            return None
+
+        proposal["name"] = str(proposal.get("name", "")).strip() or _guess_sop_name_from_markdown(content_markdown) or "Untitled SOP"
+        proposal["description"] = str(proposal.get("description", "")).strip()
+        proposal["content_markdown"] = content_markdown
+
+        return proposal
 
     except Exception as e:
-        logger.error(f"SOP extraction failed: {e}")
-        yield agent._sse({"type": "error", "content": f"Failed to generate SOP: {str(e)}"})
+        logger.error(f"SOP extraction LLM call failed: {e}")
+        return None
+
+def _guess_sop_name_from_markdown(content: str) -> str | None:
+    """从 markdown 第一行标题猜 SOP 名称"""
+    for line in content.splitlines():
+        line = line.strip()
+        if line.startswith("# "):
+            return line[2:].strip()
+    return None
+
+async def _save_sop_asset(agent: "BaseAgent", config: dict) -> AsyncGenerator[str, None]:
+    """用户确认后，将 SOP 保存为 Asset"""
+    from app.models import Asset
+    from app.database import async_session
+
+    name = config.get("name", "Untitled SOP")
+    description = config.get("description", "")
+    content_markdown = config.get("content_markdown", "")
+
+    if not content_markdown.strip():
+        yield agent._sse({"type": "error", "content": "Cannot save SOP: content is empty."})
+        yield agent._sse({"type": "done"})
+        return
+    yield agent._sse({"type": "text", "content": f"💾 Saving SOP `{name}` as an asset...\n"})
+    print(f"_save_sop_asset entered: name={name!r}, task_id={agent.task_id}, markdown_len={len(content_markdown)}")
+    
+    try:
+        async with async_session() as db:
+            asset = Asset(
+                name=name,
+                description=description,
+                asset_type="sop",
+                source_task_id=agent.task_id,
+                content_markdown=content_markdown,
+            )
+            db.add(asset)
+            await db.commit()
+            await db.refresh(asset)
+            print(f"SOP asset saved successfully: asset_id={asset.id}")
+
+        line_count = len(content_markdown.strip().splitlines())
+
+        success_msg = (
+            f"✅ **SOP saved successfully!**\n\n"
+            f"| Property | Value |\n"
+            f"|----------|-------|\n"
+            f"| Name | `{name}` |\n"
+            f"| Type | sop |\n"
+            f"| Lines | {line_count} |\n"
+            f"\nYou can find this SOP in the **Assets** tab on the right panel."
+        )
+        yield agent._sse({"type": "text", "content": success_msg})
+
+    except Exception as e:
+        logger.error(f"SOP asset save failed: {e}")
+        yield agent._sse({"type": "error", "content": f"Failed to save SOP: {str(e)}"})
 
     yield agent._sse({"type": "done"})
-
 
 def _build_sop_extraction_prompt(
     code_history: list[dict],
@@ -695,7 +929,11 @@ def _build_sop_extraction_prompt(
 {instructions_section}
 {knowledge_section}
 ## Your Task
-Based on the analysis history above, create a **Standard Operating Procedure (SOP)** document in Markdown format.
+Based on the analysis history above, create a reusable **Standard Operating Procedure (SOP)**.
+Return ONLY a JSON object with:
+- `name`: a concise SOP title
+- `description`: a short summary of what the SOP is for
+- `content_markdown`: the full SOP document in Markdown format
 The SOP should include:
 1. **Objective** — What problem does this procedure solve?
 2. **Prerequisites** — Required data sources, tools, or knowledge

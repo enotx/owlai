@@ -5,13 +5,18 @@
 import os
 import shutil
 import aiofiles
+import json
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.database import get_db
-from app.models import Knowledge
-from app.schemas import KnowledgeResponse
+from app.models import Knowledge, Asset, DataPipeline
+from app.schemas import (
+    KnowledgeResponse,
+    AddAssetToContextRequest,
+    AddPipelineToContextRequest,
+)
 from app.services.data_processor import parse_csv_metadata, get_csv_preview
 from app.config import UPLOADS_DIR  # 新增：导入动态路径
 
@@ -26,6 +31,50 @@ from app.services.data_processor import (
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
+async def _find_existing_asset_knowledge(
+    db: AsyncSession,
+    task_id: str,
+    asset_id: str,
+) -> Knowledge | None:
+    result = await db.execute(
+        select(Knowledge).where(
+            Knowledge.task_id == task_id,
+            Knowledge.type.in_(["asset_script", "asset_sop"]),
+        )
+    )
+    for item in result.scalars().all():
+        if not item.metadata_json:
+            continue
+        try:
+            meta = json.loads(item.metadata_json)
+        except json.JSONDecodeError:
+            continue
+        if meta.get("asset_id") == asset_id:
+            return item
+    return None
+
+
+async def _find_existing_pipeline_knowledge(
+    db: AsyncSession,
+    task_id: str,
+    pipeline_id: str,
+) -> Knowledge | None:
+    result = await db.execute(
+        select(Knowledge).where(
+            Knowledge.task_id == task_id,
+            Knowledge.type == "data_pipeline",
+        )
+    )
+    for item in result.scalars().all():
+        if not item.metadata_json:
+            continue
+        try:
+            meta = json.loads(item.metadata_json)
+        except json.JSONDecodeError:
+            continue
+        if meta.get("pipeline_id") == pipeline_id:
+            return item
+    return None
 
 @router.post("", response_model=KnowledgeResponse)
 async def upload_knowledge(
@@ -88,6 +137,76 @@ async def upload_knowledge(
     await db.refresh(knowledge)
     return knowledge
 
+@router.post("/context/asset", response_model=KnowledgeResponse)
+async def add_asset_to_context(
+    body: AddAssetToContextRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """将 Script / SOP 资产加入指定 Task 的 Knowledge 上下文"""
+    asset = await db.get(Asset, body.asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    existing = await _find_existing_asset_knowledge(db, body.task_id, body.asset_id)
+    if existing:
+        return existing
+
+    knowledge_type = "asset_script" if asset.asset_type == "script" else "asset_sop"
+
+    knowledge = Knowledge(
+        task_id=body.task_id,
+        type=knowledge_type,
+        name=asset.name,
+        file_path=None,
+        metadata_json=json.dumps(
+            {
+                "asset_id": asset.id,
+                "asset_type": asset.asset_type,
+                "description": asset.description,
+                "script_type": asset.script_type,
+            },
+            ensure_ascii=False,
+        ),
+    )
+    db.add(knowledge)
+    await db.commit()
+    await db.refresh(knowledge)
+    return knowledge
+
+@router.post("/context/pipeline", response_model=KnowledgeResponse)
+async def add_pipeline_to_context(
+    body: AddPipelineToContextRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """将 Data Pipeline 加入指定 Task 的 Knowledge 上下文"""
+    pipeline = await db.get(DataPipeline, body.pipeline_id)
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    existing = await _find_existing_pipeline_knowledge(db, body.task_id, body.pipeline_id)
+    if existing:
+        return existing
+
+    knowledge = Knowledge(
+        task_id=body.task_id,
+        type="data_pipeline",
+        name=pipeline.name,
+        file_path=None,
+        metadata_json=json.dumps(
+            {
+                "pipeline_id": pipeline.id,
+                "target_table_name": pipeline.target_table_name,
+                "source_type": pipeline.source_type,
+                "write_strategy": pipeline.write_strategy,
+                "description": pipeline.description,
+            },
+            ensure_ascii=False,
+        ),
+    )
+    db.add(knowledge)
+    await db.commit()
+    await db.refresh(knowledge)
+    return knowledge
 
 @router.get("", response_model=list[KnowledgeResponse])
 async def list_knowledge(task_id: str, db: AsyncSession = Depends(get_db)):
@@ -141,13 +260,72 @@ async def preview_knowledge(
         raise HTTPException(status_code=404, detail="Knowledge not found")
     if not item.file_path or not os.path.exists(item.file_path):
         raise HTTPException(status_code=404, detail="File not found on disk")
-    if item.type == "csv":
+    if item.type in ("asset_script", "asset_sop"):
+        if not item.metadata_json:
+            raise HTTPException(status_code=500, detail="Knowledge metadata missing")
+        try:
+            meta = json.loads(item.metadata_json)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=500, detail="Knowledge metadata invalid")
+        asset_id = meta.get("asset_id")
+        asset = await db.get(Asset, asset_id) if asset_id else None
+        if not asset:
+            raise HTTPException(status_code=404, detail="Referenced asset not found")
+        if asset.asset_type == "script":
+            content = (
+                f"# Script: {asset.name}\n\n"
+                f"{asset.description or ''}\n\n"
+                f"## Script Type\n{asset.script_type or 'general'}\n\n"
+                f"## Code\n\n```python\n{asset.code or ''}\n```"
+            )
+        else:
+            content = (
+                f"# SOP: {asset.name}\n\n"
+                f"{asset.description or ''}\n\n"
+                f"{asset.content_markdown or ''}"
+            )
+        return {
+            "knowledge_id": knowledge_id,
+            "type": "text",
+            "content": content,
+            "columns": [],
+            "rows": [],
+            "total_rows": 0,
+        }
+    elif item.type == "data_pipeline":
+        if not item.metadata_json:
+            raise HTTPException(status_code=500, detail="Knowledge metadata missing")
+        try:
+            meta = json.loads(item.metadata_json)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=500, detail="Knowledge metadata invalid")
+        pipeline_id = meta.get("pipeline_id")
+        pipeline = await db.get(DataPipeline, pipeline_id) if pipeline_id else None
+        if not pipeline:
+            raise HTTPException(status_code=404, detail="Referenced pipeline not found")
+        content = (
+            f"# Data Pipeline: {pipeline.name}\n\n"
+            f"{pipeline.description or ''}\n\n"
+            f"## Source Type\n{pipeline.source_type}\n\n"
+            f"## Target Table\n{pipeline.target_table_name}\n\n"
+            f"## Write Strategy\n{pipeline.write_strategy}\n\n"
+            f"## Transform Description\n{pipeline.transform_description or ''}\n\n"
+            f"## Transform Code\n\n```python\n{pipeline.transform_code}\n```"
+        )
+        return {
+            "knowledge_id": knowledge_id,
+            "type": "text",
+            "content": content,
+            "columns": [],
+            "rows": [],
+            "total_rows": 0,
+        }
+    elif item.type == "csv":
         try:
             preview = get_csv_preview(item.file_path, n_rows=n)
             return {"knowledge_id": knowledge_id, "type": "csv", **preview}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"CSV parse error: {str(e)}")
-    
     elif item.type == "excel":
         try:
             preview = get_excel_preview(item.file_path, sheet_name=sheet_name, n_rows=n)

@@ -255,12 +255,14 @@ function HITLBlock({
   onPipelineConfirm,
   onPipelineCancel,
   onScriptRespond,
+  onSOPRespond,
 }: {
   step: Step;
   onSubmit?: (choice: { type: "option" | "custom"; value: string; label: string }) => void;
   onPipelineConfirm?: (config: ConfirmedPipelineConfig) => void;
   onPipelineCancel?: () => void;
   onScriptRespond?: (message: string) => void;
+  onSOPRespond?: (message: string) => void;
 }) {
   const parsed = useMemo(() => {
     if (!step.code_output) return null;
@@ -302,6 +304,40 @@ function HITLBlock({
         }}
         onRespond={(msg) => onScriptRespond?.(msg)}
         disabled={hasReply}
+      />
+    );
+  }
+  
+  // SOP Confirmation routing
+  if (parsed.hitl_type === "sop_confirmation" && parsed.sop) {
+    const sop = parsed.sop;
+    return (
+      <HITLCard
+        title={parsed.title}
+        description={`${parsed.description}\n\nName: ${sop.name}`}
+        options={parsed.options}
+        resolved={hasReply}
+        onSubmit={(choice) => {
+          console.log("[SOP HITL] choice =>", choice);
+          console.log("[SOP HITL] sop payload =>", sop);
+          if (choice.type === "option" && choice.value === "confirm") {
+            const payload = {
+              name: sop.name,
+              description: sop.description,
+              content_markdown: sop.content_markdown,
+            };
+            const msg = `[SOP Confirm] ${JSON.stringify(payload)}`;
+            console.log("[SOP HITL] outgoing confirm message =>", msg);
+            onSOPRespond?.(msg);
+          } else if (choice.type === "option" && choice.value === "cancel") {
+            const msg = `[SOP Confirm] {"cancelled": true}`;
+            console.log("[SOP HITL] outgoing cancel message =>", msg);
+            onSOPRespond?.(msg);
+          } else if (choice.type === "custom") {
+            console.log("[SOP HITL] outgoing custom message =>", choice.value);
+            onSOPRespond?.(choice.value);
+          }
+        }}
       />
     );
   }
@@ -880,6 +916,24 @@ export default function ChatArea() {
     },
     [currentTaskId, isSending, handleRegenerate]
   );
+  /** SOP 确认/取消后，直接发送格式化消息 */
+  const handleSOPRespond = useCallback(
+    (message: string) => {
+      if (!currentTaskId || isSending) {
+        console.warn("[SOP HITL] blocked:", {
+          currentTaskId,
+          isSending,
+          message,
+        });
+        return;
+      }
+      console.log("[SOP HITL] submitting confirm message =>", message);
+      useTaskStore.getState().setPendingHITL(null);
+      handleRegenerate(message, currentTaskId);
+    },
+    [currentTaskId, isSending, handleRegenerate]
+  );
+
 
   /** 监听滚动事件，更新 isNearBottom 标志 */
   useEffect(() => {
@@ -1015,6 +1069,7 @@ export default function ChatArea() {
                     onPipelineConfirm={handlePipelineConfirm}
                     onPipelineCancel={handlePipelineCancel}
                     onScriptRespond={handleScriptRespond}
+                    onSOPRespond={handleSOPRespond}
                   />
                   {!isTemp && (
                     <div className="absolute -bottom-1 left-10">

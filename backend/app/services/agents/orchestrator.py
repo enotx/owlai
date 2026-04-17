@@ -25,6 +25,7 @@ _CONFIRM_SKILL_MAP: dict[str, str] = {
     "derive": "derive",
     "pipeline": "derive",
     "script": "script",
+    "sop": "sop",
 }
 
 
@@ -85,6 +86,7 @@ class AgentOrchestrator:
         confirm_match = _CONFIRM_PATTERN.match(user_message.strip())
         if confirm_match:
             confirm_type = confirm_match.group(1).strip().lower()
+            print(f"Confirm message matched: confirm_type={confirm_type}, raw={user_message[:300]!r}")
             target_command = _CONFIRM_SKILL_MAP.get(confirm_type)
             if target_command:
                 from sqlalchemy import select as sa_select

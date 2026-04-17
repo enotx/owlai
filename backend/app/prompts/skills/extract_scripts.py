@@ -1,4 +1,4 @@
-# backend/app/prompts/skills/extract_script.py
+# backend/app/prompts/skills/extract_scripts.py
 
 """Extract Script Skill - 从任务历史中提取可复用的通用脚本"""
 

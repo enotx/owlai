@@ -8,6 +8,7 @@ import re
 
 from app.services.agents.base import BaseAgent
 from app.prompts import build_plan_system_prompt
+from app.services.context_builder import build_agent_context_bundle
 from app.tools import get_tools_for_agent
 
 import logging
@@ -23,26 +24,24 @@ class PlanAgent(BaseAgent):
         user_message = self._safe_str(context, "user_message")
         history = context.get("history_messages", [])
         
-        # 获取上下文
-        dataset_ctx, text_ctx, var_ref, data_var_map = await self._get_knowledge_context()
-        skill_ctx, skill_envs = await self._get_skill_context()
-        warehouse_context = await self._build_warehouse_context()
-        
         # 判断是否是第一轮对话
         conversation_turns = len([m for m in history if m["role"] in ("user", "assistant")])
         include_viz_examples = context.get("include_viz_examples", False)
         
-        # 构建 system prompt
-        system_prompt = build_plan_system_prompt(
-            dataset_context=dataset_ctx,
-            text_context=text_ctx,
-            variable_reference=var_ref,
-            skill_context=skill_ctx,
-            warehouse_context=warehouse_context,
+        # 使用统一的 context builder
+        context_bundle = await build_agent_context_bundle(
+            task_id=self.task_id,
+            db=self.db,
+            mode="plan",
+            current_task="",
             is_first_turn=(conversation_turns == 0),
             include_viz_examples=include_viz_examples,
         )
         
+        system_prompt = context_bundle["system_prompt"]
+        data_var_map = context_bundle["data_var_map"]
+        skill_envs = context_bundle["skill_envs"]
+                
         messages = [
             {"role": "system", "content": system_prompt},
             *history,
@@ -50,7 +49,12 @@ class PlanAgent(BaseAgent):
         ]
         
         # 准备沙箱环境
-        sandbox_env = await self._prepare_sandbox_env(capture_subdir="plan")
+        sandbox_env = self._build_sandbox_env_from_bundle(
+            data_var_map=data_var_map,
+            skill_envs=skill_envs,
+            capture_subdir="plan",
+        )
+
         
         # 获取工具列表
         plan_tools = get_tools_for_agent("plan")

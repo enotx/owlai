@@ -195,8 +195,18 @@ export async function executeTask(
 }
 
 // ===== Knowledge =====
+export interface KnowledgeItem {
+  id: string;
+  task_id: string;
+  type: string;
+  name: string;
+  file_path: string | null;
+  metadata_json: string | null;
+  created_at: string;
+}
+
 export const fetchKnowledge = async (taskId: string) =>
-  (await getApi()).get("/knowledge", { params: { task_id: taskId } });
+  (await getApi()).get<KnowledgeItem[]>("/knowledge", { params: { task_id: taskId } });
 
 export const uploadKnowledge = async (taskId: string, file: File) => {
   const formData = new FormData();
@@ -210,6 +220,18 @@ export const uploadKnowledge = async (taskId: string, file: File) => {
 
 export const deleteKnowledge = async (knowledgeId: string) =>
   (await getApi()).delete(`/knowledge/${knowledgeId}`);
+
+export const addAssetToContext = async (taskId: string, assetId: string) =>
+  (await getApi()).post<KnowledgeItem>("/knowledge/context/asset", {
+    task_id: taskId,
+    asset_id: assetId,
+  });
+
+export const addPipelineToContext = async (taskId: string, pipelineId: string) =>
+  (await getApi()).post<KnowledgeItem>("/knowledge/context/pipeline", {
+    task_id: taskId,
+    pipeline_id: pipelineId,
+  });
 
 export const previewKnowledge = async (
   knowledgeId: string, 
@@ -843,10 +865,16 @@ export const previewDuckDBTable = async (
     rows: Record<string, unknown>[];
     total_rows: number;
   }>(`/warehouse/tables/${tableId}/preview`, { params: { limit } });
+
 export const deleteDuckDBTable = async (tableId: string) =>
   (await getApi()).delete(`/warehouse/tables/${tableId}`);
+
 export const addTableToContext = async (tableId: string, taskId: string) =>
-  (await getApi()).post<{ status: string; knowledge_id: string }>(
+  (await getApi()).post<{
+    status: string;
+    knowledge_id: string;
+    auto_added_pipeline_knowledge_id?: string | null;
+  }>(
     `/warehouse/tables/${tableId}/add-to-context`,
     null,
     { params: { task_id: taskId } }

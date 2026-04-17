@@ -1165,3 +1165,58 @@ class BaseAgent(ABC):
                 f"  Columns: {col_info}"
             )
         return "\n".join(lines)
+    
+    def _build_sandbox_env_from_bundle(
+        self,
+        data_var_map: dict[str, str],
+        skill_envs: dict[str, str],
+        capture_subdir: str = "",
+        extra_skill_envs: dict[str, str] | None = None,
+    ) -> SandboxEnv:
+        """
+        从 context bundle 构建 SandboxEnv（避免重复查询数据库）
+        
+        Args:
+            data_var_map: 从 context_bundle 获取的数据变量映射
+            skill_envs: 从 context_bundle 获取的技能环境变量
+            capture_subdir: 捕获目录的子目录名
+            extra_skill_envs: 额外的技能环境变量
+        """
+        import json
+        
+        # 合并 extra_skill_envs
+        effective_envs = dict(skill_envs)
+        if extra_skill_envs:
+            if "__allowed_modules__" in extra_skill_envs and "__allowed_modules__" in effective_envs:
+                existing_m = set(json.loads(effective_envs["__allowed_modules__"]))
+                new_m = set(json.loads(extra_skill_envs["__allowed_modules__"]))
+                effective_envs["__allowed_modules__"] = json.dumps(list(existing_m | new_m))
+                extra_clean = {k: v for k, v in extra_skill_envs.items() if k != "__allowed_modules__"}
+                effective_envs.update(extra_clean)
+            else:
+                effective_envs.update(extra_skill_envs)
+        
+        # 收集 persistent_vars
+        persist_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "persist")
+        persistent_vars: dict[str, str] = {}
+        if os.path.isdir(persist_dir):
+            for fpath in glob.glob(os.path.join(persist_dir, "*.json")):
+                var_name = os.path.splitext(os.path.basename(fpath))[0]
+                persistent_vars[var_name] = fpath
+            for fpath in glob.glob(os.path.join(persist_dir, "*.parquet")):
+                var_name = os.path.splitext(os.path.basename(fpath))[0]
+                persistent_vars[var_name] = fpath
+        
+        # 准备 capture_dir
+        if capture_subdir:
+            capture_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", capture_subdir)
+        else:
+            capture_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures")
+        os.makedirs(capture_dir, exist_ok=True)
+        
+        return SandboxEnv(
+            data_var_map=data_var_map,
+            skill_envs=effective_envs,
+            persistent_vars=persistent_vars,
+            capture_dir=capture_dir,
+        )

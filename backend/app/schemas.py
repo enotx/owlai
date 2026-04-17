@@ -65,8 +65,15 @@ class KnowledgeResponse(BaseModel):
     file_path: str | None
     metadata_json: str | None
     created_at: datetime
-
     model_config = {"from_attributes": True}
+
+class AddAssetToContextRequest(BaseModel):
+    task_id: str
+    asset_id: str
+class AddPipelineToContextRequest(BaseModel):
+    task_id: str
+    pipeline_id: str
+
 
 
 # ===== Step / Chat =====

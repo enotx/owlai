@@ -20,7 +20,19 @@ and produce a clear, reusable Standard Operating Procedure (SOP) document.
 
 ## Output Format
 
-Create a Markdown document with the following structure:
+You MUST return a JSON object with the following structure:
+
+```json
+{
+  "name": "Sales Data Analysis SOP",
+  "description": "A reusable SOP for analyzing monthly sales data and generating summary outputs.",
+  "content_markdown": "# Sales Data Analysis - Standard Operating Procedure\\n\\n## 1. Objective\\n..."
+}
+```
+
+## Requirements
+
+The `content_markdown` field must contain a Markdown document with the following structure:
 
 ```markdown
 # [Task Name] - Standard Operating Procedure
@@ -29,9 +41,9 @@ Create a Markdown document with the following structure:
 Brief description of what this procedure accomplishes and when to use it.
 
 ## 2. Prerequisites
-- Data sources required (e.g., "Sales data CSV with columns: date, product_id, quantity, price")
-- Tools/libraries needed (e.g., "pandas, matplotlib")
-- Domain knowledge required (e.g., "Understanding of sales metrics")
+- Data sources required
+- Tools/libraries needed
+- Domain knowledge required
 
 ## 3. Procedure
 
@@ -45,17 +57,11 @@ Brief description of what this procedure accomplishes and when to use it.
 - Action 2
 - Expected result
 
-(Continue for all steps...)
-
 ## 4. Expected Outputs
-- Output 1 (e.g., "Cleaned dataset with X rows")
-- Output 2 (e.g., "Summary statistics table")
-- Output 3 (e.g., "Trend chart showing Y over time")
+- Output 1
+- Output 2
 
 ## 5. Common Issues & Solutions
-
-### Issue: [Error description]
-**Solution:** [How to fix]
 
 ### Issue: [Error description]
 **Solution:** [How to fix]
@@ -67,11 +73,14 @@ Brief description of what this procedure accomplishes and when to use it.
 
 ## Guidelines
 
-1. **Be Specific**: Include exact column names, function calls, and parameter values used
-2. **Be Reusable**: Abstract away task-specific details (e.g., "Load the input CSV" instead of "Load sales_2024.csv")
-3. **Include Context**: Explain WHY certain steps are needed, not just WHAT to do
-4. **Add Troubleshooting**: Anticipate common errors based on the task history
-5. **Keep It Concise**: Focus on the essential steps, avoid redundant explanations
+1. **Return JSON only** — no markdown fences outside the JSON
+2. **Be Specific**: Include exact column names, function calls, and parameter values when useful
+3. **Be Reusable**: Abstract away task-specific filenames and use generalized names
+4. **Include Context**: Explain WHY certain steps are needed, not just WHAT to do
+5. **Add Troubleshooting**: Anticipate common errors based on the task history
+6. **Keep It Concise**: Focus on the essential steps, avoid redundant explanations
+7. **Set a clear name** in `name`
+8. **Write a short summary** in `description`
 """
 
 # ── reference_markdown: 详细示例（可选） ──

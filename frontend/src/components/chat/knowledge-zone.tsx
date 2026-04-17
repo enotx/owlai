@@ -6,16 +6,31 @@ import { useRef, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { useTaskStore } from "@/stores/use-task-store";
 import { uploadKnowledge } from "@/lib/api";
-import { X, FileSpreadsheet, FileText, Sheet, Database, Settings, Layers } from "lucide-react";
-import { addTableToContext, fetchKnowledge } from "@/lib/api";
+import {
+  X,
+  FileSpreadsheet,
+  FileText,
+  Sheet,
+  Database,
+  Settings,
+  Layers,
+  Code2,
+  ClipboardList,
+} from "lucide-react";
+import {
+  addTableToContext,
+  addAssetToContext,
+  addPipelineToContext,
+  fetchKnowledge,
+} from "@/lib/api";
 import { DATASOURCE_DRAG_TYPE } from "@/components/data/data-sources-tab";
-
+import { ASSET_DRAG_TYPE, PIPELINE_DRAG_TYPE } from "@/components/data/asset-panel";
 
 export default function KnowledgeZone() {
   const { currentTaskId, knowledgeList, addKnowledge, removeKnowledge, setPreviewData } = useTaskStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [dragSource, setDragSource] = useState<"file" | "datasource" | null>(null);
+  const [dragSource, setDragSource] = useState<"file" | "datasource" | "asset" | "pipeline" | null>(null);
   const dragCounterRef = useRef(0);
 
   const processFile = useCallback(async (file: File) => {
@@ -58,18 +73,24 @@ export default function KnowledgeZone() {
   };
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dragCounterRef.current++;
-      const types = e.dataTransfer.types;
-      if (types.includes(DATASOURCE_DRAG_TYPE)) {
-        setIsDragging(true);
-        setDragSource("datasource");
-      } else if (types.includes("Files")) {
-        setIsDragging(true);
-        setDragSource("file");
-      }
-    }, []);
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current++;
+    const types = e.dataTransfer.types;
+    if (types.includes(PIPELINE_DRAG_TYPE)) {
+      setIsDragging(true);
+      setDragSource("pipeline");
+    } else if (types.includes(ASSET_DRAG_TYPE)) {
+      setIsDragging(true);
+      setDragSource("asset");
+    } else if (types.includes(DATASOURCE_DRAG_TYPE)) {
+      setIsDragging(true);
+      setDragSource("datasource");
+    } else if (types.includes("Files")) {
+      setIsDragging(true);
+      setDragSource("file");
+    }
+  }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -87,38 +108,68 @@ export default function KnowledgeZone() {
     }, []);
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setIsDragging(false);
-      setDragSource(null);
-      dragCounterRef.current = 0;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    setDragSource(null);
+    dragCounterRef.current = 0;
 
-      // ── Data source drop (from data-sources-tab) ────────
-      const dsPayload = e.dataTransfer.getData(DATASOURCE_DRAG_TYPE);
-      if (dsPayload && currentTaskId) {
-        try {
-          const { id } = JSON.parse(dsPayload) as {
-            id: string;
-            display_name: string;
-            table_name: string;
-          };
-          const res = await addTableToContext(id, currentTaskId);
-          if (res.data.status === "added" || res.data.status === "already_added") {
-            const knowledgeRes = await fetchKnowledge(currentTaskId);
-            useTaskStore.getState().setKnowledgeList(knowledgeRes.data);
-          }
-        } catch (err) {
-          console.error("Failed to add data source to context:", err);
+    if (!currentTaskId) return;
+
+    // ── Pipeline drop ─────────────────────────────
+    const pipelinePayload = e.dataTransfer.getData(PIPELINE_DRAG_TYPE);
+    if (pipelinePayload) {
+      try {
+        const { id } = JSON.parse(pipelinePayload) as { id: string; name: string };
+        await addPipelineToContext(currentTaskId, id);
+        const knowledgeRes = await fetchKnowledge(currentTaskId);
+        useTaskStore.getState().setKnowledgeList(knowledgeRes.data);
+      } catch (err) {
+        console.error("Failed to add pipeline to context:", err);
+      }
+      return;
+    }
+
+    // ── Asset drop ────────────────────────────────
+    const assetPayload = e.dataTransfer.getData(ASSET_DRAG_TYPE);
+    if (assetPayload) {
+      try {
+        const { id } = JSON.parse(assetPayload) as { id: string; name: string; asset_type: string };
+        await addAssetToContext(currentTaskId, id);
+        const knowledgeRes = await fetchKnowledge(currentTaskId);
+        useTaskStore.getState().setKnowledgeList(knowledgeRes.data);
+      } catch (err) {
+        console.error("Failed to add asset to context:", err);
+      }
+      return;
+    }
+
+    // ── Data source drop ──────────────────────────
+    const dsPayload = e.dataTransfer.getData(DATASOURCE_DRAG_TYPE);
+    if (dsPayload) {
+      try {
+        const { id } = JSON.parse(dsPayload) as {
+          id: string;
+          display_name: string;
+          table_name: string;
+        };
+        const res = await addTableToContext(id, currentTaskId);
+        if (res.data.status === "added" || res.data.status === "already_added") {
+          const knowledgeRes = await fetchKnowledge(currentTaskId);
+          useTaskStore.getState().setKnowledgeList(knowledgeRes.data);
         }
-        return;
+      } catch (err) {
+        console.error("Failed to add data source to context:", err);
       }
+      return;
+    }
 
-      // ── File drop (existing behaviour) ──────────────────
-      const files = Array.from(e.dataTransfer.files);
-      for (const file of files) {
-        await processFile(file);
-      }
-    }, [processFile, currentTaskId]);
+    // ── File drop ─────────────────────────────────
+    const files = Array.from(e.dataTransfer.files);
+    for (const file of files) {
+      await processFile(file);
+    }
+  }, [processFile, currentTaskId]);
 
   const handleRemove = async (id: string) => {
     try {
@@ -209,11 +260,17 @@ export default function KnowledgeZone() {
     if (type === "csv") return <FileSpreadsheet className="h-5 w-5 text-green-600" />;
     if (type === "excel") return <Sheet className="h-5 w-5 text-blue-600" />;
     if (type === "data_source" || type === "duckdb_table") return <Database className="h-5 w-5 text-emerald-600" />;
+    if (type === "asset_script") return <Code2 className="h-5 w-5 text-violet-600" />;
+    if (type === "asset_sop") return <ClipboardList className="h-5 w-5 text-amber-600" />;
+    if (type === "data_pipeline") return <Layers className="h-5 w-5 text-sky-600" />;
     return <FileText className="h-5 w-5 text-gray-500" />;
   };
 
   const getFileMeta = (k: (typeof knowledgeList)[0]) => {
     if (k.type === "data_source" || k.type === "duckdb_table") return "Data Source";
+    if (k.type === "asset_script") return "Script Asset";
+    if (k.type === "asset_sop") return "SOP Asset";
+    if (k.type === "data_pipeline") return "Data Pipeline";
     const ext = k.name.slice(k.name.lastIndexOf(".")).toLowerCase();
     if (ext === ".csv") return "CSV Data";
     if (ext === ".xlsx" || ext === ".xls") return "Excel Sheet";
@@ -276,9 +333,13 @@ export default function KnowledgeZone() {
         <span className="text-xs">
           {isDragging && dragSource === "datasource"
             ? "Drop data source to add to context"
-            : isDragging && dragSource === "file"
-              ? "Drop file to upload"
-              : "Drop files or data sources here"}
+            : isDragging && dragSource === "asset"
+              ? "Drop asset to add to context"
+              : isDragging && dragSource === "pipeline"
+                ? "Drop pipeline to add to context"
+                : isDragging && dragSource === "file"
+                  ? "Drop file to upload"
+                  : "Drop files, data sources, assets, or pipelines here"}
         </span>
         <Layers className="h-4 w-4 opacity-40" />
         <Settings className="h-4 w-4 opacity-40" />
