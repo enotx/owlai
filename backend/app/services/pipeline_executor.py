@@ -184,13 +184,71 @@ async def execute_pipeline(
             execution_time=execution_time,
         )
 
-    # ── Step 3: 从沙箱 persist/ 提取 result_df ──────────
+    # ── Step 3: 从沙箱 persist/ 提取 result_df 或识别 __DERIVE_OK__ ──────────
     result_df = await _extract_result_df(capture_dir)
-
-    if result_df is None:
+    # 新增：检查是否有 __DERIVE_OK__ 标记（表示数据已直接写入 DuckDB）
+    derive_ok_meta = await _extract_derive_ok_marker(exec_result.get("output", ""))
+    if derive_ok_meta:
+        # 数据已通过代码直接写入 DuckDB，跳过 DataFrame 写入
+        logger.info(f"Pipeline '{pipeline.name}' used direct DuckDB write via __DERIVE_OK__")
+        
+        # 验证表是否存在
+        if not await wh.async_table_exists(pipeline.target_table_name):
+            error_msg = f"Table '{pipeline.target_table_name}' not found after __DERIVE_OK__"
+            logger.error(error_msg)
+            await _update_pipeline_status(pipeline, table, db, success=False, error=error_msg)
+            return PipelineExecutionResult(
+                success=False,
+                message=error_msg,
+                error=error_msg,
+                execution_time=execution_time,
+            )
+        
+        # 从标记中提取元数据
+        row_count = derive_ok_meta.get("row_count", 0)
+        schema = derive_ok_meta.get("schema", [])
+        
+        # 提取 latest_data_date
+        latest_date = await _extract_latest_date(capture_dir, pipeline, None)
+        
+        # 更新元数据
+        table.row_count = row_count
+        table.table_schema_json = json.dumps(schema, ensure_ascii=False)
+        table.data_updated_at = now
+        table.status = "ready"
+        if latest_date:
+            table.latest_data_date = latest_date
+        
+        pipeline.last_run_at = now
+        pipeline.last_run_status = "success"
+        pipeline.last_run_error = None
+        
+        await db.commit()
+        
+        message = (
+            f"Pipeline '{pipeline.name}' completed via direct DuckDB write: "
+            f"{row_count:,} rows"
+        )
+        if latest_date:
+            message += f", latest date: {latest_date}"
+        
+        logger.info(message)
+        
+        return PipelineExecutionResult(
+            success=True,
+            message=message,
+            rows_written=row_count,
+            total_rows=row_count,
+            latest_data_date=latest_date,
+            execution_time=execution_time,
+        )
+    elif result_df is None:
+        # 既没有 result_df 也没有 __DERIVE_OK__
         error_msg = (
-            "Pipeline transform_code did not produce a 'result_df' DataFrame. "
-            "Make sure your code assigns the final result to `result_df`."
+            "Pipeline transform_code did not produce a 'result_df' DataFrame "
+            "or '__DERIVE_OK__' marker. "
+            "Make sure your code either assigns the final result to `result_df` "
+            "or prints '__DERIVE_OK__' + JSON after writing to DuckDB."
         )
         logger.error(f"Pipeline '{pipeline.name}': {error_msg}")
         await _update_pipeline_status(pipeline, table, db, success=False, error=error_msg)
@@ -309,14 +367,14 @@ async def _extract_result_df(capture_dir: str) -> pd.DataFrame | None:
 async def _extract_latest_date(
     capture_dir: str,
     pipeline: DataPipeline,
-    result_df: pd.DataFrame,
+    result_df: pd.DataFrame | None,  # 改为可选
 ) -> str | None:
     """
     提取数据的 latest_data_date。
 
     优先级：
     1. 沙箱中显式赋值的 `latest_data_date` 变量
-    2. 从 freshness_policy 中指定的 time_column 自动推断
+    2. 从 freshness_policy 中指定的 time_column 自动推断（需要 result_df）
     """
     # 方式 1：从 persist/ 读取 latest_data_date 变量
     persist_dir = os.path.join(capture_dir, "persist")
@@ -332,7 +390,10 @@ async def _extract_latest_date(
             except Exception:
                 pass
 
-    # 方式 2：从 freshness_policy 的 time_column 推断
+    # 方式 2：从 freshness_policy 的 time_column 推断（需要 result_df）
+    if result_df is None:  # 新增：如果没有 DataFrame，跳过此方式
+        return None
+    
     try:
         policy = json.loads(pipeline.freshness_policy_json) if pipeline.freshness_policy_json else {}
     except (json.JSONDecodeError, TypeError):
@@ -352,7 +413,6 @@ async def _extract_latest_date(
             pass
 
     return None
-
 
 async def _update_pipeline_status(
     pipeline: DataPipeline,
@@ -377,3 +437,39 @@ async def _update_pipeline_status(
         await db.commit()
     except Exception as e:
         logger.error(f"Failed to update pipeline/table status: {e}")
+
+
+async def _extract_derive_ok_marker(output: str) -> dict | None:
+    """
+    从代码输出中提取 __DERIVE_OK__ 标记。
+    
+    格式：__DERIVE_OK__{"table_name": "...", "schema": [...], "row_count": 123, ...}
+    
+    Returns:
+        解析后的 JSON dict，如果没有标记则返回 None
+    """
+    if not output or "__DERIVE_OK__" not in output:
+        return None
+    
+    try:
+        # 查找 __DERIVE_OK__ 后的 JSON
+        marker_pos = output.find("__DERIVE_OK__")
+        json_str = output[marker_pos + len("__DERIVE_OK__"):].strip()
+        
+        # 尝试解析 JSON（可能有多余的输出，取第一个完整 JSON）
+        import re
+        json_match = re.search(r'\{.*\}', json_str, re.DOTALL)
+        if not json_match:
+            return None
+        
+        data = json.loads(json_match.group(0))
+        
+        # 验证必需字段
+        if "table_name" not in data or "row_count" not in data:
+            logger.warning("__DERIVE_OK__ marker missing required fields")
+            return None
+        
+        return data
+    except (json.JSONDecodeError, Exception) as e:
+        logger.warning(f"Failed to parse __DERIVE_OK__ marker: {e}")
+        return None
