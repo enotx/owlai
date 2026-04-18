@@ -153,15 +153,25 @@ async def run_script(
         "purpose": f"Script: {asset.name}",
     })
 
-    # 5. 执行代码
+    # 5. 执行代码（带心跳，防止前端 90s 超时）
     try:
-        result = await execute_code_in_sandbox(
-            code=code,
-            data_var_map=data_var_map,
-            capture_dir=capture_dir,
-            injected_envs=extra_envs if extra_envs else None,
-            timeout=600,  # Script 允许 10 分钟超时
-        )
+        from app.services.execution_helpers import run_with_heartbeat
+        result = None
+        async for item in run_with_heartbeat(
+            execute_code_in_sandbox(
+                code=code,
+                data_var_map=data_var_map,
+                capture_dir=capture_dir,
+                injected_envs=extra_envs if extra_envs else None,
+                timeout=1800,  # Script 允许 30 分钟超时
+            ),
+            interval=15.0,
+            message="script_running",
+        ):
+            if isinstance(item, str):
+                yield item  # 心跳转发到 SSE 流
+            else:
+                result = item
     except Exception as e:
         error_msg = f"Script execution error: {str(e)}"
         logger.error(error_msg)
@@ -206,20 +216,21 @@ async def run_script(
         return
 
     # 6. 发送 tool_result 事件
+    safe_result = result or {}
     yield _sse({
         "type": "tool_result",
-        "success": result["success"],
-        "output": result.get("output"),
-        "error": result.get("error"),
-        "time": result.get("execution_time", 0),
-        "dataframes": result.get("dataframes", []),
+        "success": safe_result.get("success", False),
+        "output": safe_result.get("output"),
+        "error": safe_result.get("error"),
+        "time": safe_result.get("execution_time", 0),
+        "dataframes": safe_result.get("dataframes", []),
     })
 
     # 7. 处理沙箱内捕获的图表：持久化为 visualization step
     from app.tools import validate_echarts_option
     from app.tools.visualization import validate_map_config
 
-    for chart_meta in result.get("charts", []):
+    for chart_meta in safe_result.get("charts", []):
         chart_title = chart_meta.get("title", "Untitled Chart")
         chart_type = chart_meta.get("chart_type", "bar")
         chart_option = chart_meta.get("option", {})
@@ -262,7 +273,7 @@ async def run_script(
 
         yield _sse({"type": "step_saved", "step": _step_to_dict(step)})
 
-    for map_meta in result.get("maps", []):
+    for map_meta in safe_result.get("maps", []):
         map_title = map_meta.get("title", "Untitled Map")
         map_config = map_meta.get("config", {})
 
@@ -304,6 +315,8 @@ async def run_script(
 
         yield _sse({"type": "step_saved", "step": _step_to_dict(step)})
 
+    result = result or {}
+
     # 8. 保存执行结果为 Step
     step = Step(
         task_id=task_id,
@@ -312,7 +325,7 @@ async def run_script(
         content=f"Script execution: {asset.name}",
         code=code,
         code_output=json.dumps({
-            "success": result["success"],
+            "success": result.get("success", False),
             "output": result.get("output"),
             "error": result.get("error"),
             "execution_time": result.get("execution_time", 0),
@@ -331,11 +344,11 @@ async def run_script(
     task = await db.get(Task, task_id)
     if task:
         task.last_run_at = datetime.now()
-        task.last_run_status = "success" if result["success"] else "failed"
+        task.last_run_status = "success" if result.get("success", False) else "failed"
         await db.commit()
 
     # 10. 总结
-    if result["success"]:
+    if result.get("success", False):
         yield _sse({
             "type": "text",
             "content": f"\n✅ Script completed successfully in {result.get('execution_time', 0):.2f}s",

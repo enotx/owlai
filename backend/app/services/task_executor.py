@@ -179,17 +179,32 @@ async def _execute_pipeline_task(
     """pipeline 执行：走专用 pipeline_executor"""
     from datetime import datetime
     from app.services.pipeline_executor import execute_pipeline
-
+    from app.services.execution_helpers import run_with_heartbeat
     yield _sse({
         "type": "text",
         "content": f"🚀 Executing pipeline: **{pipeline.name}**\n",
     })
+    result = None
+    async for item in run_with_heartbeat(
+        execute_pipeline(pipeline=pipeline, table=table, db=db),
+        interval=15.0,
+        message="pipeline_running",
+    ):
+        if isinstance(item, str):
+            yield item  # 心跳转发
+        else:
+            result = item
 
-    result = await execute_pipeline(
-        pipeline=pipeline,
-        table=table,
-        db=db,
-    )
+    if result is None:
+        task.last_run_at = datetime.now()
+        task.last_run_status = "failed"
+        await db.commit()
+        yield _sse({
+            "type": "error",
+            "content": "Pipeline execution returned no result",
+        })
+        yield _sse({"type": "done"})
+        return
 
     task.last_run_at = datetime.now()
     task.last_run_status = "success" if result.success else "failed"
