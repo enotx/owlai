@@ -91,6 +91,13 @@ export interface PendingToolExecution {
   };
 }
 
+export interface TaskExecutionState {
+  executionId: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  taskType: "script" | "pipeline" | "routine";
+  lastSeq: number;
+}
+
 /**
  * SubTask 定义
  */
@@ -217,6 +224,17 @@ interface TaskStore {
   pendingTools: Record<string, PendingToolExecution>;
   setPendingTool: (taskId: string, tool: PendingToolExecution | null) => void;
   updatePendingToolResult: (taskId: string, result: PendingToolExecution["result"]) => void;
+  
+  // 后台执行会话（仅前端内存，不落库）
+  taskExecutions: Record<string, TaskExecutionState>;
+  setTaskExecution: (taskId: string, execution: TaskExecutionState | null) => void;
+  updateTaskExecutionStatus: (
+    taskId: string,
+    status: TaskExecutionState["status"]
+  ) => void;
+  updateTaskExecutionSeq: (taskId: string, lastSeq: number) => void;
+  getCurrentTaskExecution: () => TaskExecutionState | null;
+  getTaskExecutionByTaskId: (taskId: string) => TaskExecutionState | null;
 
   // 数据面板展示
   previewData: Record<string, unknown>[] | null;
@@ -422,6 +440,52 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
     return currentTaskId ? pendingTools[currentTaskId] ?? null : null;
   },
 
+  taskExecutions: {},
+  setTaskExecution: (taskId, execution) =>
+    set((s) => {
+      const next = { ...s.taskExecutions };
+      if (execution === null) {
+        delete next[taskId];
+      } else {
+        next[taskId] = execution;
+      }
+      return { taskExecutions: next };
+    }),
+  updateTaskExecutionStatus: (taskId, status) =>
+    set((s) => {
+      const current = s.taskExecutions[taskId];
+      if (!current) return s;
+      return {
+        taskExecutions: {
+          ...s.taskExecutions,
+          [taskId]: {
+            ...current,
+            status,
+          },
+        },
+      };
+    }),
+  updateTaskExecutionSeq: (taskId, lastSeq) =>
+    set((s) => {
+      const current = s.taskExecutions[taskId];
+      if (!current) return s;
+      return {
+        taskExecutions: {
+          ...s.taskExecutions,
+          [taskId]: {
+            ...current,
+            lastSeq,
+          },
+        },
+      };
+    }),
+  getCurrentTaskExecution: () => {
+    const { currentTaskId, taskExecutions } = get();
+    return currentTaskId ? taskExecutions[currentTaskId] ?? null : null;
+  },
+  getTaskExecutionByTaskId: (taskId) => {
+    return get().taskExecutions[taskId] ?? null;
+  },
 
   // Data Panel
   previewData: null,

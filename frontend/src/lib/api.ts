@@ -103,6 +103,173 @@ export const updateTask = async (
   }
 ) => (await getApi()).put(`/tasks/${taskId}`, data);
 
+export interface StartExecutionResponse {
+  task_id: string;
+  execution_id: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  task_type: "script" | "pipeline" | "routine";
+  reused: boolean;
+}
+
+export interface LatestExecutionInfo {
+  execution_id: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  task_type: "script" | "pipeline" | "routine";
+  created_at: number;
+  updated_at: number;
+  finished_at: number | null;
+  error: string | null;
+  last_seq: number;
+}
+
+export interface LatestExecutionResponse {
+  task_id: string;
+  execution: LatestExecutionInfo | null;
+}
+
+export const startTaskExecution = async (
+  taskId: string,
+  options?: {
+    env_vars_override?: Record<string, string>;
+    user_message?: string;
+  }
+) =>
+  (await getApi()).post<StartExecutionResponse>(
+    `/tasks/${taskId}/execute`,
+    options || {}
+  );
+
+export const fetchLatestTaskExecution = async (taskId: string) =>
+  (await getApi()).get<LatestExecutionResponse>(
+    `/tasks/${taskId}/executions/latest`
+  );
+
+export const cancelTaskExecution = async (
+  taskId: string,
+  executionId: string,
+) =>
+  (await getApi()).post<{
+    task_id: string;
+    execution_id: string;
+    status: string;
+    cancelled: boolean;
+    message?: string;
+  }>(
+    `/tasks/${taskId}/executions/${executionId}/cancel`
+  );
+
+export async function streamTaskExecutionEvents(
+  taskId: string,
+  executionId: string,
+  onEvent: (event: SSEEvent) => void,
+  options?: {
+    afterSeq?: number;
+    onSeq?: (seq: number) => void;
+  },
+  externalAbortController?: AbortController,
+) {
+  const controller = externalAbortController || new AbortController();
+  const globalTimeout = setTimeout(() => controller.abort(), 2 * 60 * 60 * 1000);
+
+  try {
+    const baseUrl = await getBaseUrl();
+    const afterSeq = options?.afterSeq ?? 0;
+    const streamUrl = isTauriDesktop()
+      ? `${baseUrl}/tasks/${taskId}/executions/${executionId}/events?after_seq=${afterSeq}`
+      : `/api/backend/tasks/${taskId}/executions/${executionId}/events?after_seq=${afterSeq}`;
+
+    const res = await fetch(streamUrl, {
+      method: "GET",
+      headers: { Accept: "text/event-stream" },
+      signal: controller.signal,
+    });
+
+    if (!res.ok || !res.body) {
+      onEvent({
+        type: "error",
+        content: `HTTP ${res.status}: ${res.statusText}`,
+      });
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let chunkTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const resetChunkTimer = () => {
+      if (chunkTimer) clearTimeout(chunkTimer);
+      chunkTimer = setTimeout(() => {
+        reader.cancel();
+        onEvent({
+          type: "error",
+          content: "Execution event stream timed out (no data for 90s).",
+        });
+        onEvent({ type: "done", steps: [] });
+      }, 90_000);
+    };
+
+    resetChunkTimer();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      resetChunkTimer();
+      buffer += decoder.decode(value, { stream: true });
+
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+
+      for (const part of parts) {
+        let eventId: number | null = null;
+        for (const line of part.split("\n")) {
+          if (line.startsWith("id: ")) {
+            const id = Number(line.slice(4).trim());
+            if (!Number.isNaN(id)) {
+              eventId = id;
+            }
+          }
+          if (line.startsWith("data: ")) {
+            try {
+              const data: SSEEvent = JSON.parse(line.slice(6));
+              onEvent(data);
+            } catch {
+              // ignore malformed event
+            }
+          }
+        }
+        if (eventId !== null) {
+          options?.onSeq?.(eventId);
+        }
+      }
+
+    }
+
+    if (chunkTimer) clearTimeout(chunkTimer);
+
+    if (buffer.trim()) {
+      for (const line of buffer.split("\n")) {
+        if (line.startsWith("data: ")) {
+          try {
+            const data: SSEEvent = JSON.parse(line.slice(6));
+            onEvent(data);
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      onEvent({ type: "done", steps: [] });
+    } else {
+      throw err;
+    }
+  } finally {
+    clearTimeout(globalTimeout);
+  }
+}
 
 /**
  * 执行任务（script/pipeline/routine）
@@ -118,79 +285,24 @@ export async function executeTask(
   externalAbortController?: AbortController,
 ) {
   const controller = externalAbortController || new AbortController();
-  const globalTimeout = setTimeout(() => controller.abort(), 2 * 60 * 60 * 1000);
 
   try {
-    const baseUrl = await getBaseUrl();
-    const streamUrl = isTauriDesktop()
-      ? `${baseUrl}/tasks/${taskId}/execute`
-      : `/api/backend/tasks/${taskId}/execute`;
+    const startRes = await startTaskExecution(taskId, options);
+    const { execution_id } = startRes.data;
 
-    const res = await fetch(streamUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(options || {}),
-      signal: controller.signal,
-    });
-
-    if (!res.ok || !res.body) {
-      onEvent({ type: "error", content: `HTTP ${res.status}: ${res.statusText}` });
-      return;
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let chunkTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const resetChunkTimer = () => {
-      if (chunkTimer) clearTimeout(chunkTimer);
-      chunkTimer = setTimeout(() => {
-        reader.cancel();
-        onEvent({ type: "error", content: "Response stream timed out (no data for 90s)." });
-        onEvent({ type: "done", steps: [] });
-      }, 90_000);
-    };
-
-    resetChunkTimer();
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      resetChunkTimer();
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() || "";
-      for (const part of parts) {
-        for (const line of part.split("\n")) {
-          if (line.startsWith("data: ")) {
-            try {
-              const data: SSEEvent = JSON.parse(line.slice(6));
-              onEvent(data);
-            } catch { /* ignore */ }
-          }
-        }
-      }
-    }
-
-    if (chunkTimer) clearTimeout(chunkTimer);
-    if (buffer.trim()) {
-      for (const line of buffer.split("\n")) {
-        if (line.startsWith("data: ")) {
-          try {
-            onEvent(JSON.parse(line.slice(6)));
-          } catch { /* ignore */ }
-        }
-      }
-    }
+    await streamTaskExecutionEvents(
+      taskId,
+      execution_id,
+      onEvent,
+      { afterSeq: 0 },
+      controller,
+    );
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
       onEvent({ type: "done", steps: [] });
     } else {
       throw err;
     }
-  } finally {
-    clearTimeout(globalTimeout);
   }
 }
 

@@ -137,6 +137,19 @@ class ExecutionRegistry:
         session = self._by_execution_id[execution_id]
         session.mark_cancelled()
 
+    async def cancel_session(self, execution_id: str) -> bool:
+        session = self._by_execution_id.get(execution_id)
+        if not session:
+            return False
+
+        if session.status != "running":
+            return False
+
+        if session.task and not session.task.done():
+            session.task.cancel()
+
+        return True
+    
     async def read_events_after(
         self,
         execution_id: str,

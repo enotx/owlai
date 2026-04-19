@@ -3,8 +3,8 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
-from fastapi.responses import Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, HTTPException, Request
+from fastapi.responses import Response, StreamingResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy import select
@@ -14,6 +14,141 @@ from app.models import Task, Step, Knowledge, DataPipeline
 from app.schemas import TaskCreate, TaskUpdate, TaskResponse, TaskModeUpdate, ExecuteTaskRequest
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
+
+def _json_sse(data: dict) -> str:
+    import json as _json
+    return f"data: {_json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def _run_task_in_background(
+    *,
+    execution_id: str,
+    task_id: str,
+    env_vars_override: dict[str, str] | None,
+    user_message: str | None,
+) -> None:
+    """
+    后台执行 task，并将事件写入内存 registry。
+    注意：
+    - execution 元信息只在 registry 内存中
+    - 业务 Step / Task 状态仍由 execute_task 原逻辑写库
+    """
+    from app.database import async_session
+    from app.services.task_executor import execute_task
+    import asyncio
+    from app.services.execution_registry import execution_registry
+
+    try:
+        async with async_session() as db:
+            async for raw_event in execute_task(
+                task_id=task_id,
+                db=db,
+                env_vars_override=env_vars_override,
+                user_message=user_message,
+            ):
+                # execute_task 返回的是 SSE 字符串，这里反解成 dict 存入 registry
+                if not raw_event.startswith("data: "):
+                    continue
+                payload = raw_event[6:].strip()
+                if not payload:
+                    continue
+                try:
+                    import json as _json
+                    event_data = _json.loads(payload)
+                except Exception:
+                    continue
+                await execution_registry.append_event(execution_id, event_data)
+
+        await execution_registry.mark_completed(execution_id)
+        
+    except asyncio.CancelledError:
+        await execution_registry.append_event(
+            execution_id,
+            {"type": "error", "content": "Execution cancelled"},
+        )
+        await execution_registry.append_event(
+            execution_id,
+            {"type": "done"},
+        )
+        await execution_registry.mark_cancelled(execution_id)
+        raise
+    except Exception as e:
+        await execution_registry.append_event(
+            execution_id,
+            {"type": "error", "content": str(e)},
+        )
+        await execution_registry.append_event(
+            execution_id,
+            {"type": "done"},
+        )
+        await execution_registry.mark_failed(execution_id, str(e))
+
+
+async def _stream_execution_events(
+    request: Request,
+    *,
+    execution_id: str,
+) -> StreamingResponse:
+    from app.services.execution_registry import execution_registry
+
+    async def event_generator():
+        after_seq = 0
+
+        # 支持从 query 参数恢复，也支持 SSE Last-Event-ID（后面前端再接）
+        try:
+            after_seq_str = request.query_params.get("after_seq", "0")
+            after_seq = int(after_seq_str)
+        except ValueError:
+            after_seq = 0
+
+        while True:
+            if await request.is_disconnected():
+                break
+
+            session = await execution_registry.get_session(execution_id)
+            if not session:
+                yield _json_sse({"type": "error", "content": "Execution session not found"})
+                yield _json_sse({"type": "done"})
+                break
+
+            new_events = await execution_registry.read_events_after(execution_id, after_seq)
+
+            if new_events:
+                for event in new_events:
+                    after_seq = event.seq
+                    yield (
+                        f"id: {event.seq}\n"
+                        + _json_sse(event.data)
+                    )
+
+                if session.status in ("completed", "failed", "cancelled"):
+                    # 如果最后状态已结束且已把事件吐完，就结束 SSE
+                    latest_events = await execution_registry.read_events_after(execution_id, after_seq)
+                    if not latest_events:
+                        break
+                continue
+
+            if session.status in ("completed", "failed", "cancelled"):
+                break
+
+            # 没有新事件时等待一会儿；超时后发送 heartbeat
+            await execution_registry.wait_for_updates(execution_id, timeout=15.0)
+
+            if await request.is_disconnected():
+                break
+
+            yield _json_sse({"type": "heartbeat", "content": "execution_stream_alive"})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
 
 @router.post("", response_model=TaskResponse)
 async def create_task(body: TaskCreate, db: AsyncSession = Depends(get_db)):
@@ -192,6 +327,15 @@ async def delete_task(
     await db.delete(task)
     await db.commit()
 
+    # ── 清理内存态 execution session（如果存在） ─────────────
+    try:
+        from app.services.execution_registry import execution_registry
+        session = await execution_registry.get_latest_session_by_task(task_id)
+        if session and session.status == "running":
+            await execution_registry.cancel_session(session.execution_id)
+    except Exception:
+        pass
+    
     # ── 后台清理磁盘文件 ────────────────────────────────
     from app.services.cleanup import delete_task_files
     background_tasks.add_task(delete_task_files, task_id, knowledge_file_paths)
@@ -388,16 +532,14 @@ async def execute_task_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    执行任务（根据 task_type 分发）
+    启动后台执行任务（Phase 2）
     
     - ad_hoc: 400, 请使用 /api/chat/stream
-    - script/pipeline: script_runner SSE stream
-    - routine: run_agent_stream + SOP 注入, SSE stream
+    - script/pipeline: 后台执行 + 内存事件流
+    - routine: 暂时仍走老机制（Phase 3 再统一）
     """
-    from fastapi import HTTPException
-    from fastapi.responses import StreamingResponse
-    from app.services.task_executor import execute_task
-    from app.schemas import ExecuteTaskRequest as ETR
+    import asyncio
+    from app.services.execution_registry import execution_registry
 
     task = await db.get(Task, task_id)
     if not task:
@@ -409,33 +551,151 @@ async def execute_task_endpoint(
             detail="Ad-hoc tasks should use /api/chat/stream endpoint",
         )
 
-    # 解析请求体（允许空 body）
+    if task.task_type == "routine":
+        raise HTTPException(
+            status_code=400,
+            detail="Routine background execution will be enabled in Phase 3",
+        )
+
+    # 若已有正在运行的 execution，直接返回它，避免重复触发
+    latest = await execution_registry.get_latest_session_by_task(task_id)
+    if latest and latest.status == "running":
+        return JSONResponse({
+            "task_id": task_id,
+            "execution_id": latest.execution_id,
+            "status": latest.status,
+            "task_type": task.task_type,
+            "reused": True,
+        })
+
     env_vars_override = body.env_vars_override if body else None
     user_message = body.user_message if body else None
 
-    async def event_generator():
-        try:
-            async for event in execute_task(
-                task_id=task_id,
-                db=db,
-                env_vars_override=env_vars_override,
-                user_message=user_message,
-            ):
-                yield event
-        except Exception as e:
-            import json as _json
-            yield f"data: {_json.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
-            yield f"data: {_json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+    session = await execution_registry.create_session(
+        task_id=task_id,
+        task_type=task.task_type,
+    )
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
+    bg_task = asyncio.create_task(
+        _run_task_in_background(
+            execution_id=session.execution_id,
+            task_id=task_id,
+            env_vars_override=env_vars_override,
+            user_message=user_message,
+        )
+    )
+    await execution_registry.set_task(session.execution_id, bg_task)
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "task_id": task_id,
+            "execution_id": session.execution_id,
+            "status": session.status,
+            "task_type": task.task_type,
+            "reused": False,
         },
     )
+
+@router.get("/{task_id}/executions/latest")
+async def get_latest_execution(task_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    获取该 task 的最新 execution session（仅内存态）。
+    用于页面刷新后恢复正在进行的执行。
+    """
+    from app.services.execution_registry import execution_registry
+
+    task = await db.get(Task, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    session = await execution_registry.get_latest_session_by_task(task_id)
+    if not session:
+        return {
+            "task_id": task_id,
+            "execution": None,
+        }
+
+    return {
+        "task_id": task_id,
+        "execution": {
+            "execution_id": session.execution_id,
+            "status": session.status,
+            "task_type": session.task_type,
+            "created_at": session.created_at,
+            "updated_at": session.updated_at,
+            "finished_at": session.finished_at,
+            "error": session.error,
+            "last_seq": session.next_seq - 1,
+        },
+    }
+
+@router.get("/{task_id}/executions/{execution_id}/events")
+async def stream_execution_events(
+    task_id: str,
+    execution_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    消费某次 execution 的事件流。
+    - after_seq: 从某个序号之后继续追事件
+    - execution 信息只在内存，不落库
+    """
+    from app.services.execution_registry import execution_registry
+
+    task = await db.get(Task, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    session = await execution_registry.get_session(execution_id)
+    if not session or session.task_id != task_id:
+        raise HTTPException(status_code=404, detail="Execution session not found")
+
+    return await _stream_execution_events(
+        request,
+        execution_id=execution_id,
+    )
+
+@router.post("/{task_id}/executions/{execution_id}/cancel")
+async def cancel_execution(
+    task_id: str,
+    execution_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    取消某次后台 execution（仅内存态 session）。
+    注意：
+    - execution 元信息不落库
+    - 最终是否立即停止，取决于当前执行点是否可取消
+    """
+    from app.services.execution_registry import execution_registry
+
+    task = await db.get(Task, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    session = await execution_registry.get_session(execution_id)
+    if not session or session.task_id != task_id:
+        raise HTTPException(status_code=404, detail="Execution session not found")
+
+    if session.status != "running":
+        return {
+            "task_id": task_id,
+            "execution_id": execution_id,
+            "status": session.status,
+            "cancelled": False,
+            "message": f"Execution is already {session.status}",
+        }
+
+    ok = await execution_registry.cancel_session(execution_id)
+
+    return {
+        "task_id": task_id,
+        "execution_id": execution_id,
+        "status": "cancelling" if ok else session.status,
+        "cancelled": ok,
+    }
 
 def _url_encode(filename: str) -> str:
     """RFC 5987 编码文件名，支持中文"""

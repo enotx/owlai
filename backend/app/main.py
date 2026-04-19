@@ -3,6 +3,8 @@
 """FastAPI 应用入口"""
 
 import os
+import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +21,10 @@ from app.config import UPLOADS_DIR, APP_MODE
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化数据库和上传目录"""
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     await init_db()
 
     # ── 启动时清理孤儿文件（DB 中已不存在的 Task 残留） ──
@@ -26,18 +32,34 @@ async def lifespan(app: FastAPI):
         from app.services.cleanup import cleanup_orphaned_files
         cleanup_stats = await cleanup_orphaned_files()
         if cleanup_stats.get("orphaned_dirs_removed") or cleanup_stats.get("temp_files_removed"):
-            import logging
-            logging.getLogger(__name__).info(
+            logger.info(
                 f"Startup cleanup: {cleanup_stats['orphaned_dirs_removed']} orphaned dirs, "
                 f"{cleanup_stats['temp_files_removed']} temp files, "
                 f"{cleanup_stats['bytes_freed'] / 1024 / 1024:.1f} MB freed"
             )
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Startup cleanup failed (non-fatal): {e}")
+        logger.warning(f"Startup cleanup failed (non-fatal): {e}")
 
-    yield
+    # ── 启动 execution registry 的内存清理循环 ──
+    from app.services.execution_registry import execution_registry
 
+    async def _execution_registry_cleanup_loop() -> None:
+        while True:
+            try:
+                await execution_registry.cleanup_expired()
+            except Exception as e:
+                logger.warning(f"Execution registry cleanup failed (non-fatal): {e}")
+            await asyncio.sleep(300)  # 每 5 分钟清理一次
+
+    cleanup_task = asyncio.create_task(_execution_registry_cleanup_loop())
+
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await cleanup_task
+            
 app = FastAPI(title="Owl API", version="0.1.3", lifespan=lifespan)
 
 # ── CORS 配置（根据 APP_MODE 动态调整）──────────────────────

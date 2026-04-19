@@ -12,7 +12,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SendHorizonal, Square, Database, FileText, FileCode2 } from "lucide-react";
-import { streamChat, autoRenameTask } from "@/lib/api";
+import {
+  streamChat,
+  autoRenameTask,
+  startTaskExecution,
+  streamTaskExecutionEvents,
+  fetchLatestTaskExecution,
+  cancelTaskExecution,
+} from "@/lib/api";
 import type { SSEEvent } from "@/lib/api";
 import { useTaskStore, Step } from "@/stores/use-task-store";
 import { useSettingsStore } from "@/stores/use-settings-store";
@@ -102,6 +109,11 @@ export default function MessageInput() {
     setIsExecuting,
     tasks,
     isTaskReady,
+    setTaskExecution,
+    updateTaskExecutionStatus,
+    updateTaskExecutionSeq,
+    getCurrentTaskExecution,
+    getTaskExecutionByTaskId,
   } = useTaskStore();
 
   const { providers, agentConfigs } = useSettingsStore();
@@ -247,17 +259,42 @@ export default function MessageInput() {
   };
 
   // ── Abort ───────────────────────────────────────────────
-  const handleAbort = () => {
+  const handleAbort = async () => {
+    const taskId = currentTaskId;
+
     try {
+      const currentExecution = useTaskStore.getState().getCurrentTaskExecution();
+
+      // 若当前是 script/pipeline 的后台 execution，优先请求后端取消
+      if (
+        taskId &&
+        currentExecution &&
+        currentExecution.status === "running" &&
+        (taskType === "script" || taskType === "pipeline")
+      ) {
+        try {
+          await cancelTaskExecution(taskId, currentExecution.executionId);
+        } catch (err) {
+          console.error("Cancel execution failed:", err);
+        }
+      }
+
       abortControllerRef.current?.abort();
     } catch {
       // AbortError expected
     }
+
     abortControllerRef.current = null;
     clearStreaming();
-    setPendingTool(currentTaskId!, null);
+
+    if (taskId) {
+      setPendingTool(taskId, null);
+      setTaskExecution(taskId, null);
+    }
+
     setIsWaitingResponse(false);
     setIsSending(false);
+    setIsExecuting(false);
   };
 
   // ── Send ────────────────────────────────────────────────
@@ -439,18 +476,25 @@ export default function MessageInput() {
     }
   };
 
-  const handleExecute = async () => {
-    if (!currentTaskId || isExecuting) return;
-    setIsExecuting(true);
-    setIsWaitingResponse(true);
+  const scheduleExecutionCleanup = React.useCallback((taskId: string) => {
+    window.setTimeout(() => {
+      const current = useTaskStore.getState().taskExecutions[taskId];
+      if (!current) return;
+      if (current.status === "running") return;
+      useTaskStore.getState().setTaskExecution(taskId, null);
+    }, 10_000);
+  }, []);
 
-    const controller = new AbortController();
-
-    try {
-      const { executeTask } = await import("@/lib/api");
-
-      await executeTask(
-        currentTaskId,
+  const attachExecutionStream = React.useCallback(
+    async (
+      taskId: string,
+      executionId: string,
+      controller: AbortController,
+      afterSeq: number = 0,
+    ) => {
+      await streamTaskExecutionEvents(
+        taskId,
+        executionId,
         (event: SSEEvent) => {
           switch (event.type) {
             case "text":
@@ -468,7 +512,7 @@ export default function MessageInput() {
                 setIsWaitingResponse(false);
               }
               clearStreaming();
-              setPendingTool(currentTaskId!, {
+              setPendingTool(taskId, {
                 code: event.code || "",
                 purpose: event.purpose || "",
                 status: "running",
@@ -476,7 +520,7 @@ export default function MessageInput() {
               break;
 
             case "tool_result":
-              updatePendingToolResult(currentTaskId!, {
+              updatePendingToolResult(taskId, {
                 success: event.success ?? false,
                 output: event.output ?? null,
                 error: event.error ?? null,
@@ -488,24 +532,39 @@ export default function MessageInput() {
             case "step_saved": {
               const step = event.step as unknown as Step;
               clearStreaming();
-              setPendingTool(currentTaskId!, null);
+              setPendingTool(taskId, null);
               addStep(step);
               break;
             }
 
             case "done":
               clearStreaming();
-              setPendingTool(currentTaskId!, null);
+              setPendingTool(taskId, null);
               setIsWaitingResponse(false);
+              setIsExecuting(false);
+              // 若此前没有被标为 failed/cancelled，则视为 completed
+              {
+                const currentExec = useTaskStore.getState().taskExecutions[taskId];
+                if (currentExec?.status === "running") {
+                  updateTaskExecutionStatus(taskId, "completed");
+                }
+              }
+              scheduleExecutionCleanup(taskId);
               break;
 
-            case "error":
+            case "error": {
               clearStreaming();
-              setPendingTool(currentTaskId!, null);
+              setPendingTool(taskId, null);
               setIsWaitingResponse(false);
+              const isCancelled =
+                (event.content || "").toLowerCase().includes("cancel");
+              updateTaskExecutionStatus(
+                taskId,
+                isCancelled ? "cancelled" : "failed"
+              );
               addStep({
                 id: `error-${Date.now()}`,
-                task_id: currentTaskId!,
+                task_id: taskId,
                 role: "assistant",
                 step_type: "assistant_message",
                 content: `⚠️ ${event.content || "Unknown error"}`,
@@ -513,24 +572,160 @@ export default function MessageInput() {
                 code_output: null,
                 created_at: new Date().toISOString(),
               });
+              scheduleExecutionCleanup(taskId);
+              break;
+            }
+            case "heartbeat":
+              // 仅用于保活，不更新 UI
               break;
           }
         },
         {
-          user_message: text.trim() || undefined,
+          afterSeq,
+          onSeq: (seq) => {
+            updateTaskExecutionSeq(taskId, seq);
+          },
         },
         controller,
       );
+    },
+    [
+      addStep,
+      appendStreamingToken,
+      clearStreaming,
+      scheduleExecutionCleanup,
+      setIsExecuting,
+      setIsWaitingResponse,
+      setPendingTool,
+      startStreaming,
+      updatePendingToolResult,
+      updateTaskExecutionSeq,
+      updateTaskExecutionStatus,
+    ]
+  );
+
+  const handleExecute = async () => {
+    if (!currentTaskId || isExecuting) return;
+
+    setIsExecuting(true);
+    setIsWaitingResponse(true);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const startRes = await startTaskExecution(currentTaskId, {
+        user_message: text.trim() || undefined,
+      });
+
+      const { execution_id, status, task_type } = startRes.data;
+
+      setTaskExecution(currentTaskId, {
+        executionId: execution_id,
+        status,
+        taskType: task_type,
+        lastSeq: 0,
+      });
+
+      await attachExecutionStream(currentTaskId, execution_id, controller, 0);
     } catch (err) {
       if (!(err instanceof DOMException && err.name === "AbortError")) {
         console.error("Execute failed:", err);
+        addStep({
+          id: `error-${Date.now()}`,
+          task_id: currentTaskId,
+          role: "assistant",
+          step_type: "assistant_message",
+          content: "⚠️ Failed to start task execution.",
+          code: null,
+          code_output: null,
+          created_at: new Date().toISOString(),
+        });
       }
     } finally {
+      abortControllerRef.current = null;
       setIsExecuting(false);
       setIsWaitingResponse(false);
       setText("");
     }
   };
+
+  useEffect(() => {
+    if (!currentTaskId) return;
+    if (taskType !== "script" && taskType !== "pipeline") return;
+
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const reconnectIfNeeded = async () => {
+      try {
+        const existing = getTaskExecutionByTaskId(currentTaskId);
+        if (existing && existing.status === "running") {
+          setIsExecuting(true);
+          setIsWaitingResponse(true);
+          abortControllerRef.current = controller;
+          await attachExecutionStream(
+            currentTaskId,
+            existing.executionId,
+            controller,
+            existing.lastSeq || 0,
+          );
+          return;
+        }
+        const res = await fetchLatestTaskExecution(currentTaskId);
+        if (cancelled) return;
+
+        const execution = res.data.execution;
+        if (!execution || execution.status !== "running") {
+          return;
+        }
+
+        setTaskExecution(currentTaskId, {
+          executionId: execution.execution_id,
+          status: execution.status,
+          taskType: execution.task_type,
+          lastSeq: execution.last_seq,
+        });
+
+        setIsExecuting(true);
+        setIsWaitingResponse(true);
+        abortControllerRef.current = controller;
+
+        await attachExecutionStream(
+          currentTaskId,
+          execution.execution_id,
+          controller,
+          execution.last_seq || 0,
+        );
+      } catch (err) {
+        if (!(err instanceof DOMException && err.name === "AbortError")) {
+          console.error("Failed to reconnect execution stream:", err);
+        }
+      } finally {
+        if (!cancelled) {
+          abortControllerRef.current = null;
+          setIsExecuting(false);
+          setIsWaitingResponse(false);
+        }
+      }
+    };
+
+    reconnectIfNeeded();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [
+    currentTaskId,
+    taskType,
+    attachExecutionStream,
+    getCurrentTaskExecution,
+    getTaskExecutionByTaskId,
+    setIsExecuting,
+    setIsWaitingResponse,
+    setTaskExecution,
+  ]);
 
   function _flushStreaming() {
     clearStreaming();
