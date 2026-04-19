@@ -6,7 +6,7 @@
 
 import asyncio
 import json
-from typing import Any, AsyncGenerator, Coroutine
+from typing import Any, AsyncGenerator, Coroutine, Literal, TypeGuard, TypeVar, TypedDict
 
 
 def _sse(data: dict) -> str:
@@ -14,28 +14,31 @@ def _sse(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+T = TypeVar("T")
+
+class HeartbeatEvent(TypedDict):
+    type: Literal["heartbeat"]
+    content: str
+
+def is_heartbeat_event(value: object) -> TypeGuard[HeartbeatEvent]:
+    if not isinstance(value, dict):
+        return False
+    event_type = value.get("type")
+    content = value.get("content")
+    return event_type == "heartbeat" and isinstance(content, str)
+
 async def run_with_heartbeat(
-    coro: Coroutine[Any, Any, Any],
+    coro: Coroutine[Any, Any, T],
     *,
     interval: float = 15.0,
     message: str = "executing",
-) -> AsyncGenerator[str | Any, None]:
+) -> AsyncGenerator[HeartbeatEvent | T, None]:
     """
-    包装一个协程，在其执行期间定期 yield SSE 心跳事件。
+    包装一个协程，在其执行期间定期 yield 心跳事件。
 
     约定：
-    - yield str  → SSE 心跳字符串，调用方直接转发给前端
-    - yield Any  → 协程的最终返回值（最后一个 yield）
-
-    用法：
-        result = None
-        async for item in run_with_heartbeat(some_coro()):
-            if isinstance(item, str):
-                yield item          # 转发心跳到 SSE 流
-            else:
-                result = item       # 拿到真正的结果
-
-    异常会原样抛出，由调用方的 try/except 处理。
+    - yield HeartbeatEvent -> 心跳事件
+    - yield T              -> 协程最终结果（最后一个 yield）
     """
     task = asyncio.create_task(coro)
 
@@ -48,7 +51,6 @@ async def run_with_heartbeat(
             yield result
             return
         except asyncio.TimeoutError:
-            yield _sse({"type": "heartbeat", "content": message})
+            yield {"type": "heartbeat", "content": message}
 
-    # task 已完成（可能在 shield 和下一次循环之间完成）
     yield await task

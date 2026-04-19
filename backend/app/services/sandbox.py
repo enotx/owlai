@@ -16,7 +16,7 @@ import tempfile
 import textwrap
 import time
 import uuid
-from typing import Any
+from typing import Any, TypedDict, TypeGuard
 from app.services.code_security import check_code_security
 from app.config import PYTHON_EXECUTABLE, UPLOADS_DIR
 
@@ -27,6 +27,50 @@ SANDBOX_TOTAL_TIMEOUT = 7200  # 2小时总超时（硬上限）
 SANDBOX_IDLE_TIMEOUT = 90     # 90秒无活动视为挂死
 
 MAX_OUTPUT_LENGTH = 50_000  # 最大输出字符数
+
+class SandboxDataframeMeta(TypedDict, total=False):
+    name: str
+    row_count: int
+    preview_count: int
+    columns: list[str]
+    capture_id: str
+
+
+class SandboxChartMeta(TypedDict, total=False):
+    title: str
+    chart_type: str
+    option: dict[str, Any]
+
+
+class SandboxMapMeta(TypedDict, total=False):
+    title: str
+    config: dict[str, Any]
+
+
+class SandboxExecutionResult(TypedDict):
+    success: bool
+    output: str | None
+    error: str | None
+    execution_time: float
+    dataframes: list[SandboxDataframeMeta]
+    persisted_vars: dict[str, str]
+    charts: list[SandboxChartMeta]
+    maps: list[SandboxMapMeta]
+
+
+def is_sandbox_execution_result(value: object) -> TypeGuard[SandboxExecutionResult]:
+    if not isinstance(value, dict):
+        return False
+    return (
+        "success" in value
+        and "output" in value
+        and "error" in value
+        and "execution_time" in value
+        and "dataframes" in value
+        and "persisted_vars" in value
+        and "charts" in value
+        and "maps" in value
+    )
 
 def _build_sandbox_script(
     code: str,
@@ -652,7 +696,7 @@ async def execute_code_in_sandbox(
     capture_dir: str | None = None,
     injected_envs: dict[str, str] | None = None,
     persisted_var_map: dict[str, str] | None = None,  # 上一轮持久化的变量 (.parquet/.json)
-) -> dict[str, Any]:
+) -> SandboxExecutionResult:
     """
     在子进程中安全执行代码。增加支持心跳机制。
     心跳策略：
@@ -682,6 +726,9 @@ async def execute_code_in_sandbox(
             ),
             "execution_time": 0.0,
             "dataframes": [],
+            "persisted_vars": {},
+            "charts": [],
+            "maps": [],
         }
 
     # ── 【新增】从 injected_envs 中分离 allowed_modules ──
@@ -802,6 +849,9 @@ async def execute_code_in_sandbox(
                 ),
                 "execution_time": elapsed,
                 "dataframes": [],
+                "persisted_vars": {},
+                "charts": [],
+                "maps": [],
             }
         
         if timeout_reason == "total":
@@ -811,6 +861,9 @@ async def execute_code_in_sandbox(
                 "error": f"⏱️ Code execution exceeded maximum time limit ({timeout}s)",
                 "execution_time": elapsed,
                 "dataframes": [],
+                "persisted_vars": {},
+                "charts": [],
+                "maps": [],
             }
         
         # 正常结束，解析输出
@@ -826,17 +879,21 @@ async def execute_code_in_sandbox(
                 line = line.strip()
                 if line.startswith("{"):
                     try:
-                        result = json.loads(line)
+                        result: SandboxExecutionResult = json.loads(line)
                         result["execution_time"] = elapsed
                         result.setdefault("dataframes", [])
+                        result.setdefault("persisted_vars", {})
+                        result.setdefault("charts", [])
+                        result.setdefault("maps", [])
                         # 如果沙箱脚本自身 print 的内容在 JSON 之前，也要拼上
                         prefix_lines = []
                         for l in lines:
                             if l.strip() == line:
                                 break
                             prefix_lines.append(l)
-                        if prefix_lines and result.get("output"):
-                            result["output"] = "\n".join(prefix_lines) + "\n" + result["output"]
+                        existing_output = result.get("output")
+                        if prefix_lines and isinstance(existing_output, str) and existing_output:
+                            result["output"] = "\n".join(prefix_lines) + "\n" + existing_output
                         elif prefix_lines:
                             result["output"] = "\n".join(prefix_lines)
                         return result
@@ -850,6 +907,9 @@ async def execute_code_in_sandbox(
             "error": stderr_text or "Unknown execution error (no JSON output)",
             "execution_time": elapsed,
             "dataframes": [],
+            "persisted_vars": {},
+            "charts": [],
+            "maps": [],
         }
 
     except Exception as e:
@@ -860,6 +920,9 @@ async def execute_code_in_sandbox(
             "error": f"Sandbox setup error: {str(e)}",
             "execution_time": elapsed,
             "dataframes": [],
+            "persisted_vars": {},
+            "charts": [],
+            "maps": [],
         }
     finally:
         # 清理临时文件

@@ -5,23 +5,33 @@
 import json
 import os
 import logging
-from typing import AsyncGenerator
-
+from typing import Any, AsyncGenerator, Mapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import UPLOADS_DIR
 from app.services.data_processor import (
     sanitize_variable_name
 )
 from app.models import Asset, Step, Visualization
-from app.services.sandbox import execute_code_in_sandbox
-from app.config import UPLOADS_DIR
+from app.services.sandbox import (
+    SandboxExecutionResult,
+    execute_code_in_sandbox,
+    is_sandbox_execution_result,
+)
+from app.services.execution_helpers import (
+    HeartbeatEvent,
+    is_heartbeat_event,
+    run_with_heartbeat,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def _sse(data: dict) -> str:
+def _sse(data: Mapping[str, Any]) -> str:
     """生成 SSE 事件格式"""
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+ScriptRunnerEvent = dict[str, Any] | HeartbeatEvent
 
 
 def _step_to_dict(step: Step) -> dict:
@@ -37,74 +47,78 @@ def _step_to_dict(step: Step) -> dict:
         "created_at": step.created_at.isoformat() if step.created_at else None,
     }
 
+def _empty_sandbox_result() -> SandboxExecutionResult:
+    return {
+        "success": False,
+        "output": None,
+        "error": "Script execution returned no result",
+        "execution_time": 0.0,
+        "dataframes": [],
+        "persisted_vars": {},
+        "charts": [],
+        "maps": [],
+    }
 
-async def run_script(
+
+# ============================================================
+# 新增：原生 dict event 版本
+# ============================================================
+async def run_script_events(
     task_id: str,
     asset: Asset,
     db: AsyncSession,
     env_vars_override: dict[str, str] | None = None,
     data_source_ids: list[str] | None = None,
-) -> AsyncGenerator[str, None]:
+) -> AsyncGenerator[ScriptRunnerEvent, None]:
     """
-    执行通用 Script，完全旁路 LLM
+    执行通用 Script，返回原生 dict event（不是 SSE 字符串）
     
-    Args:
-        task_id: Task ID
-        asset: Script Asset
-        db: 数据库会话
-        env_vars_override: 用户覆盖的环境变量
-        data_source_ids: 用户选择的 Knowledge/DuckDB table IDs
-    
-    Yields:
-        SSE 格式的字符串
+    事件类型：
+    - {"type": "text", "content": str}
+    - {"type": "tool_start", "code": str, "purpose": str}
+    - {"type": "tool_result", "success": bool, "output": str, "error": str, "time": float, "dataframes": list}
+    - {"type": "step_saved", "step": dict}
+    - {"type": "done"}
+    - {"type": "error", "content": str}
     """
-    yield _sse({"type": "text", "content": f"🚀 Executing script: **{asset.name}**\n"})
-
+    yield {"type": "text", "content": f"🚀 Executing script: **{asset.name}**\n"}
     # 1. 读取 Asset 配置
     code = asset.code
     if not code:
-        yield _sse({"type": "error", "content": "Script code is empty"})
-        yield _sse({"type": "done"})
+        yield {"type": "error", "content": "Script code is empty"}
+        yield {"type": "done"}
         return
-
-    # 合并环境变量（用户覆盖 > Asset 默认）
+    # 合并环境变量
     env_vars = json.loads(asset.env_vars_json) if asset.env_vars_json else {}
     if env_vars_override:
         env_vars.update(env_vars_override)
-
     allowed_modules = json.loads(asset.allowed_modules_json) if asset.allowed_modules_json else []
-
     # 2. 构建沙箱环境变量
     extra_envs = dict(env_vars)
     if allowed_modules:
         extra_envs["__allowed_modules__"] = json.dumps(allowed_modules)
-
     capture_dir = os.path.join(UPLOADS_DIR, task_id, "captures")
     os.makedirs(capture_dir, exist_ok=True)
-
-    # 3. 构建 data_var_map — 从选中的 data sources 加载
-    from app.services.data_processor import sanitize_variable_name
+    # 3. 构建 data_var_map
     from app.models import Knowledge
     from sqlalchemy import select
-
     data_var_map: dict[str, str] = {}
-
     if data_source_ids:
         from app.models import DuckDBTable
-        from app.config import WAREHOUSE_PATH
         from sqlalchemy import select as sa_select
         for ds_id in data_source_ids:
-            # ── 尝试作为 Knowledge 加载 ──
+            # 尝试作为 Knowledge 加载
             k = await db.get(Knowledge, ds_id)
             if k and k.type in ("csv", "excel") and k.file_path and os.path.exists(k.file_path):
                 var_name = sanitize_variable_name(k.name)
                 data_var_map[var_name] = os.path.abspath(k.file_path)
                 continue
-            # ── 尝试作为 DuckDB table 预加载 ──
-            result = await db.execute(
+            
+            # 尝试作为 DuckDB table 预加载
+            query_result = await db.execute(
                 sa_select(DuckDBTable).where(DuckDBTable.id == ds_id)
             )
-            duckdb_table = result.scalar_one_or_none()
+            duckdb_table = query_result.scalar_one_or_none()
             if duckdb_table and duckdb_table.status == "ready":
                 try:
                     temp_path = await _preload_duckdb_table(
@@ -115,75 +129,52 @@ async def run_script(
                     if temp_path:
                         var_name = sanitize_variable_name(duckdb_table.display_name)
                         data_var_map[var_name] = temp_path
-                        yield _sse({
+                        yield {
                             "type": "text",
                             "content": f"📊 Preloaded DuckDB table `{duckdb_table.table_name}` as `{var_name}`\n",
-                        })
+                        }
                 except Exception as e:
                     logger.warning(f"Failed to preload DuckDB table {duckdb_table.table_name}: {e}")
-                    yield _sse({
+                    yield {
                         "type": "text",
                         "content": f"⚠️ Could not preload table `{duckdb_table.table_name}`: {e}\n",
-                    })
+                    }
                 continue
-            # ── 尝试作为 DuckDB table (通过 table_name 匹配) ──
-            result = await db.execute(
-                sa_select(DuckDBTable).where(DuckDBTable.table_name == ds_id)
-            )
-            duckdb_table_by_name = result.scalar_one_or_none()
-            if duckdb_table_by_name:
-                try:
-                    temp_path = await _preload_duckdb_table(
-                        table_name=duckdb_table_by_name.table_name,
-                        display_name=duckdb_table_by_name.display_name,
-                        capture_dir=capture_dir,
-                    )
-                    if temp_path:
-                        var_name = sanitize_variable_name(duckdb_table_by_name.display_name)
-                        data_var_map[var_name] = temp_path
-                except Exception as e:
-                    logger.warning(f"Failed to preload DuckDB table: {e}")
-                continue
-
-
     # 4. 发送 tool_start 事件
-    yield _sse({
+    yield {
         "type": "tool_start",
         "code": code,
         "purpose": f"Script: {asset.name}",
-    })
-
-    # 5. 执行代码（带心跳，防止前端 90s 超时）
+    }
+    # 5. 执行代码（带心跳）
     try:
-        from app.services.execution_helpers import run_with_heartbeat
-        result = None
+        result: SandboxExecutionResult | None = None
         async for item in run_with_heartbeat(
             execute_code_in_sandbox(
                 code=code,
                 data_var_map=data_var_map,
                 capture_dir=capture_dir,
                 injected_envs=extra_envs if extra_envs else None,
-                timeout=1800,  # Script 允许 30 分钟超时
+                timeout=1800,
             ),
             interval=15.0,
             message="script_running",
         ):
-            if isinstance(item, str):
-                yield item  # 心跳转发到 SSE 流
-            else:
+            if is_heartbeat_event(item):
+                yield item
+                continue
+            if is_sandbox_execution_result(item):
                 result = item
     except Exception as e:
         error_msg = f"Script execution error: {str(e)}"
         logger.error(error_msg)
-
-        yield _sse({
+        yield {
             "type": "tool_result",
             "success": False,
             "output": None,
             "error": error_msg,
             "time": 0,
-        })
-
+        }
         # 保存失败记录
         step = Step(
             task_id=task_id,
@@ -199,9 +190,7 @@ async def run_script(
         db.add(step)
         await db.commit()
         await db.refresh(step)
-
-        yield _sse({"type": "step_saved", "step": _step_to_dict(step)})
-
+        yield {"type": "step_saved", "step": _step_to_dict(step)}
         # 更新 Task 状态
         from app.models import Task
         from datetime import datetime
@@ -210,47 +199,41 @@ async def run_script(
             task.last_run_at = datetime.now()
             task.last_run_status = "failed"
             await db.commit()
-
-        yield _sse({"type": "text", "content": f"\n❌ Script failed: {error_msg}"})
-        yield _sse({"type": "done"})
+        yield {"type": "text", "content": f"\n❌ Script failed: {error_msg}"}
+        yield {"type": "done"}
         return
-
     # 6. 发送 tool_result 事件
-    safe_result = result or {}
-    yield _sse({
+    safe_result: SandboxExecutionResult = result or _empty_sandbox_result()
+
+    yield {
         "type": "tool_result",
         "success": safe_result.get("success", False),
         "output": safe_result.get("output"),
         "error": safe_result.get("error"),
         "time": safe_result.get("execution_time", 0),
         "dataframes": safe_result.get("dataframes", []),
-    })
-
-    # 7. 处理沙箱内捕获的图表：持久化为 visualization step
+    }
+    # 7. 处理沙箱内捕获的图表
     from app.tools import validate_echarts_option
     from app.tools.visualization import validate_map_config
-
     for chart_meta in safe_result.get("charts", []):
         chart_title = chart_meta.get("title", "Untitled Chart")
         chart_type = chart_meta.get("chart_type", "bar")
         chart_option = chart_meta.get("option", {})
-
         ok, err = validate_echarts_option(chart_option)
         if not ok:
             logger.warning(f"Invalid ECharts option in script replay: {err}")
             continue
-
         viz = Visualization(
             task_id=task_id,
             subtask_id=None,
-            step_id=None,  # 先建 step，后回填
+            step_id=None,
             title=chart_title,
             chart_type=chart_type,
             option_json=json.dumps(chart_option, ensure_ascii=False),
         )
         db.add(viz)
         await db.flush()
-
         step = Step(
             task_id=task_id,
             role="assistant",
@@ -266,22 +249,17 @@ async def run_script(
         )
         db.add(step)
         await db.flush()
-
         viz.step_id = step.id
         await db.commit()
         await db.refresh(step)
-
-        yield _sse({"type": "step_saved", "step": _step_to_dict(step)})
-
+        yield {"type": "step_saved", "step": _step_to_dict(step)}
     for map_meta in safe_result.get("maps", []):
         map_title = map_meta.get("title", "Untitled Map")
         map_config = map_meta.get("config", {})
-
         ok, err = validate_map_config(map_config)
         if not ok:
             logger.warning(f"Invalid map config in script replay: {err}")
             continue
-
         viz = Visualization(
             task_id=task_id,
             subtask_id=None,
@@ -292,7 +270,6 @@ async def run_script(
         )
         db.add(viz)
         await db.flush()
-
         step = Step(
             task_id=task_id,
             role="assistant",
@@ -308,15 +285,10 @@ async def run_script(
         )
         db.add(step)
         await db.flush()
-
         viz.step_id = step.id
         await db.commit()
         await db.refresh(step)
-
-        yield _sse({"type": "step_saved", "step": _step_to_dict(step)})
-
-    result = result or {}
-
+        yield {"type": "step_saved", "step": _step_to_dict(step)}
     # 8. 保存执行结果为 Step
     step = Step(
         task_id=task_id,
@@ -325,42 +297,66 @@ async def run_script(
         content=f"Script execution: {asset.name}",
         code=code,
         code_output=json.dumps({
-            "success": result.get("success", False),
-            "output": result.get("output"),
-            "error": result.get("error"),
-            "execution_time": result.get("execution_time", 0),
-            "dataframes": result.get("dataframes", []),
+            "success": safe_result.get("success", False),
+            "output": safe_result.get("output"),
+            "error": safe_result.get("error"),
+            "execution_time": safe_result.get("execution_time", 0),
+            "dataframes": safe_result.get("dataframes", []),
         }, ensure_ascii=False),
     )
     db.add(step)
     await db.commit()
     await db.refresh(step)
-
-    yield _sse({"type": "step_saved", "step": _step_to_dict(step)})
-
+    yield {"type": "step_saved", "step": _step_to_dict(step)}
     # 9. 更新 Task 状态
     from app.models import Task
     from datetime import datetime
     task = await db.get(Task, task_id)
     if task:
         task.last_run_at = datetime.now()
-        task.last_run_status = "success" if result.get("success", False) else "failed"
+        task.last_run_status = "success" if safe_result.get("success", False) else "failed"
         await db.commit()
-
     # 10. 总结
-    if result.get("success", False):
-        yield _sse({
+    if safe_result.get("success", False):
+        yield {
             "type": "text",
-            "content": f"\n✅ Script completed successfully in {result.get('execution_time', 0):.2f}s",
-        })
+            "content": f"\n✅ Script completed successfully in {safe_result.get('execution_time', 0):.2f}s",
+        }
     else:
-        yield _sse({
+        yield {
             "type": "text",
-            "content": f"\n❌ Script failed: {result.get('error', 'Unknown error')}",
-        })
+            "content": f"\n❌ Script failed: {safe_result.get('error', 'Unknown error')}",
+        }
+    yield {"type": "done"}
 
-    yield _sse({"type": "done"})
+# ============================================================
+# 保留：兼容层（SSE 版本）
+# ============================================================
+async def run_script(
+    task_id: str,
+    asset: Asset,
+    db: AsyncSession,
+    env_vars_override: dict[str, str] | None = None,
+    data_source_ids: list[str] | None = None,
+) -> AsyncGenerator[str, None]:
+    """
+    兼容层：包装 run_script_events() 为 SSE 字符串输出
+    
+    保留此函数是为了向后兼容，但新代码应优先使用 run_script_events()
+    """
+    async for event in run_script_events(
+        task_id=task_id,
+        asset=asset,
+        db=db,
+        env_vars_override=env_vars_override,
+        data_source_ids=data_source_ids,
+    ):
+        yield _sse(event)
 
+
+# ============================================================
+# 辅助函数
+# ============================================================
 async def _preload_duckdb_table(
     table_name: str,
     display_name: str,

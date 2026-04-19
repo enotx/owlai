@@ -7,116 +7,115 @@ Task 执行调度器
 
 import json
 import logging
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator, Mapping
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-
 from app.models import Task, Asset, DataPipeline, DuckDBTable
+
+from app.services.execution_helpers import (
+    HeartbeatEvent,
+    is_heartbeat_event,
+    run_with_heartbeat,
+)
+
 
 logger = logging.getLogger(__name__)
 
 
-def _sse(data: dict) -> str:
+def _sse(data: Mapping[str, Any]) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
+TaskExecutorEvent = dict[str, Any] | HeartbeatEvent
 
-async def execute_task(
+async def execute_task_events(
     task_id: str,
     db: AsyncSession,
     env_vars_override: dict[str, str] | None = None,
     user_message: str | None = None,
     model_override: tuple[str, str] | None = None,
-) -> AsyncGenerator[str, None]:
+) -> AsyncGenerator[TaskExecutorEvent, None]:
     """
-    统一任务执行入口。
-
-    根据 task.task_type 分发：
-    - ad_hoc   → 拒绝，应走 /chat/stream
-    - script   → script_runner (LLM 不介入)
-    - pipeline → script_runner (LLM 不介入)
-    - routine  → run_agent_stream (SOP 注入 context)
+    统一任务执行入口（内部事件版本）
+    
+    返回原生 dict event，供 execution_registry 直接存储
     """
     task = await db.get(Task, task_id)
     if not task:
-        yield _sse({"type": "error", "content": "Task not found"})
-        yield _sse({"type": "done"})
+        yield {"type": "error", "content": "Task not found"}
+        yield {"type": "done"}
         return
-
     if task.task_type == "ad_hoc":
-        yield _sse({"type": "error", "content": "Ad-hoc tasks use /api/chat/stream"})
-        yield _sse({"type": "done"})
+        yield {"type": "error", "content": "Ad-hoc tasks use /api/chat/stream"}
+        yield {"type": "done"}
         return
-
-    # ── 校验 asset 绑定 ──
-    # ── 分发 ──
+    # 分发
     if task.task_type == "script":
         if not task.asset_id:
-            yield _sse({"type": "error", "content": "script task requires a bound asset"})
-            yield _sse({"type": "done"})
+            yield {"type": "error", "content": "script task requires a bound asset"}
+            yield {"type": "done"}
             return
         asset = await db.get(Asset, task.asset_id)
         if not asset:
-            yield _sse({"type": "error", "content": "Bound asset not found"})
-            yield _sse({"type": "done"})
+            yield {"type": "error", "content": "Bound asset not found"}
+            yield {"type": "done"}
             return
-        async for event in _execute_deterministic(
+        async for event in _execute_deterministic_events(
             task, asset, db, env_vars_override
         ):
             yield event
+    
     elif task.task_type == "pipeline":
         if not task.pipeline_id:
-            yield _sse({"type": "error", "content": "pipeline task requires a bound pipeline"})
-            yield _sse({"type": "done"})
+            yield {"type": "error", "content": "pipeline task requires a bound pipeline"}
+            yield {"type": "done"}
             return
         pipeline = await db.get(DataPipeline, task.pipeline_id)
         if not pipeline:
-            yield _sse({"type": "error", "content": "Bound pipeline not found"})
-            yield _sse({"type": "done"})
+            yield {"type": "error", "content": "Bound pipeline not found"}
+            yield {"type": "done"}
             return
         result = await db.execute(
             select(DuckDBTable).where(DuckDBTable.pipeline_id == pipeline.id)
         )
         table = result.scalar_one_or_none()
         if not table:
-            yield _sse({"type": "error", "content": "Target DuckDB table metadata not found for pipeline"})
-            yield _sse({"type": "done"})
+            yield {"type": "error", "content": "Target DuckDB table metadata not found for pipeline"}
+            yield {"type": "done"}
             return
-        async for event in _execute_pipeline_task(task, pipeline, table, db):
+        async for event in _execute_pipeline_task_events(task, pipeline, table, db):
             yield event
+    
     elif task.task_type == "routine":
         if not task.asset_id:
-            yield _sse({"type": "error", "content": "routine task requires a bound asset"})
-            yield _sse({"type": "done"})
+            yield {"type": "error", "content": "routine task requires a bound asset"}
+            yield {"type": "done"}
             return
         asset = await db.get(Asset, task.asset_id)
         if not asset:
-            yield _sse({"type": "error", "content": "Bound asset not found"})
-            yield _sse({"type": "done"})
+            yield {"type": "error", "content": "Bound asset not found"}
+            yield {"type": "done"}
             return
-        async for event in _execute_routine(
+        async for event in _execute_routine_events(
             task, asset, db, user_message, model_override
         ):
             yield event
-
+    
     else:
-        yield _sse({"type": "error", "content": f"Unknown task_type: {task.task_type}"})
-        yield _sse({"type": "done"})
-
-
-async def _execute_deterministic(
+        yield {"type": "error", "content": f"Unknown task_type: {task.task_type}"}
+        yield {"type": "done"}
+        
+async def _execute_deterministic_events(
     task: Task,
     asset: Asset,
     db: AsyncSession,
     env_vars_override: dict[str, str] | None,
-) -> AsyncGenerator[str, None]:
-    """script / pipeline 执行：旁路 LLM，直接跑代码"""
-    from app.services.script_runner import run_script
-
+) -> AsyncGenerator[TaskExecutorEvent, None]:
+    """script 执行：原生 dict event 版本"""
+    from app.services.script_runner import run_script_events
     data_source_ids = json.loads(task.data_source_ids) if task.data_source_ids else []
-
-    async for event in run_script(
+    async for event in run_script_events(
         task_id=task.id,
         asset=asset,
         db=db,
@@ -125,108 +124,129 @@ async def _execute_deterministic(
     ):
         yield event
 
+async def _execute_pipeline_task_events(
+    task: Task,
+    pipeline: DataPipeline,
+    table: DuckDBTable,
+    db: AsyncSession,
+) -> AsyncGenerator[TaskExecutorEvent, None]:
+    """pipeline 执行：原生 dict event 版本"""
+    from datetime import datetime
+    from app.services.pipeline_executor import execute_pipeline
+    from app.services.execution_helpers import run_with_heartbeat
+    
+    yield {
+        "type": "text",
+        "content": f"🚀 Executing pipeline: **{pipeline.name}**\n",
+    }
+    
+    from app.services.pipeline_executor import PipelineExecutionResult
+    result: PipelineExecutionResult | None = None
+    async for item in run_with_heartbeat(
+        execute_pipeline(pipeline=pipeline, table=table, db=db),
+        interval=15.0,
+        message="pipeline_running",
+    ):
+        if is_heartbeat_event(item):
+            yield item
+            continue
+        if isinstance(item, PipelineExecutionResult):
+            result = item
+    if result is None:
+        task.last_run_at = datetime.now()
+        task.last_run_status = "failed"
+        await db.commit()
+        yield {
+            "type": "error",
+            "content": "Pipeline execution returned no result",
+        }
+        yield {"type": "done"}
+        return
+    pipeline_result = result
+    task.last_run_at = datetime.now()
+    task.last_run_status = "success" if pipeline_result.success else "failed"
+    await db.commit()
+    yield {
+        "type": "tool_result",
+        "success": pipeline_result.success,
+        "output": pipeline_result.message,
+        "error": pipeline_result.error,
+        "time": pipeline_result.execution_time,
+    }
+    if pipeline_result.success:
+        yield {
+            "type": "text",
+            "content": f"\n✅ {pipeline_result.message}",
+        }
+    else:
+        yield {
+            "type": "text",
+            "content": f"\n❌ {pipeline_result.message}",
+        }
+    yield {"type": "done"}
 
-async def _execute_routine(
+async def _execute_routine_events(
     task: Task,
     asset: Asset,
     db: AsyncSession,
     user_message: str | None,
     model_override: tuple[str, str] | None,
-) -> AsyncGenerator[str, None]:
+) -> AsyncGenerator[TaskExecutorEvent, None]:
     """
-    routine 执行：SOP 驱动的 Agent 分析。
+    routine 执行：原生 dict event 版本
     
-    关键：复用 run_agent_stream() 获得完整的 step 持久化能力。
-    SOP 通过 context 注入，在 AnalystAgent 构建 system prompt 时读取。
+    注意：这里仍然调用 run_agent_stream()，因为 routine 还没有后台化
+    所以需要 parse SSE 回 dict（这是 Phase 3 要解决的）
     """
     from app.services.agent import run_agent_stream
-    from app.services.context_builder import format_sop_context
-
-    # 校验
     if asset.asset_type != "sop" or not asset.content_markdown:
-        yield _sse({
+        yield {
             "type": "error",
             "content": "Routine requires a valid SOP asset with content",
-        })
-        yield _sse({"type": "done"})
+        }
+        yield {"type": "done"}
         return
-
     effective_message = (
         user_message
         or "Please execute the analysis according to the bound SOP."
     )
-
-    # run_agent_stream 会自动保存 user step、调 orchestrator、持久化所有 step
-    # 我们只需要确保 SOP 通过某种方式传递到 AnalystAgent
-    # 方案：在 Task 上挂载临时属性，agent 链路中读取
-    # 但这不够干净。更好的方式是让 run_agent_stream 接受额外 context
-
-    async for event in run_agent_stream(
+    # 暂时仍需 parse SSE（Phase 3 会移除这个）
+    async for sse_line in run_agent_stream(
         task_id=task.id,
         user_message=effective_message,
         db=db,
         mode="analyst",
         model_override=model_override,
     ):
-        yield event
-        
-async def _execute_pipeline_task(
-    task: Task,
-    pipeline: DataPipeline,
-    table: DuckDBTable,
+        # Parse SSE 回 dict
+        if sse_line.startswith("data: "):
+            try:
+                event = json.loads(sse_line[6:].strip())
+                yield event
+            except json.JSONDecodeError:
+                pass
+
+# ============================================================
+# 保留：兼容层（SSE 版本）
+# ============================================================
+async def execute_task(
+    task_id: str,
     db: AsyncSession,
+    env_vars_override: dict[str, str] | None = None,
+    user_message: str | None = None,
+    model_override: tuple[str, str] | None = None,
 ) -> AsyncGenerator[str, None]:
-    """pipeline 执行：走专用 pipeline_executor"""
-    from datetime import datetime
-    from app.services.pipeline_executor import execute_pipeline
-    from app.services.execution_helpers import run_with_heartbeat
-    yield _sse({
-        "type": "text",
-        "content": f"🚀 Executing pipeline: **{pipeline.name}**\n",
-    })
-    result = None
-    async for item in run_with_heartbeat(
-        execute_pipeline(pipeline=pipeline, table=table, db=db),
-        interval=15.0,
-        message="pipeline_running",
+    """
+    兼容层：包装 execute_task_events() 为 SSE 字符串输出
+    
+    保留此函数是为了向后兼容直接 SSE 流式输出的场景
+    """
+    async for event in execute_task_events(
+        task_id=task_id,
+        db=db,
+        env_vars_override=env_vars_override,
+        user_message=user_message,
+        model_override=model_override,
     ):
-        if isinstance(item, str):
-            yield item  # 心跳转发
-        else:
-            result = item
+        yield _sse(event)
 
-    if result is None:
-        task.last_run_at = datetime.now()
-        task.last_run_status = "failed"
-        await db.commit()
-        yield _sse({
-            "type": "error",
-            "content": "Pipeline execution returned no result",
-        })
-        yield _sse({"type": "done"})
-        return
-
-    task.last_run_at = datetime.now()
-    task.last_run_status = "success" if result.success else "failed"
-    await db.commit()
-
-    yield _sse({
-        "type": "tool_result",
-        "success": result.success,
-        "output": result.message,
-        "error": result.error,
-        "time": result.execution_time,
-    })
-
-    if result.success:
-        yield _sse({
-            "type": "text",
-            "content": f"\n✅ {result.message}",
-        })
-    else:
-        yield _sse({
-            "type": "text",
-            "content": f"\n❌ {result.message}",
-        })
-
-    yield _sse({"type": "done"})
