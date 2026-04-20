@@ -55,7 +55,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CapturedDataFrame } from "@/stores/use-task-store";
-import { deleteStepAndAfter, deleteStep, regenerateFromStep, fetchChatHistory, streamChat, exportChat } from "@/lib/api";
+import { deleteStepAndAfter, deleteStep, regenerateFromStep, fetchChatHistory, streamChat, exportChat, streamTaskExecutionEvents } from "@/lib/api";
 import type { SSEEvent } from "@/lib/api";
 
 
@@ -736,7 +736,7 @@ export default function ChatArea() {
     if (isSending) return;
     setIsSending(true);
     setIsWaitingResponse(true);
-    // 添加临时用户消息
+
     const tempUserId = `temp-user-${Date.now()}`;
     addStep({
       id: tempUserId,
@@ -748,13 +748,31 @@ export default function ChatArea() {
       code_output: null,
       created_at: new Date().toISOString(),
     });
+
+    const controller = new AbortController();
+
     try {
       const modelOverride = selectedModel
         ? { provider_id: selectedModel.providerId, model_id: selectedModel.modelId }
         : undefined;
-      await streamChat(
+
+      // 两段式：启动 + 消费
+      const { startChatExecution } = await import("@/lib/api");
+      const startRes = await startChatExecution(taskId, userMessage, currentMode, modelOverride);
+      const { execution_id, task_type } = startRes.data;
+
+      const { useTaskStore: store } = await import("@/stores/use-task-store");
+      store.getState().setTaskExecution(taskId, {
+        executionId: execution_id,
+        status: "running",
+        taskType: task_type as any,
+        lastSeq: 0,
+      });
+
+      // 消费事件流
+      await streamTaskExecutionEvents(
         taskId,
-        userMessage,
+        execution_id,
         (event: SSEEvent) => {
           switch (event.type) {
             case "text":
@@ -771,7 +789,6 @@ export default function ChatArea() {
                 setIsWaitingResponse(false);
               }
               clearStreaming();
-              // 修改：传入 taskId
               setPendingTool(taskId, {
                 code: event.code || "",
                 purpose: event.purpose || "",
@@ -779,28 +796,25 @@ export default function ChatArea() {
               });
               break;
             case "tool_result":
-              // 修改：传入 taskId
               updatePendingToolResult(taskId, {
                 success: event.success ?? false,
                 output: event.output ?? null,
                 error: event.error ?? null,
-                time: event.time ?? 0,dataframes: event.dataframes,
+                time: event.time ?? 0,
+                dataframes: event.dataframes,
               });
               break;
-              
             case "step_saved": {
               const step = event.step as unknown as Step;
               if (step.step_type === "user_message") {
-                const store = useTaskStore.getState();
+                const s = useTaskStore.getState();
                 useTaskStore.setState({
-                  steps: store.steps.map((s) => (s.id === tempUserId ? step : s)),
+                  steps: s.steps.map((st) => (st.id === tempUserId ? step : st)),
                 });
               } else {
                 clearStreaming();
                 setPendingTool(taskId, null);
                 addStep(step);
-                
-                // 如果是 HITL 请求，设置 pendingHITL 状态
                 if (step.step_type === "hitl_request" && step.code_output) {
                   try {
                     const hitlData = JSON.parse(step.code_output);
@@ -808,17 +822,13 @@ export default function ChatArea() {
                       stepId: step.id,
                       data: hitlData,
                     });
-                  } catch {
-                    // ignore
-                  }
+                  } catch { /* ignore */ }
                 }
               }
               break;
             }
-            
             case "done":
               clearStreaming();
-              // 修改:传入 taskId
               setPendingTool(taskId, null);
               setIsWaitingResponse(false);
               break;
@@ -837,10 +847,12 @@ export default function ChatArea() {
                 created_at: new Date().toISOString(),
               });
               break;
+            case "heartbeat":
+              break;
           }
         },
-        currentMode,
-        modelOverride
+        { afterSeq: 0 },
+        controller,
       );
     } catch (err) {
       if (!(err instanceof DOMException && err.name === "AbortError")) {
@@ -861,7 +873,6 @@ export default function ChatArea() {
       setIsWaitingResponse(false);
     }
   }, [isSending, currentMode, selectedModel, setIsSending, setIsWaitingResponse, addStep, startStreaming, appendStreamingToken, clearStreaming, setPendingTool, updatePendingToolResult]);
-
   /** HITL 用户选择后，格式化为消息并发送 */
   const handleHITLSubmit = useCallback(
     (choice: { type: "option" | "custom"; value: string; label: string }) => {

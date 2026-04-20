@@ -1,70 +1,111 @@
-# backend/app/routers/chat.py
-
-"""Chat 对话 API —— ReAct Agent + SSE 流式回复"""
-
-from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
+"""Chat 对话 API —— ReAct Agent + 后台执行"""
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-
-from app.database import get_db
+from app.database import get_db, async_session as get_async_session
 from app.models import Step, Task, Visualization
 from app.schemas import ChatRequest, StepResponse
-from app.services.agent import run_agent_stream
+from app.services.agent import run_agent_events
+from app.services.execution_registry import execution_registry
 import asyncio
 import os
 import json as _json
 from datetime import datetime
 from typing import Any, Mapping, Sequence, cast, Dict
-
 from app.config import UPLOADS_DIR
-
-
 router = APIRouter(prefix="/api/chat", tags=["chat"])
-
-
-# ── SSE 流式对话（ReAct Agent） ────────────────────────────────
+# ── 后台 chat execution runner ─────────────────────────────────
+async def _run_chat_in_background(
+    execution_id: str,
+    task_id: str,
+    user_message: str,
+    mode: str | None,
+    model_override: tuple[str, str] | None,
+) -> None:
+    """后台执行 agent，事件写入 ExecutionRegistry"""
+    try:
+        async with get_async_session() as db:
+            async for event in run_agent_events(
+                task_id=task_id,
+                user_message=user_message,
+                db=db,
+                mode=mode,
+                model_override=model_override,
+            ):
+                await execution_registry.append_event(execution_id, event)
+                if event.get("type") == "done":
+                    await execution_registry.mark_completed(execution_id)
+                    return
+        # Generator 正常结束但没有 done event（防御性）
+        await execution_registry.mark_completed(execution_id)
+    except asyncio.CancelledError:
+        await execution_registry.append_event(execution_id, {
+            "type": "error", "content": "Execution cancelled",
+        })
+        await execution_registry.append_event(execution_id, {
+            "type": "done", "steps": [],
+        })
+        await execution_registry.mark_cancelled(execution_id)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        await execution_registry.append_event(execution_id, {
+            "type": "error", "content": f"Agent error: {str(e)}",
+        })
+        await execution_registry.append_event(execution_id, {
+            "type": "done", "steps": [],
+        })
+        await execution_registry.mark_failed(execution_id, str(e))
+# ── SSE 流式对话（后台执行版） ────────────────────────────────
 @router.post("/stream")
 async def stream_message(body: ChatRequest, db: AsyncSession = Depends(get_db)):
     """
-    通过 SSE 逐步推送 Agent 的分析过程。
-    支持mode参数切换执行模式，支持model_override显式指定模型。
+    启动后台 chat execution，返回 execution_id。
+    前端通过 GET /tasks/{task_id}/executions/{execution_id}/events 消费事件流。
     """
-    mode = getattr(body, 'mode', None)
-    
-    # 解析用户显式指定的模型
+    task_id = body.task_id
+    mode = body.mode
+    # 验证 Task 存在
+    result = await db.execute(select(Task).where(Task.id == task_id))
+    task = result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    task_type = task.task_type or "ad_hoc"
+    # 检查是否有正在运行的 execution（防止重复启动）
+    existing = await execution_registry.get_latest_session_by_task(task_id)
+    if existing and existing.status == "running":
+        return JSONResponse({
+            "task_id": task_id,
+            "execution_id": existing.execution_id,
+            "status": "running",
+            "task_type": task_type,
+            "reused": True,
+        })
+    # 创建 execution session
+    session = await execution_registry.create_session(task_id, task_type)
+    # 解析 model override
     model_override = None
-    if hasattr(body, 'model_override') and body.model_override:
-        model_override = (
-            body.model_override.provider_id,
-            body.model_override.model_id,
+    if body.model_override:
+        model_override = (body.model_override.provider_id, body.model_override.model_id)
+    # 启动后台任务
+    bg_task = asyncio.create_task(
+        _run_chat_in_background(
+            execution_id=session.execution_id,
+            task_id=task_id,
+            user_message=body.message,
+            mode=mode,
+            model_override=model_override,
         )
-    
-    async def event_generator():
-        try:
-            async for sse_line in run_agent_stream(
-                task_id=body.task_id,
-                user_message=body.message,
-                db=db,
-                mode=mode,
-                model_override=model_override,  # 传递用户指定
-            ):
-                yield sse_line
-        except asyncio.CancelledError:
-            return
-        except Exception as e:
-            yield f"data: {_json.dumps({'type': 'error', 'content': f'Stream error: {str(e)}'}, ensure_ascii=False)}\n\n"
-            yield f"data: {_json.dumps({'type': 'done', 'steps': []}, ensure_ascii=False)}\n\n"
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
     )
+    await execution_registry.set_task(session.execution_id, bg_task)
+    return JSONResponse({
+        "task_id": task_id,
+        "execution_id": session.execution_id,
+        "status": "running",
+        "task_type": task_type,
+        "reused": False,
+    })
 
 
 # ── 历史记录 ───────────────────────────────────────────────────

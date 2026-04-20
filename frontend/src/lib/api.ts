@@ -459,8 +459,9 @@ export interface SSEEvent {
 }
 
 /**
- * 流式对话：通过 SSE 接收 Agent 的 ReAct 分析过程。
- * 使用回调分发不同事件类型。
+ * 流式对话：两段式执行模型
+ * 1. POST /chat/stream → 获取 execution_id
+ * 2. GET /tasks/{task_id}/executions/{execution_id}/events → 消费事件流
  */
 export async function streamChat(
   taskId: string,
@@ -472,116 +473,68 @@ export async function streamChat(
 ) {
   const controller = externalAbortController || new AbortController();
 
-  // 允许长任务（比如代码执行）最长 2 小时
-  const globalTimeout = setTimeout(() => controller.abort(), 2 * 60 * 60 * 1000);
-  
   try {
-    const baseUrl = await getBaseUrl();
-    // const streamUrl = `${baseUrl}/chat/stream`;
-    // desktop 直连 FastAPI stream，dev/docker 走 Next 代理
-    const streamUrl = isTauriDesktop()
-      ? `${baseUrl}/chat/stream`
-      : "/api/chat/stream";
-
-    const body: {
-      task_id: string;
-      message: string;
-      mode?: string;
-      model_override?: { provider_id: string; model_id: string };
-    } = {
+    // Phase 1: 启动后台执行
+    const api = await getApi();
+    const body: Record<string, unknown> = {
       task_id: taskId,
       message,
     };
-    if (mode) {
-      body.mode = mode;
-    }
-    if (modelOverride) {
-      body.model_override = modelOverride;
-    }
-    const res = await fetch(streamUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    if (!res.ok || !res.body) {
-      onEvent({
-        type: "error",
-        content: `HTTP ${res.status}: ${res.statusText}`,
-      });
-      return;
-    }
+    if (mode) body.mode = mode;
+    if (modelOverride) body.model_override = modelOverride;
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    // 单 chunk 间隔超时：90 秒无数据视为异常
-    let chunkTimer: ReturnType<typeof setTimeout> | null = null;
+    const startRes = await api.post<{
+      task_id: string;
+      execution_id: string;
+      status: string;
+      task_type: string;
+      reused: boolean;
+    }>("/chat/stream", body);
 
-    const resetChunkTimer = () => {
-      if (chunkTimer) clearTimeout(chunkTimer);
-      chunkTimer = setTimeout(() => {
-        reader.cancel();
-        onEvent({
-          type: "error",
-          content: "Response stream timed out (no data for 90s).",
-        });
-        onEvent({ type: "done", steps: [] });
-      }, 90_000);
-    };
+    const { execution_id } = startRes.data;
 
-    resetChunkTimer();
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      resetChunkTimer();
-      buffer += decoder.decode(value, { stream: true });
-      // SSE 协议：事件以 \n\n 分隔
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() || "";
-
-      for (const part of parts) {
-        for (const line of part.split("\n")) {
-          if (line.startsWith("data: ")) {
-            try {
-              const data: SSEEvent = JSON.parse(line.slice(6));
-              onEvent(data);
-            } catch {
-              // ignore
-            }
-          }
-        }
-      }
-    }
-
-    if (chunkTimer) clearTimeout(chunkTimer);
-    // 处理 buffer 中可能残留的最后一个事件
-    if (buffer.trim()) {
-      for (const line of buffer.split("\n")) {
-        if (line.startsWith("data: ")) {
-          try {
-            const data: SSEEvent = JSON.parse(line.slice(6));
-            onEvent(data);
-          } catch {
-            // ignore
-          }
-        }
-      }
-    }
+    // Phase 2: 消费事件流（复用已有的 streamTaskExecutionEvents）
+    await streamTaskExecutionEvents(
+      taskId,
+      execution_id,
+      onEvent,
+      { afterSeq: 0 },
+      controller,
+    );
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      // 用户主动中止时静默处理，不推送 error 事件
-      // 仅发送 done 让调用方知道流已结束
       onEvent({ type: "done", steps: [] });
     } else {
-      throw err; // 让 message-input.tsx 的 catch 处理
+      throw err;
     }
-  } finally {
-    clearTimeout(globalTimeout);
   }
 }
+
+/**
+ * 启动 chat 后台执行（Phase 3 两段式第一步）
+ */
+export const startChatExecution = async (
+  taskId: string,
+  message: string,
+  mode?: "auto" | "plan" | "analyst",
+  modelOverride?: { provider_id: string; model_id: string },
+) => {
+  const api = await getApi();
+  const body: Record<string, unknown> = {
+    task_id: taskId,
+    message,
+  };
+  if (mode) body.mode = mode;
+  if (modelOverride) body.model_override = modelOverride;
+
+  return api.post<{
+    task_id: string;
+    execution_id: string;
+    status: string;
+    task_type: string;
+    reused: boolean;
+  }>("/chat/stream", body);
+};
 
 // ===== LLM Providers =====
 export const fetchProviders = async () => (await getApi()).get("/llm/providers");

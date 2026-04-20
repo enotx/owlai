@@ -390,8 +390,15 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   // Chat — 已持久化的 Steps
   steps: [],
   setSteps: (steps) => set({ steps }),
-  addStep: (step) => set((s) => ({ steps: [...s.steps, step] })),
-
+  addStep: (step) => set((s) => {
+    const idx = s.steps.findIndex((st) => st.id === step.id);
+    if (idx >= 0) {
+      const newSteps = [...s.steps];
+      newSteps[idx] = step;
+      return { steps: newSteps };
+    }
+    return { steps: [...s.steps, step] };
+  }),
   // 流式消息
   streamingMessage: null,
   startStreaming: () =>

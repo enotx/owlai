@@ -265,13 +265,8 @@ export default function MessageInput() {
     try {
       const currentExecution = useTaskStore.getState().getCurrentTaskExecution();
 
-      // 若当前是 script/pipeline 的后台 execution，优先请求后端取消
-      if (
-        taskId &&
-        currentExecution &&
-        currentExecution.status === "running" &&
-        (taskType === "script" || taskType === "pipeline")
-      ) {
+      // 所有类型都通过 execution cancel 端点取消
+      if (taskId && currentExecution && currentExecution.status === "running") {
         try {
           await cancelTaskExecution(taskId, currentExecution.executionId);
         } catch (err) {
@@ -329,127 +324,38 @@ export default function MessageInput() {
           }
         : undefined;
 
-      await streamChat(
-        currentTaskId,
-        message,
-        (event: SSEEvent) => {
-          switch (event.type) {
-            case "text":
-              if (useTaskStore.getState().isWaitingResponse) {
-                setIsWaitingResponse(false);
+      // Phase 1: 启动后台 execution
+      const { startChatExecution } = await import("@/lib/api");
+      const startRes = await startChatExecution(currentTaskId, message, currentMode, modelOverride);
+      const { execution_id, task_type } = startRes.data;
+
+      // 写入 execution 状态（支持 reconnect）
+      setTaskExecution(currentTaskId, {
+        executionId: execution_id,
+        status: "running",
+        taskType: task_type as any,
+        lastSeq: 0,
+      });
+
+      // Phase 2: 消费事件流
+      await attachExecutionStream(currentTaskId, execution_id, controller, 0);
+
+      // 流结束后 auto-rename
+      if (!autoRenameCalledRef.current) {
+        autoRenameCalledRef.current = true;
+        const store = useTaskStore.getState();
+        const currentTask = store.tasks.find((t) => t.id === currentTaskId);
+        if (currentTask && /^Task \d+$/.test(currentTask.title)) {
+          autoRenameTask(currentTaskId!)
+            .then((res) => {
+              const newTitle = res.data?.title;
+              if (newTitle && newTitle !== currentTask.title) {
+                useTaskStore.getState().updateTaskTitle(currentTaskId!, newTitle);
               }
-              if (!useTaskStore.getState().streamingMessage) {
-                startStreaming();
-              }
-              if (event.content) {
-                appendStreamingToken(event.content);
-              }
-              break;
-
-            case "tool_start":
-              if (useTaskStore.getState().isWaitingResponse) {
-                setIsWaitingResponse(false);
-              }
-              _flushStreaming();
-              setPendingTool(currentTaskId!, {
-                code: event.code || "",
-                purpose: event.purpose || "",
-                status: "running",
-              });
-              break;
-
-            case "tool_result":
-              updatePendingToolResult(currentTaskId!, {
-                success: event.success ?? false,
-                output: event.output ?? null,
-                error: event.error ?? null,
-                time: event.time ?? 0,
-                dataframes: event.dataframes,
-              });
-              break;
-
-            case "step_saved": {
-              const step = event.step as unknown as Step;
-              if (step.step_type === "user_message") {
-                const store = useTaskStore.getState();
-                const updatedSteps = store.steps.map((s) =>
-                  s.id === tempUserId ? step : s
-                );
-                useTaskStore.setState({ steps: updatedSteps });
-              } else {
-                clearStreaming();
-                setPendingTool(currentTaskId!, null);
-                addStep(step);
-
-                if (step.step_type === "hitl_request" && step.code_output) {
-                  try {
-                    const hitlData = JSON.parse(step.code_output);
-                    useTaskStore.getState().setPendingHITL({
-                      stepId: step.id,
-                      data: hitlData,
-                    });
-                  } catch {
-                    // ignore
-                  }
-                }
-              }
-              break;
-            }
-
-            case "visualization":
-              break;
-
-            case "hitl_request":
-              break;
-
-            case "done": {
-              clearStreaming();
-              setPendingTool(currentTaskId!, null);
-              if (!autoRenameCalledRef.current) {
-                autoRenameCalledRef.current = true;
-                const store = useTaskStore.getState();
-                const currentTask = store.tasks.find(
-                  (t) => t.id === currentTaskId
-                );
-                if (currentTask && /^Task \d+$/.test(currentTask.title)) {
-                  autoRenameTask(currentTaskId!)
-                    .then((res) => {
-                      const newTitle = res.data?.title;
-                      if (newTitle && newTitle !== currentTask.title) {
-                        useTaskStore
-                          .getState()
-                          .updateTaskTitle(currentTaskId!, newTitle);
-                      }
-                    })
-                    .catch((err) => {
-                      console.error("Auto-rename failed:", err);
-                    });
-                }
-              }
-              break;
-            }
-
-            case "error":
-              clearStreaming();
-              setPendingTool(currentTaskId!, null);
-              setIsWaitingResponse(false);
-              addStep({
-                id: `error-${Date.now()}`,
-                task_id: currentTaskId!,
-                role: "assistant",
-                step_type: "assistant_message",
-                content: `⚠️ ${event.content || "Unknown error"}`,
-                code: null,
-                code_output: null,
-                created_at: new Date().toISOString(),
-              });
-              break;
-          }
-        },
-        currentMode,
-        modelOverride,
-        controller
-      );
+            })
+            .catch(() => {});
+        }
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
         // silent
@@ -529,20 +435,34 @@ export default function MessageInput() {
               });
               break;
 
-            case "step_saved": {
-              const step = event.step as unknown as Step;
-              clearStreaming();
-              setPendingTool(taskId, null);
-              addStep(step);
-              break;
-            }
+              case "step_saved": {
+                const step = event.step as unknown as Step;
+                clearStreaming();
+                setPendingTool(taskId, null);
+
+                // Replace temp user placeholder with the real persisted step
+                if (step.step_type === "user_message") {
+                  const s = useTaskStore.getState();
+                  const tempIdx = s.steps.findIndex(
+                    (st) => st.id.startsWith("temp-user-") && st.task_id === taskId
+                  );
+                  if (tempIdx >= 0) {
+                    const newSteps = [...s.steps];
+                    newSteps[tempIdx] = step;
+                    useTaskStore.setState({ steps: newSteps });
+                    break;
+                  }
+                }
+
+                addStep(step);
+                break;
+              }
 
             case "done":
               clearStreaming();
               setPendingTool(taskId, null);
               setIsWaitingResponse(false);
               setIsExecuting(false);
-              // 若此前没有被标为 failed/cancelled，则视为 completed
               {
                 const currentExec = useTaskStore.getState().taskExecutions[taskId];
                 if (currentExec?.status === "running") {
@@ -550,6 +470,22 @@ export default function MessageInput() {
                 }
               }
               scheduleExecutionCleanup(taskId);
+
+              // Auto-rename for ad-hoc tasks
+              {
+                const store = useTaskStore.getState();
+                const t = store.tasks.find((x) => x.id === taskId);
+                if (t && t.task_type === "ad_hoc" && /^Task \d+$/.test(t.title)) {
+                  autoRenameTask(taskId)
+                    .then((res) => {
+                      const newTitle = res.data?.title;
+                      if (newTitle && newTitle !== t.title) {
+                        useTaskStore.getState().updateTaskTitle(taskId, newTitle);
+                      }
+                    })
+                    .catch(() => {});
+                }
+              }
               break;
 
             case "error": {
@@ -650,18 +586,19 @@ export default function MessageInput() {
     }
   };
 
+  // Reconnect running execution on mount / task switch
   useEffect(() => {
     if (!currentTaskId) return;
-    if (taskType !== "script" && taskType !== "pipeline") return;
 
     let cancelled = false;
     const controller = new AbortController();
 
     const reconnectIfNeeded = async () => {
       try {
+        // 先检查本地 store 是否有 running execution
         const existing = getTaskExecutionByTaskId(currentTaskId);
         if (existing && existing.status === "running") {
-          setIsExecuting(true);
+          setIsSending(true);
           setIsWaitingResponse(true);
           abortControllerRef.current = controller;
           await attachExecutionStream(
@@ -672,6 +609,8 @@ export default function MessageInput() {
           );
           return;
         }
+
+        // 再查后端是否有 running execution
         const res = await fetchLatestTaskExecution(currentTaskId);
         if (cancelled) return;
 
@@ -687,7 +626,7 @@ export default function MessageInput() {
           lastSeq: execution.last_seq,
         });
 
-        setIsExecuting(true);
+        setIsSending(true);
         setIsWaitingResponse(true);
         abortControllerRef.current = controller;
 
@@ -704,8 +643,9 @@ export default function MessageInput() {
       } finally {
         if (!cancelled) {
           abortControllerRef.current = null;
-          setIsExecuting(false);
+          setIsSending(false);
           setIsWaitingResponse(false);
+          setIsExecuting(false);
         }
       }
     };
@@ -718,14 +658,14 @@ export default function MessageInput() {
     };
   }, [
     currentTaskId,
-    taskType,
     attachExecutionStream,
-    getCurrentTaskExecution,
     getTaskExecutionByTaskId,
+    setIsSending,
     setIsExecuting,
     setIsWaitingResponse,
     setTaskExecution,
-  ]);
+  ]
+  );
 
   function _flushStreaming() {
     clearStreaming();
