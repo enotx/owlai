@@ -141,7 +141,9 @@ export default function DataPanel({ onClose }: { onClose?: () => void } = {}) {
               </span>
               {hasData && (
                 <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-                  {previewData.length} rows
+                  {previewSource?.truncated
+                    ? `${previewData.length} of ${previewSource.totalRows?.toLocaleString()} rows`
+                    : `${previewData.length} rows`}
                 </span>
               )}
             </div>

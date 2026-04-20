@@ -188,6 +188,8 @@ export interface PreviewSource {
   availableSheets?: string[];
   currentSheet?: string;
   knowledgeId?: string;
+  totalRows?: number;
+  truncated?: boolean;
 }
 
 interface TaskStore {
@@ -496,18 +498,24 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   loadStepDataframe: async (stepId, dfName) => {
     try {
       const { fetchStepDataframe } = await import("@/lib/api");
-      const res = await fetchStepDataframe(stepId, dfName);
-      const { columns, rows } = res.data;
+      const res = await fetchStepDataframe(stepId, dfName, 200);
+      const { columns, rows, total_rows, truncated } = res.data;
       set({
         previewData: rows,
         previewColumns: columns,
-        previewSource: { type: "step", stepId, dfName },
+        previewSource: {
+          type: "step",
+          stepId,
+          dfName,
+          totalRows: total_rows,
+          truncated,
+        },
         activeDataTab: "data",
       });
     } catch (err) {
       console.error("Failed to load step dataframe:", err);
     }
-  },
+},
 
   // Loading
   isSending: false,

@@ -385,11 +385,22 @@ export const executeCode = async (taskId: string, code: string) =>
   (await getApi()).post("/execute", { task_id: taskId, code });
 
 // ===== Step DataFrame Preview =====
-export const fetchStepDataframe = async (stepId: string, dfName: string) =>
-  (await getApi()).get<{ columns: string[]; rows: Record<string, unknown>[] }>(
-    `/chat/steps/${stepId}/dataframe/${dfName}`
+export const fetchStepDataframe = async (
+  stepId: string,
+  dfName: string,
+  limit: number = 200
+) =>
+  (await getApi()).get<{
+    columns: string[];
+    rows: Record<string, unknown>[];
+    total_rows: number;
+    returned_rows: number;
+    truncated: boolean;
+  }>(
+    `/chat/steps/${stepId}/dataframe/${dfName}`,
+    { params: { limit } }
   );
-
+  
 // ===== Streaming Chat (SSE) =====
 /**
  * 流式对话：通过 SSE 逐 token 接收 AI 回复
