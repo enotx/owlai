@@ -324,11 +324,26 @@ export const uploadKnowledge = async (taskId: string, file: File) => {
   const formData = new FormData();
   formData.append("task_id", taskId);
   formData.append("file", file);
-
-  return (await getApi()).post("/knowledge", formData, {
+  const baseURL = await getBaseUrl();
+  
+  // 根据文件大小动态计算超时时间
+  const timeoutMs = Math.max(
+    60_000,  // 最少 1 分钟
+    Math.ceil(file.size / (1024 * 1024)) * 1_000  // 每 MB 给 1 秒
+  );
+  return axios.post(`${baseURL}/knowledge`, formData, {
     headers: { "Content-Type": "multipart/form-data" },
+    timeout: timeoutMs,
+    onUploadProgress: (progressEvent) => {
+      // 可选：添加进度回调
+      const percentCompleted = Math.round(
+        (progressEvent.loaded * 100) / (progressEvent.total || 1)
+      );
+      console.log(`Upload progress: ${percentCompleted}%`);
+    },
   });
 };
+
 
 export const deleteKnowledge = async (knowledgeId: string) =>
   (await getApi()).delete(`/knowledge/${knowledgeId}`);
