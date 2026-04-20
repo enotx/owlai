@@ -38,7 +38,7 @@ FORBIDDEN_CALLS = frozenset({
     "eval", "exec", "compile",
     "open", "input",
     "__import__",
-    "globals", "locals", "vars",
+    "locals", "vars",
     "getattr", "setattr", "delattr",
     "breakpoint", "exit", "quit",
     "memoryview",

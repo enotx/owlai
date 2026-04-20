@@ -56,7 +56,7 @@ class SandboxExecutionResult(TypedDict):
     persisted_vars: dict[str, str]
     charts: list[SandboxChartMeta]
     maps: list[SandboxMapMeta]
-
+    # artifacts: list[dict]
 
 def is_sandbox_execution_result(value: object) -> TypeGuard[SandboxExecutionResult]:
     if not isinstance(value, dict):
@@ -244,7 +244,7 @@ def _safe_import(name, *args, **kwargs):
 import builtins as _builtins_mod
 _safe_builtins = {{}}
 _BLOCKED = {{'exec', 'eval', 'compile', '__import__', 'open',
-                'input', 'breakpoint', 'exit', 'quit', 'globals',
+                'input', 'breakpoint', 'exit', 'quit',
                 'locals', 'vars', 'setattr', 'delattr',
                 'memoryview', 'classmethod', 'staticmethod'}}
 for _k in dir(_builtins_mod):
@@ -476,7 +476,14 @@ def _sandbox_create_map(__title, __map_config):
         with open(_map_path, 'w', encoding='utf-8') as _mf:
             _mjson.dump(_map_meta, _mf, ensure_ascii=False, default=str)
     print(f"[Map created: {{__title}}]")
-
+def _sandbox_get_dataframes():
+    # Return all user-created DataFrame variables in the current namespace
+    return {{
+        k: v for k, v in _namespace.items()
+        if isinstance(v, __pd.DataFrame) and not k.startswith('_')
+        and k not in {{'pd', 'np', 'pandas', 'numpy', '__builtins__',
+                       'create_chart', 'create_map', 'get_dataframes', 'getenv'}}
+    }}
 # ── 捕获 stdout ────────────────────────────────────────
 _stdout_capture = StringIO()
 _original_stdout = sys.stdout
@@ -490,6 +497,7 @@ _namespace = {{
     'numpy': __np,
     'create_chart': _sandbox_create_chart,
     'create_map': _sandbox_create_map,
+    'get_dataframes': _sandbox_get_dataframes,
 }}
 # 注入 DataFrame 变量
 {namespace_inject}

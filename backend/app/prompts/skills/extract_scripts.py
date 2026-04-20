@@ -52,6 +52,7 @@ You MUST return a JSON object with these fields:
 4. **Use pre-loaded variables** — Check "Variable Reference" for exact names
 5. **DuckDB access** — Use `getenv('WAREHOUSE_PATH')` (never hardcode paths); You can use getenv() directly in the sandbox, without import os.
 6. **Deterministic** — Same input → same output (unless intentionally random)
+7. **Discover available data** — Use `get_dataframes()` to list all available DataFrame variables by name. Avoid using `globals()` directly.
 
 ## Example
 
