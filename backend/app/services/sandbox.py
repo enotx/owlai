@@ -56,7 +56,7 @@ class SandboxExecutionResult(TypedDict):
     persisted_vars: dict[str, str]
     charts: list[SandboxChartMeta]
     maps: list[SandboxMapMeta]
-    # artifacts: list[dict]
+    artifacts: list[dict]
 
 def is_sandbox_execution_result(value: object) -> TypeGuard[SandboxExecutionResult]:
     if not isinstance(value, dict):
@@ -189,7 +189,7 @@ _ALLOWED_MODULES = {{
     'datetime', 'json', 'decimal', 'fractions', 'textwrap',
     'collections.abc', 'typing', 'numbers', 'hashlib', 'random',
     'sklearn', 'scipy', 'time', 'xgboost', 'lightgbm', 'catboost',
-    'duckdb', 'pyarrow'
+    'duckdb', 'pyarrow', 'joblib', 'polars'
     # ── 标准库（C 扩展内部高频依赖，无独立危害性） ──
     'sys', 'os', 'io', 'threading', '_thread', 'warnings', 'logging',
     'types', 'abc', 'copy', 'copyreg', 'weakref', 'contextlib',
@@ -484,6 +484,52 @@ def _sandbox_get_dataframes():
         and k not in {{'pd', 'np', 'pandas', 'numpy', '__builtins__',
                        'create_chart', 'create_map', 'get_dataframes', 'getenv'}}
     }}
+
+# ── 沙箱内 artifact 存储 ──────────────────────────────
+_captured_artifacts = []
+_ARTIFACT_SAVE_DIR = _os.path.join("{capture_dir_escaped}", "artifacts")
+def _sandbox_save_artifact(__name, __obj):
+    \"\"\"Save a binary artifact (model, scaler, encoder, etc.) for later reuse.\"\"\"
+    import joblib as _joblib
+    __safe_name = "".join(c if c.isalnum() or c in ('_', '-') else '_' for c in str(__name))
+    if not __safe_name:
+        raise ValueError("Artifact name cannot be empty")
+    _os.makedirs(_ARTIFACT_SAVE_DIR, exist_ok=True)
+    _fpath = _os.path.join(_ARTIFACT_SAVE_DIR, __safe_name + ".joblib")
+    _joblib.dump(__obj, _fpath)
+    _fsize = _os.path.getsize(_fpath)
+    _MAX_ARTIFACT_SIZE = 100 * 1024 * 1024  # 100 MB
+    if _fsize > _MAX_ARTIFACT_SIZE:
+        _os.unlink(_fpath)
+        raise ValueError(f"Artifact '{{__safe_name}}' too large ({{_fsize:,}} bytes > 100 MB limit)")
+    _meta = {{
+        "name": __safe_name,
+        "path": _fpath,
+        "size": _fsize,
+        "format": "joblib",
+    }}
+    _captured_artifacts.append(_meta)
+    print(f"[Artifact saved: {{__safe_name}} ({{_fsize:,}} bytes)]")
+
+def _sandbox_load_artifact(__name):
+    \"\"\"Load a previously saved binary artifact by name.\"\"\"
+    import joblib as _joblib
+    __safe_name = "".join(c if c.isalnum() or c in ('_', '-') else '_' for c in str(__name))
+    _search_dirs = []
+    _env_dir = _os.environ.get('ARTIFACT_DIR', '')
+    if _env_dir and _os.path.isdir(_env_dir):
+        _search_dirs.append(_env_dir)
+    if _os.path.isdir(_ARTIFACT_SAVE_DIR):
+        _search_dirs.append(_ARTIFACT_SAVE_DIR)
+    for _sdir in _search_dirs:
+        _fpath = _os.path.join(_sdir, __safe_name + ".joblib")
+        if _os.path.exists(_fpath):
+            return _joblib.load(_fpath)
+    raise FileNotFoundError(
+        f"Artifact '{{__name}}' not found. "
+        f"Searched: {{_search_dirs}}. "
+        f"Use save_artifact(name, obj) to save it first."
+    )
 # ── 捕获 stdout ────────────────────────────────────────
 _stdout_capture = StringIO()
 _original_stdout = sys.stdout
@@ -498,6 +544,8 @@ _namespace = {{
     'create_chart': _sandbox_create_chart,
     'create_map': _sandbox_create_map,
     'get_dataframes': _sandbox_get_dataframes,
+    'save_artifact': _sandbox_save_artifact,
+    'load_artifact': _sandbox_load_artifact,
 }}
 # 注入 DataFrame 变量
 {namespace_inject}
@@ -532,7 +580,7 @@ _capture_dir = "{capture_dir_escaped}"
 _PRELOADED = {preloaded_repr}
 _PRIORITY_PREFIXES = ['result', 'output', 'summary']
 _MAX_CAPTURE = 10  # 最多捕获的DataFrame个数
-_MAX_ROWS = 50000  # 每个DataFrame最多捕获的行数（防止巨量数据）
+_MAX_ROWS = 5000000  # 每个DataFrame最多捕获的行数（防止巨量数据）
 _SKIP_KEYS = {{'__builtins__', 'pd', 'np', 'pandas', 'numpy'}}
 if _capture_dir:
     # 收集所有新生成的 DataFrame（排除预加载的 CSV 变量）
@@ -692,6 +740,7 @@ result = {{
     "persisted_vars": _persisted_vars,
     "charts": _captured_charts,
     "maps": _captured_maps,
+    "artifacts": _captured_artifacts,
 }}
 print(json.dumps(result, ensure_ascii=False))
     """
@@ -737,6 +786,7 @@ async def execute_code_in_sandbox(
             "persisted_vars": {},
             "charts": [],
             "maps": [],
+            "artifacts": [],
         }
 
     # ── 【新增】从 injected_envs 中分离 allowed_modules ──
@@ -860,6 +910,7 @@ async def execute_code_in_sandbox(
                 "persisted_vars": {},
                 "charts": [],
                 "maps": [],
+                "artifacts": [],
             }
         
         if timeout_reason == "total":
@@ -872,6 +923,7 @@ async def execute_code_in_sandbox(
                 "persisted_vars": {},
                 "charts": [],
                 "maps": [],
+                "artifacts": [],
             }
         
         # 正常结束，解析输出
@@ -893,6 +945,7 @@ async def execute_code_in_sandbox(
                         result.setdefault("persisted_vars", {})
                         result.setdefault("charts", [])
                         result.setdefault("maps", [])
+                        result.setdefault("artifacts", [])
                         # 如果沙箱脚本自身 print 的内容在 JSON 之前，也要拼上
                         prefix_lines = []
                         for l in lines:
@@ -918,6 +971,7 @@ async def execute_code_in_sandbox(
             "persisted_vars": {},
             "charts": [],
             "maps": [],
+            "artifacts": [],
         }
 
     except Exception as e:
@@ -931,6 +985,7 @@ async def execute_code_in_sandbox(
             "persisted_vars": {},
             "charts": [],
             "maps": [],
+            "artifacts": [],
         }
     finally:
         # 清理临时文件

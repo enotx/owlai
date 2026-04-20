@@ -387,6 +387,7 @@ class AssetCreate(BaseModel):
     
     # SOP 字段
     content_markdown: str | None = None
+
 class AssetUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = None
@@ -394,6 +395,7 @@ class AssetUpdate(BaseModel):
     env_vars: dict[str, str] | None = None
     allowed_modules: list[str] | None = None
     content_markdown: str | None = None
+
 class AssetResponse(BaseModel):
     id: str
     name: str
@@ -409,7 +411,10 @@ class AssetResponse(BaseModel):
     
     # SOP 字段
     content_markdown: str | None
-    
+
+    # Artifacts
+    artifacts: list[dict] = Field(default_factory=list)
+
     created_at: datetime
     updated_at: datetime
     model_config = {"from_attributes": True}
@@ -429,6 +434,7 @@ class AssetResponse(BaseModel):
             "env_vars": json.loads(obj.env_vars_json) if obj.env_vars_json else {},
             "allowed_modules": json.loads(obj.allowed_modules_json) if obj.allowed_modules_json else [],
             "content_markdown": obj.content_markdown,
+            "artifacts": json.loads(obj.artifacts_json) if obj.artifacts_json else [],
             "created_at": obj.created_at,
             "updated_at": obj.updated_at,
         }

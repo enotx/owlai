@@ -24,11 +24,9 @@ async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit
 class Base(DeclarativeBase):
     pass
 
-
-
 # ===== Schema Migration (in-app) =====
 # 使用 SQLite PRAGMA user_version 记录 schema 版本，避免外部迁移脚本依赖
-LATEST_SCHEMA_VERSION = 12
+LATEST_SCHEMA_VERSION = 13
 # v2: multi-agent (tasks.mode/plan_confirmed/current_subtask_id + subtasks + steps.subtask_id)
 # v3: visualization (visualizations table)
 # v4: skill reference_markdown (lazy-loaded reference doc)
@@ -40,6 +38,7 @@ LATEST_SCHEMA_VERSION = 12
 # v10: tasks.compact_context + tasks.compact_anchor_step_id + tasks.compact_anchor_created_at
 # v11: tasks.data_source_ids (执行输入绑定)
 # v12: tasks.pipeline_id (pipeline task binds DataPipeline instead of Asset)
+# v13: assets.artifacts_json (binary artifact manifest)
 
 
 async def _get_user_version(conn) -> int:
@@ -398,6 +397,17 @@ async def upgrade_db_schema() -> dict:
                 await _set_user_version(conn, 12)
                 applied.append("set user_version=12")
                 current = 12
+            # ── v13 migration: assets.artifacts_json ──
+            if current < 13:
+                assets_cols = await _get_table_columns(conn, "assets")
+                if "artifacts_json" not in assets_cols:
+                    await conn.execute(text(
+                        "ALTER TABLE assets ADD COLUMN artifacts_json TEXT NOT NULL DEFAULT '[]'"
+                    ))
+                    applied.append("ALTER TABLE assets ADD COLUMN artifacts_json")
+                await _set_user_version(conn, 13)
+                applied.append("set user_version=13")
+                current = 13
 
             return {
                 "success": True,

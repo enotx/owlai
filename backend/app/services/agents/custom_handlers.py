@@ -8,6 +8,9 @@ import re
 import os
 import uuid
 
+from app.config import UPLOADS_DIR
+from app.database import async_session
+
 if TYPE_CHECKING:
     from app.services.agents.base import BaseAgent
 
@@ -502,6 +505,10 @@ async def _execute_derive_code_with_heartbeat(
         except (json.JSONDecodeError, TypeError):
             pass
 
+    # 注入 ARTIFACT_DIR
+    artifact_dir = os.path.join(UPLOADS_DIR, agent.task_id, "captures", "artifacts")
+    skill_envs["ARTIFACT_DIR"] = artifact_dir
+
     # 复用 base 的心跳包装器
     async for item in agent._execute_code_with_heartbeat(
         code=transform_code,
@@ -529,7 +536,6 @@ def _parse_derive_marker(output: str) -> dict | None:
 async def _register_derive_metadata(agent: "BaseAgent", config: dict) -> AsyncGenerator[str, None]:
     """用户确认后，注册元数据到 SQLite"""
     from app.models import DuckDBTable, DataPipeline
-    from app.database import async_session
     from app.services import warehouse as wh
     from datetime import datetime
 
@@ -860,7 +866,6 @@ def _guess_sop_name_from_markdown(content: str) -> str | None:
 async def _save_sop_asset(agent: "BaseAgent", config: dict) -> AsyncGenerator[str, None]:
     """用户确认后，将 SOP 保存为 Asset"""
     from app.models import Asset
-    from app.database import async_session
 
     name = config.get("name", "Untitled SOP")
     description = config.get("description", "")
@@ -1289,6 +1294,10 @@ async def _execute_script_validation_with_heartbeat(
         except (json.JSONDecodeError, TypeError):
             pass
 
+    # 注入 ARTIFACT_DIR（指向任务主 artifact 目录，而非 script_validate 子目录）
+    artifact_dir = os.path.join(UPLOADS_DIR, agent.task_id, "captures", "artifacts")
+    skill_envs["ARTIFACT_DIR"] = artifact_dir
+
     # 合并 context 中 extra_skill_envs
     extra_envs = context.get("extra_skill_envs")
     if extra_envs:
@@ -1315,7 +1324,6 @@ async def _execute_script_validation_with_heartbeat(
 async def _save_script_asset(agent: "BaseAgent", config: dict) -> AsyncGenerator[str, None]:
     """用户确认后，将 script 保存为 Asset"""
     from app.models import Asset
-    from app.database import async_session
     
     name = config.get("name", "Untitled Script")
     description = config.get("description", "")
@@ -1347,6 +1355,37 @@ async def _save_script_asset(agent: "BaseAgent", config: dict) -> AsyncGenerator
             await db.commit()
             await db.refresh(asset)
 
+        # ── 复制 artifacts 到 asset 专属目录 ──
+        import shutil
+        task_artifact_dir = os.path.join(UPLOADS_DIR, agent.task_id, "captures", "artifacts")
+        artifacts_manifest: list[dict] = []
+        if os.path.isdir(task_artifact_dir):
+            asset_artifact_dir = os.path.join(UPLOADS_DIR, "assets", asset.id, "artifacts")
+            os.makedirs(asset_artifact_dir, exist_ok=True)
+            for fname in sorted(os.listdir(task_artifact_dir)):
+                if not fname.endswith(".joblib"):
+                    continue
+                src = os.path.join(task_artifact_dir, fname)
+                dst = os.path.join(asset_artifact_dir, fname)
+                try:
+                    shutil.copy2(src, dst)
+                    artifacts_manifest.append({
+                        "name": fname[:-7],  # strip ".joblib"
+                        "size": os.path.getsize(dst),
+                        "format": "joblib",
+                    })
+                except Exception as copy_err:
+                    logger.warning(f"Failed to copy artifact {fname}: {copy_err}")
+
+        if artifacts_manifest:
+            # 更新 asset 的 artifacts_json
+            async with async_session() as db2:
+                from app.models import Asset as AssetModel
+                asset_upd = await db2.get(AssetModel, asset.id)
+                if asset_upd:
+                    asset_upd.artifacts_json = json.dumps(artifacts_manifest, ensure_ascii=False)
+                    await db2.commit()
+
         env_summary = ""
         if env_vars:
             env_keys = ", ".join(f"`{k}`" for k in env_vars.keys())
@@ -1358,6 +1397,11 @@ async def _save_script_asset(agent: "BaseAgent", config: dict) -> AsyncGenerator
 
         code_lines = len(code.strip().split("\n"))
 
+        artifact_summary = ""
+        if artifacts_manifest:
+            total_size = sum(a["size"] for a in artifacts_manifest)
+            artifact_names = ", ".join(f'`{a["name"]}`' for a in artifacts_manifest)
+            artifact_summary = f"| Artifacts | {len(artifacts_manifest)} ({total_size:,} bytes): {artifact_names} |\n"
         success_msg = (
             f"✅ **Script saved successfully!**\n\n"
             f"| Property | Value |\n"
@@ -1367,6 +1411,7 @@ async def _save_script_asset(agent: "BaseAgent", config: dict) -> AsyncGenerator
             f"| Lines | {code_lines} |\n"
             f"{env_summary}"
             f"{module_summary}"
+            f"{artifact_summary}"
             f"\nYou can find this script in the **Assets** tab on the right panel.\n"
             f"Use the **Run** button to execute it independently."
         )

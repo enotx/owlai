@@ -55,6 +55,7 @@ def _empty_sandbox_result() -> SandboxExecutionResult:
         "execution_time": 0.0,
         "dataframes": [],
         "persisted_vars": {},
+        "artifacts": [],
         "charts": [],
         "maps": [],
     }
@@ -97,6 +98,10 @@ async def run_script_events(
     extra_envs = dict(env_vars)
     if allowed_modules:
         extra_envs["__allowed_modules__"] = json.dumps(allowed_modules)
+    # 注入 ARTIFACT_DIR（指向 asset 专属 artifact 目录）
+    asset_artifact_dir = os.path.join(UPLOADS_DIR, "assets", asset.id, "artifacts")
+    if os.path.isdir(asset_artifact_dir):
+        extra_envs["ARTIFACT_DIR"] = asset_artifact_dir
     capture_dir = os.path.join(UPLOADS_DIR, task_id, "captures")
     os.makedirs(capture_dir, exist_ok=True)
     # 3. 构建 data_var_map

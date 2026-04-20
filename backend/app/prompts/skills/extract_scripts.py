@@ -53,6 +53,9 @@ You MUST return a JSON object with these fields:
 5. **DuckDB access** — Use `getenv('WAREHOUSE_PATH')` (never hardcode paths); You can use getenv() directly in the sandbox, without import os.
 6. **Deterministic** — Same input → same output (unless intentionally random)
 7. **Discover available data** — Use `get_dataframes()` to list all available DataFrame variables by name. Avoid using `globals()` directly.
+8. **Binary artifacts** — Use `save_artifact(name, obj)` to persist trained models, scalers, encoders, or any binary object. Use `load_artifact(name)` to reload them. Artifacts are bundled with the script when saved.
+9. **Discover available data** — Use `get_dataframes()` to list all available DataFrame variables by name. Prefer this over `globals()`.
+
 
 ## Example
 
@@ -190,6 +193,58 @@ for key, value in summary.items():
     print(f"  {key}: {value}")
 ```
 
+### Pattern 3: Model Training with Artifact
+```python
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+
+# Load data
+df = training_data.copy()
+X = df.drop(columns=['target'])
+y = df['target']
+
+# Preprocessing
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Train
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+model = RandomForestClassifier(n_estimators=100, random_state=42)
+model.fit(X_train, y_train)
+
+# Evaluate
+accuracy = model.score(X_test, y_test)
+print(f"Model accuracy: {accuracy:.4f}")
+
+# Save artifacts for reuse
+save_artifact('rf_model', model)
+save_artifact('scaler', scaler)
+print("Model and scaler saved as artifacts")
+
+### Pattern 4: Load and Use Saved Model
+```python
+import pandas as pd
+import numpy as np
+
+# Load previously saved artifacts
+model = load_artifact('rf_model')
+scaler = load_artifact('scaler')
+
+# Load new data
+df_new = new_data.copy()
+X_new = scaler.transform(df_new.drop(columns=['target'], errors='ignore'))
+
+# Predict
+predictions = model.predict(X_new)
+df_new['prediction'] = predictions
+print(f"Predictions generated for {len(df_new)} rows")
+print(df_new.head())
+```
+
+
 ## Troubleshooting
 
 ### Issue: "Variable not found"
@@ -200,6 +255,11 @@ for key, value in summary.items():
 
 ### Issue: "Path not found"
 **Solution:** Use `getenv('WAREHOUSE_PATH')` for DuckDB, never hardcode paths.
+
+### Issue: "Artifact not found"
+**Solution:** Make sure you called save_artifact('name', obj) in a previous execution within the same task. Artifacts are scoped to the task or the saved script asset.
+
+
 """
 
 

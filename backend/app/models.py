@@ -296,6 +296,10 @@ class Asset(Base):
     env_vars_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     allowed_modules_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     
+    # === Artifact 清单（二进制产物：模型权重、scaler 等） ===
+    artifacts_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    # JSON: [{"name": "my_model", "size": 12345, "format": "joblib"}, ...]
+
     # === SOP 字段（asset_type="sop" 时使用） ===
     content_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
     

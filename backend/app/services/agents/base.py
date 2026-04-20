@@ -28,6 +28,9 @@ class SandboxEnv:
     capture_dir: str
 
 
+SandboxExecutionYield = str | dict[str, Any] | Any
+
+
 class BaseAgent(ABC):
     """所有 Agent 的抽象基类"""
     
@@ -533,7 +536,11 @@ class BaseAgent(ABC):
         else:
             capture_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures")
         os.makedirs(capture_dir, exist_ok=True)
-        
+
+        # 注入 ARTIFACT_DIR（任务级 artifact 目录）
+        artifact_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "artifacts")
+        skill_envs["ARTIFACT_DIR"] = artifact_dir
+
         return SandboxEnv(
             data_var_map=data_var_map,
             skill_envs=skill_envs,
@@ -926,7 +933,7 @@ class BaseAgent(ABC):
         capture_dir: str,
         skill_envs: dict[str, str] | None = None,
         persistent_vars: dict[str, str] | None = None,
-    ) -> AsyncGenerator[str | dict, None]:
+    ) -> AsyncGenerator[SandboxExecutionYield, None]:
         """执行代码并定期发送心跳，避免前端 90s 超时"""
         import asyncio
         from app.services.sandbox import execute_code_in_sandbox
@@ -1214,6 +1221,9 @@ class BaseAgent(ABC):
             capture_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures")
         os.makedirs(capture_dir, exist_ok=True)
         
+        artifact_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "artifacts")
+        effective_envs["ARTIFACT_DIR"] = artifact_dir
+
         return SandboxEnv(
             data_var_map=data_var_map,
             skill_envs=effective_envs,
