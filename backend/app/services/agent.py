@@ -226,29 +226,27 @@ async def _load_history_messages(
 # {"type": "visualization","title": "...","chart_type":"bar","option": {...}}  -- 生成 ECharts 图表（需要持久化）
 # {"type": "hitl_request", "title": "...", "description": "...", "options": [...]}  -- HITL: 请求用户决策
 
-
-async def run_agent_stream(
+async def run_agent_events(
     task_id: str,
     user_message: str,
     db: AsyncSession,
     mode: str | None = None,
     model_override: tuple[str, str] | None = None,
-) -> AsyncGenerator[str, None]:
+) -> AsyncGenerator[dict[str, Any], None]:
     """
-    Agent 主入口（生成器），产出 SSE 格式字符串。
-    
-    Args:
-        task_id: 任务ID
-        user_message: 用户消息
-        db: 数据库会话
-        mode: 可选的执行模式 ('auto'|'plan'|'analyst')，如果为None则从Task读取
-        model_override: 用户显式指定的模型 (provider_id, model_id)
+    Agent 主入口（事件原生版），产出 dict event。
+
+    职责：
+    1. 保存用户消息 Step
+    2. 消费 orchestrator.run_events() 的 dict 事件
+    3. 根据事件类型持久化 Step / Visualization
+    4. yield 所有事件（包括 step_saved）
     """
     from app.database import async_session
     from app.models import Task, Step
     from sqlalchemy import select
-    
-    # ── 保存用户消息 ──────────────────────────────────────
+
+    # ── 保存用户消息 ──
     async with async_session() as write_db:
         user_step = Step(
             task_id=task_id,
@@ -259,20 +257,18 @@ async def run_agent_stream(
         write_db.add(user_step)
         await write_db.commit()
         await write_db.refresh(user_step)
-        yield _sse({"type": "step_saved", "step": _step_to_dict(user_step)})
-    
-    # ── 获取Task信息 ──────────────────────────────────────
+        yield {"type": "step_saved", "step": _step_to_dict(user_step)}
+
+    # ── 获取 Task 信息 ──
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
     if not task:
-        yield _sse({"type": "error", "content": "Task not found"})
-        yield _sse({"type": "done", "steps": []})
+        yield {"type": "error", "content": "Task not found"}
+        yield {"type": "done", "steps": []}
         return
-    
-    # 确定执行模式
+
     execution_mode = mode or task.mode
-    
-    # 如果用户切换了模式，更新Task
+
     if mode and mode != task.mode:
         async with async_session() as write_db:
             result = await write_db.execute(select(Task).where(Task.id == task_id))
@@ -280,8 +276,8 @@ async def run_agent_stream(
             if task_to_update:
                 task_to_update.mode = mode
                 await write_db.commit()
-    
-    # ── 检查 LLM 配置 ──────────────────────────────────────
+
+    # ── 检查 LLM 配置 ──
     client_result = await _get_client_from_db(db)
     if client_result is None:
         error_msg = (
@@ -290,8 +286,8 @@ async def run_agent_stream(
             "1. Go to **Settings → Providers** to add an API provider\n"
             "2. Then go to **Settings → Agents** to assign a model to the Default Agent"
         )
-        yield _sse({"type": "text", "content": error_msg})
-        
+        yield {"type": "text", "content": error_msg}
+
         async with async_session() as write_db:
             error_step = Step(
                 task_id=task_id,
@@ -302,253 +298,231 @@ async def run_agent_stream(
             write_db.add(error_step)
             await write_db.commit()
             await write_db.refresh(error_step)
-            yield _sse({"type": "step_saved", "step": _step_to_dict(error_step)})
-        
-        yield _sse({"type": "done", "steps": [_step_to_dict(error_step)]})
+            yield {"type": "step_saved", "step": _step_to_dict(error_step)}
+
+        yield {"type": "done", "steps": [_step_to_dict(error_step)]}
         return
-    
-    client, model = client_result
-    
-    # ── 加载历史消息 ──────────────────────────────────────
+
+    # ── 加载历史消息 ──
     history_messages = await _load_history_messages(task_id, db, exclude_latest_user=True)
-    
-    # ── 使用 Orchestrator 调度 ────────────────────────────
+
+    # ── 使用 Orchestrator 调度 ──
     orchestrator = AgentOrchestrator(
         task_id=task_id,
         db=db,
         model_override=model_override,
     )
-    
+
     saved_steps: list[dict] = []
-    
-    # 维护状态
-    accumulated_text = ""  # 累积的文本内容
-    current_tool_code = ""  # 当前工具的代码
-    current_tool_purpose = ""  # 当前工具的目的
-    
+    accumulated_text = ""
+    current_tool_code = ""
+    current_tool_purpose = ""
+
     try:
-        async for event_line in orchestrator.run(
+        async for event in orchestrator.run_events(
             mode=execution_mode,
             user_message=user_message,
             context={"history_messages": history_messages},
         ):
-            # 解析事件
-            if event_line.startswith("data: "):
+            event_type = event.get("type")
+
+            # ── 累积文本内容 ──
+            if event_type == "text":
+                accumulated_text += event.get("content", "")
+
+            # ── tool_start：先落盘累积文本，再记录工具信息 ──
+            elif event_type == "tool_start":
+                if accumulated_text.strip():
+                    async with async_session() as write_db:
+                        text_step = Step(
+                            task_id=task_id,
+                            role="assistant",
+                            step_type="assistant_message",
+                            content=accumulated_text.strip(),
+                        )
+                        write_db.add(text_step)
+                        await write_db.commit()
+                        await write_db.refresh(text_step)
+                        saved_steps.append(_step_to_dict(text_step))
+                        yield {"type": "step_saved", "step": _step_to_dict(text_step)}
+                    accumulated_text = ""
+
+                current_tool_code = event.get("code", "")
+                current_tool_purpose = event.get("purpose", "")
+
+            # ── tool_result：保存 tool_use Step ──
+            elif event_type == "tool_result":
+                async with async_session() as write_db:
+                    tool_step = Step(
+                        task_id=task_id,
+                        role="assistant",
+                        step_type="tool_use",
+                        content=current_tool_purpose or "Code execution",
+                        code=current_tool_code,
+                        code_output=json.dumps({
+                            "success": event.get("success"),
+                            "output": event.get("output"),
+                            "error": event.get("error"),
+                            "execution_time": event.get("time", 0),
+                            "dataframes": event.get("dataframes", []),
+                        }, ensure_ascii=False),
+                    )
+                    write_db.add(tool_step)
+                    await write_db.commit()
+                    await write_db.refresh(tool_step)
+                    saved_steps.append(_step_to_dict(tool_step))
+                    yield {"type": "step_saved", "step": _step_to_dict(tool_step)}
+
+                current_tool_code = ""
+                current_tool_purpose = ""
+
+            # ── plan_generated ──
+            elif event_type == "plan_generated":
+                if accumulated_text.strip():
+                    async with async_session() as write_db:
+                        text_step = Step(
+                            task_id=task_id,
+                            role="assistant",
+                            step_type="assistant_message",
+                            content=accumulated_text.strip(),
+                        )
+                        write_db.add(text_step)
+                        await write_db.commit()
+                        await write_db.refresh(text_step)
+                        saved_steps.append(_step_to_dict(text_step))
+                        yield {"type": "step_saved", "step": _step_to_dict(text_step)}
+                    accumulated_text = ""
+
+                plan_data = event.get("plan", {})
+                async with async_session() as write_db:
+                    plan_step = Step(
+                        task_id=task_id,
+                        role="assistant",
+                        step_type="assistant_message",
+                        content=f"Generated plan with {len(plan_data.get('subtasks', []))} subtasks",
+                        code_output=json.dumps(plan_data, ensure_ascii=False),
+                    )
+                    write_db.add(plan_step)
+                    await write_db.commit()
+                    await write_db.refresh(plan_step)
+                    saved_steps.append(_step_to_dict(plan_step))
+                    yield {"type": "step_saved", "step": _step_to_dict(plan_step)}
+
+            # ── visualization ──
+            elif event_type == "visualization":
+                if accumulated_text.strip():
+                    async with async_session() as write_db:
+                        text_step = Step(
+                            task_id=task_id,
+                            role="assistant",
+                            step_type="assistant_message",
+                            content=accumulated_text.strip(),
+                        )
+                        write_db.add(text_step)
+                        await write_db.commit()
+                        await write_db.refresh(text_step)
+                        saved_steps.append(_step_to_dict(text_step))
+                        yield {"type": "step_saved", "step": _step_to_dict(text_step)}
+                    accumulated_text = ""
+
+                from app.models import Visualization
+
+                title = str(event.get("title", "")).strip() or "Untitled Chart"
+                chart_type = str(event.get("chart_type", "")).strip() or "bar"
+                option = event.get("option", {})
+
                 try:
-                    event_data = json.loads(event_line[6:])
-                    event_type = event_data.get("type")
-                    
-                    # 累积文本内容
-                    if event_type == "text":
-                        accumulated_text += event_data.get("content", "")
-                    
-                    # 记录工具信息
-                    elif event_type == "tool_start":
-                        # 如果有累积的文本，先保存为 assistant_message
-                        if accumulated_text.strip():
-                            async with async_session() as write_db:
-                                text_step = Step(
-                                    task_id=task_id,
-                                    role="assistant",
-                                    step_type="assistant_message",
-                                    content=accumulated_text.strip(),
-                                )
-                                write_db.add(text_step)
-                                await write_db.commit()
-                                await write_db.refresh(text_step)
-                                saved_steps.append(_step_to_dict(text_step))
-                                yield _sse({"type": "step_saved", "step": _step_to_dict(text_step)})
-                            accumulated_text = ""  # 清空
-                        
-                        # 记录当前工具信息
-                        current_tool_code = event_data.get("code", "")
-                        current_tool_purpose = event_data.get("purpose", "")
-                    
-                    # 保存 tool_use Step
-                    elif event_type == "tool_result":
-                        async with async_session() as write_db:
-                            tool_step = Step(
-                                task_id=task_id,
-                                role="assistant",
-                                step_type="tool_use",
-                                content=current_tool_purpose or "Code execution",
-                                code=current_tool_code,
-                                code_output=json.dumps({
-                                    "success": event_data.get("success"),
-                                    "output": event_data.get("output"),
-                                    "error": event_data.get("error"),
-                                    "execution_time": event_data.get("time", 0),
-                                    "dataframes": event_data.get("dataframes", []),
-                                }, ensure_ascii=False),
-                            )
-                            write_db.add(tool_step)
-                            await write_db.commit()
-                            await write_db.refresh(tool_step)
-                            saved_steps.append(_step_to_dict(tool_step))
-                            yield _sse({"type": "step_saved", "step": _step_to_dict(tool_step)})
-                        
-                        # 清空工具信息
-                        current_tool_code = ""
-                        current_tool_purpose = ""
-                    
-                    # plan_generated 事件
-                    elif event_type == "plan_generated":
-                        # 先保存累积的文本
-                        if accumulated_text.strip():
-                            async with async_session() as write_db:
-                                text_step = Step(
-                                    task_id=task_id,
-                                    role="assistant",
-                                    step_type="assistant_message",
-                                    content=accumulated_text.strip(),
-                                )
-                                write_db.add(text_step)
-                                await write_db.commit()
-                                await write_db.refresh(text_step)
-                                saved_steps.append(_step_to_dict(text_step))
-                                yield _sse({"type": "step_saved", "step": _step_to_dict(text_step)})
-                            accumulated_text = ""
-                        
-                        # 保存 plan
-                        plan_data = event_data.get("plan", {})
-                        async with async_session() as write_db:
-                            plan_step = Step(
-                                task_id=task_id,
-                                role="assistant",
-                                step_type="assistant_message",
-                                content=f"Generated plan with {len(plan_data.get('subtasks', []))} subtasks",
-                                code_output=json.dumps(plan_data, ensure_ascii=False),
-                            )
-                            write_db.add(plan_step)
-                            await write_db.commit()
-                            await write_db.refresh(plan_step)
-                            saved_steps.append(_step_to_dict(plan_step))
-                            yield _sse({"type": "step_saved", "step": _step_to_dict(plan_step)})
+                    option_json = json.dumps(option, ensure_ascii=False)
+                except Exception:
+                    yield {"type": "error", "content": "Invalid visualization option JSON"}
+                    continue
 
-                    # visualization 事件：持久化 Visualization + 保存一个 visualization Step
-                    elif event_type == "visualization":
-                        # 先把累积的文本落库（避免“图表前的文字”丢失）
-                        if accumulated_text.strip():
-                            async with async_session() as write_db:
-                                text_step = Step(
-                                    task_id=task_id,
-                                    role="assistant",
-                                    step_type="assistant_message",
-                                    content=accumulated_text.strip(),
-                                )
-                                write_db.add(text_step)
-                                await write_db.commit()
-                                await write_db.refresh(text_step)
-                                saved_steps.append(_step_to_dict(text_step))
-                                yield _sse({"type": "step_saved", "step": _step_to_dict(text_step)})
-                            accumulated_text = ""
+                if len(option_json) > 200_000:
+                    yield {"type": "error", "content": "Visualization option too large (>200KB). Please aggregate data."}
+                    continue
 
-                        from app.models import Visualization
+                async with async_session() as write_db:
+                    viz = Visualization(
+                        task_id=task_id,
+                        title=title,
+                        chart_type=chart_type,
+                        option_json=option_json,
+                    )
+                    write_db.add(viz)
+                    await write_db.commit()
+                    await write_db.refresh(viz)
 
-                        title = str(event_data.get("title", "")).strip() or "Untitled Chart"
-                        chart_type = str(event_data.get("chart_type", "")).strip() or "bar"
-                        option = event_data.get("option", {})
+                    viz_step = Step(
+                        task_id=task_id,
+                        role="assistant",
+                        step_type="visualization",
+                        content=title,
+                        code_output=json.dumps(
+                            {
+                                "visualization_id": viz.id,
+                                "title": title,
+                                "chart_type": chart_type,
+                                "option": option,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    )
+                    write_db.add(viz_step)
+                    await write_db.commit()
+                    await write_db.refresh(viz_step)
 
-                        # 基础安全/体积限制：避免 option 过大导致 DB/前端卡死
-                        try:
-                            option_json = json.dumps(option, ensure_ascii=False)
-                        except Exception:
-                            yield _sse({"type": "error", "content": "Invalid visualization option JSON"})
-                            continue
+                    saved_steps.append(_step_to_dict(viz_step))
+                    yield {"type": "step_saved", "step": _step_to_dict(viz_step)}
 
-                        if len(option_json) > 200_000:
-                            yield _sse({"type": "error", "content": "Visualization option too large (>200KB). Please aggregate data."})
-                            continue
+            # ── hitl_request ──
+            elif event_type == "hitl_request":
+                if accumulated_text.strip():
+                    async with async_session() as write_db:
+                        text_step = Step(
+                            task_id=task_id,
+                            role="assistant",
+                            step_type="assistant_message",
+                            content=accumulated_text.strip(),
+                        )
+                        write_db.add(text_step)
+                        await write_db.commit()
+                        await write_db.refresh(text_step)
+                        saved_steps.append(_step_to_dict(text_step))
+                        yield {"type": "step_saved", "step": _step_to_dict(text_step)}
+                    accumulated_text = ""
 
-                        async with async_session() as write_db:
-                            viz = Visualization(
-                                task_id=task_id,
-                                title=title,
-                                chart_type=chart_type,
-                                option_json=option_json,
-                            )
-                            write_db.add(viz)
-                            await write_db.commit()
-                            await write_db.refresh(viz)
+                hitl_data: dict[str, Any] = {
+                    "title": event.get("title", ""),
+                    "description": event.get("description", ""),
+                    "options": event.get("options", []),
+                }
+                if event.get("hitl_type"):
+                    hitl_data["hitl_type"] = event["hitl_type"]
+                if event.get("pipeline") is not None:
+                    hitl_data["pipeline"] = event["pipeline"]
+                if event.get("script") is not None:
+                    hitl_data["script"] = event["script"]
+                if event.get("sop") is not None:
+                    hitl_data["sop"] = event["sop"]
 
-                            # 写一个 Step：step_type = visualization
-                            viz_step = Step(
-                                task_id=task_id,
-                                role="assistant",
-                                step_type="visualization",
-                                content=title,
-                                code_output=json.dumps(
-                                    {
-                                        "visualization_id": viz.id,
-                                        "title": title,
-                                        "chart_type": chart_type,
-                                        "option": option,  # 直接存一份给前端渲染（历史也能回放）
-                                    },
-                                    ensure_ascii=False,
-                                ),
-                            )
-                            write_db.add(viz_step)
-                            await write_db.commit()
-                            await write_db.refresh(viz_step)
+                async with async_session() as write_db:
+                    hitl_step = Step(
+                        task_id=task_id,
+                        role="assistant",
+                        step_type="hitl_request",
+                        content=event.get("description", "Awaiting your guidance"),
+                        code_output=json.dumps(hitl_data, ensure_ascii=False),
+                    )
+                    write_db.add(hitl_step)
+                    await write_db.commit()
+                    await write_db.refresh(hitl_step)
+                    saved_steps.append(_step_to_dict(hitl_step))
+                    yield {"type": "step_saved", "step": _step_to_dict(hitl_step)}
 
-                            saved_steps.append(_step_to_dict(viz_step))
-                            yield _sse({"type": "step_saved", "step": _step_to_dict(viz_step)})
-                    # hitl_request 事件：保存为 hitl_request Step
-                    elif event_type == "hitl_request":
-                        # 先保存累积的文本
-                        if accumulated_text.strip():
-                            async with async_session() as write_db:
-                                text_step = Step(
-                                    task_id=task_id,
-                                    role="assistant",
-                                    step_type="assistant_message",
-                                    content=accumulated_text.strip(),
-                                )
-                                write_db.add(text_step)
-                                await write_db.commit()
-                                await write_db.refresh(text_step)
-                                saved_steps.append(_step_to_dict(text_step))
-                                yield _sse({"type": "step_saved", "step": _step_to_dict(text_step)})
-                            accumulated_text = ""
-                        
-                        # 保存 HITL 请求 Step（保留扩展字段：pipeline / script）
-                        hitl_data = {
-                            "title": event_data.get("title", ""),
-                            "description": event_data.get("description", ""),
-                            "options": event_data.get("options", []),
-                        }
-                        if event_data.get("hitl_type"):
-                            hitl_data["hitl_type"] = event_data["hitl_type"]
-                        if event_data.get("pipeline") is not None:
-                            hitl_data["pipeline"] = event_data["pipeline"]
-                        if event_data.get("script") is not None:
-                            hitl_data["script"] = event_data["script"]
-                        # Preserve extra fields for pipeline_confirmation
-                        if event_data.get("hitl_type"):
-                            hitl_data["hitl_type"] = event_data["hitl_type"]
-                        if event_data.get("pipeline"):
-                            hitl_data["pipeline"] = event_data["pipeline"]
+            # ── 透传所有事件（text / heartbeat / mode_switch / done 等） ──
+            yield event
 
-                        async with async_session() as write_db:
-                            hitl_step = Step(
-                                task_id=task_id,
-                                role="assistant",
-                                step_type="hitl_request",
-                                content=event_data.get("description", "Awaiting your guidance"),
-                                code_output=json.dumps(hitl_data, ensure_ascii=False),
-                            )
-                            write_db.add(hitl_step)
-                            await write_db.commit()
-                            await write_db.refresh(hitl_step)
-                            saved_steps.append(_step_to_dict(hitl_step))
-                            yield _sse({"type": "step_saved", "step": _step_to_dict(hitl_step)})
-                except json.JSONDecodeError:
-                    pass
-            
-            # 转发原始事件
-            yield event_line
-        
-        # 流结束时，如果还有累积的文本，保存它
+        # ── 流结束，落盘剩余文本 ──
         if accumulated_text.strip():
             async with async_session() as write_db:
                 final_text_step = Step(
@@ -561,16 +535,15 @@ async def run_agent_stream(
                 await write_db.commit()
                 await write_db.refresh(final_text_step)
                 saved_steps.append(_step_to_dict(final_text_step))
-                yield _sse({"type": "step_saved", "step": _step_to_dict(final_text_step)})
-        
-        # 发送完成信号
-        yield _sse({"type": "done", "steps": saved_steps})
-        
+                yield {"type": "step_saved", "step": _step_to_dict(final_text_step)}
+
+        yield {"type": "done", "steps": saved_steps}
+
     except Exception as e:
         import traceback
-        error_detail = traceback.format_exc()
-        yield _sse({"type": "error", "content": f"Agent error: {str(e)}"})
-        
+        traceback.format_exc()
+        yield {"type": "error", "content": f"Agent error: {str(e)}"}
+
         try:
             async with async_session() as write_db:
                 err_step = Step(
@@ -583,9 +556,29 @@ async def run_agent_stream(
                 await write_db.commit()
         except Exception:
             pass
-        
-        yield _sse({"type": "done", "steps": []})
 
+        yield {"type": "done", "steps": []}
+
+async def run_agent_stream(
+    task_id: str,
+    user_message: str,
+    db: AsyncSession,
+    mode: str | None = None,
+    model_override: tuple[str, str] | None = None,
+) -> AsyncGenerator[str, None]:
+    """
+    兼容层：包装 run_agent_events() 为 SSE 字符串输出。
+
+    保留此函数是为了向后兼容 chat.py 等现有调用方。
+    """
+    async for event in run_agent_events(
+        task_id=task_id,
+        user_message=user_message,
+        db=db,
+        mode=mode,
+        model_override=model_override,
+    ):
+        yield _sse(event)
         
 # ── 工具函数 ──────────────────────────────────────────────────
 

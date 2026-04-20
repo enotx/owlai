@@ -6,7 +6,7 @@ import json
 import re
 import logging
 
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from openai import AsyncOpenAI
 
@@ -71,16 +71,131 @@ class AgentOrchestrator:
                     "Please configure it in Settings → Agents."
                 )
         return result
-    
+
+    async def run_events(
+        self,
+        mode: str,
+        user_message: str,
+        context: dict | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """根据模式调度Agent（事件原生版）"""
+        context = context or {}
+        context["user_message"] = user_message
+
+        # ── 1. Confirm 消息路由（HITL 回调） ──
+        confirm_match = _CONFIRM_PATTERN.match(user_message.strip())
+        if confirm_match:
+            confirm_type = confirm_match.group(1).strip().lower()
+            target_command = _CONFIRM_SKILL_MAP.get(confirm_type)
+            if target_command:
+                from sqlalchemy import select as sa_select
+                skill_result = await self.db.execute(
+                    sa_select(Skill).where(Skill.slash_command == target_command)
+                )
+                matched_skill = skill_result.scalar_one_or_none()
+                if matched_skill:
+                    async for event in self._invoke_skill_events(
+                        matched_skill, user_message, context
+                    ):
+                        yield event
+                    return
+
+        # ── 2. Slash command 路由 ──
+        slash_match = _SLASH_CMD_PATTERN.match(user_message.strip())
+        if slash_match:
+            command = slash_match.group(1).lower()
+            slash_args = slash_match.group(2).strip()
+
+            from sqlalchemy import select as sa_select
+            skill_result = await self.db.execute(
+                sa_select(Skill).where(Skill.slash_command == command)
+            )
+            matched_skill = skill_result.scalar_one_or_none()
+
+            if matched_skill:
+                async for event in self._invoke_skill_events(
+                    matched_skill, slash_args, context
+                ):
+                    yield event
+                return
+
+        # ── 3. 标准模式路由 ──
+        if mode == "plan":
+            if context is None:
+                context = {}
+
+            if "include_viz_examples" not in context:
+                from app.prompts.fragments import needs_viz_examples
+                context["include_viz_examples"] = needs_viz_examples(user_message)
+
+            try:
+                client, model = await self._get_agent_config("plan")
+            except ValueError as e:
+                yield {"type": "error", "content": str(e)}
+                return
+
+            agent = PlanAgent(self.task_id, self.db, client, model)
+            async for event in agent.run_events(context):
+                yield event
+
+        elif mode == "analyst":
+            if context is not None and "include_viz_examples" not in context:
+                from app.prompts.fragments import needs_viz_examples
+                context["include_viz_examples"] = needs_viz_examples(user_message)
+
+            try:
+                client, model = await self._get_agent_config("analyst")
+            except ValueError as e:
+                yield {"type": "error", "content": str(e)}
+                return
+
+            agent = AnalystAgent(self.task_id, self.db, client, model)
+            async for event in agent.run_events(context):
+                yield event
+
+        elif mode == "auto":
+            target_mode, reason, viz_examples = await self._classify_intent(user_message)
+            context["include_viz_examples"] = viz_examples
+
+            if target_mode == "plan":
+                yield {
+                    "type": "mode_switch",
+                    "from": "auto",
+                    "to": "plan",
+                    "reason": reason,
+                }
+                try:
+                    client, model = await self._get_agent_config("plan")
+                except ValueError as e:
+                    yield {"type": "error", "content": str(e)}
+                    return
+                agent = PlanAgent(self.task_id, self.db, client, model)
+            else:
+                try:
+                    client, model = await self._get_agent_config("analyst")
+                except ValueError as e:
+                    yield {"type": "error", "content": str(e)}
+                    return
+                agent = AnalystAgent(self.task_id, self.db, client, model)
+
+            async for event in agent.run_events(context):
+                yield event
+        else:
+            yield {"type": "error", "content": f"Unknown mode: {mode}"}
+
     async def run(
         self,
         mode: str,
         user_message: str,
         context: dict | None = None,
     ) -> AsyncGenerator[str, None]:
-        """根据模式调度Agent"""
-        context = context or {}
-        context["user_message"] = user_message
+        """兼容层：包装 run_events() 为 SSE 字符串输出"""
+        if context is None:
+            context = {}
+
+        async for event in self.run_events(mode, user_message, context):
+            yield self._sse(event)
+
 
         # ── 1. Confirm 消息路由（HITL 回调） ──
         confirm_match = _CONFIRM_PATTERN.match(user_message.strip())
@@ -191,7 +306,18 @@ class AgentOrchestrator:
         user_instructions: str,
         context: dict,
     ) -> AsyncGenerator[str, None]:
-        """统一的 Skill 调用入口"""
+        """兼容层"""
+        async for event in self._invoke_skill_events(skill, user_instructions, context):
+            yield self._sse(event)
+
+    async def _invoke_skill_events(
+        self,
+        skill: Skill,
+        user_instructions: str,
+        context: dict,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """统一的 Skill 调用入口（事件原生版）"""
+        # 复用 _invoke_skill 的 context 准备逻辑
         handler_type = "standard"
         handler_config: dict = {}
         try:
@@ -201,21 +327,19 @@ class AgentOrchestrator:
                 handler_config = json.loads(skill.handler_config)
         except (json.JSONDecodeError, AttributeError):
             pass
-        
-        # 注入 skill 信息到 context
+
         context["invoked_skill_name"] = skill.name
         context["invoked_skill_prompt"] = skill.prompt_markdown or ""
         context["invoked_skill_reference"] = skill.reference_markdown or ""
         context["invoked_skill_is_active"] = skill.is_active
         context["invoked_skill_handler_type"] = handler_type
         context["invoked_skill_handler_config"] = handler_config
-        
-        # 收集 skill 环境变量
+
         try:
             env_dict = json.loads(skill.env_vars_json) if skill.env_vars_json else {}
         except (json.JSONDecodeError, TypeError):
             env_dict = {}
-        
+
         extra_envs = dict(env_dict)
         try:
             modules = json.loads(skill.allowed_modules_json) if skill.allowed_modules_json else []
@@ -224,8 +348,7 @@ class AgentOrchestrator:
         except (json.JSONDecodeError, TypeError):
             pass
         context["extra_skill_envs"] = extra_envs
-        
-        # 构建增强消息
+
         if handler_type == "custom_handler":
             context["user_message"] = user_instructions
         else:
@@ -234,20 +357,20 @@ class AgentOrchestrator:
                 f"{user_instructions or 'Please use this skill to help me.'}"
             )
             context["user_message"] = enhanced_message
-        
+
         from app.prompts.fragments import needs_viz_examples
         context["include_viz_examples"] = needs_viz_examples(
             context["user_message"]
         )
-        
+
         try:
             client, model = await self._get_agent_config("analyst")
         except ValueError as e:
-            yield self._sse({"type": "error", "content": str(e)})
+            yield {"type": "error", "content": str(e)}
             return
-        
+
         agent = AnalystAgent(self.task_id, self.db, client, model)
-        async for event in agent.run(context):
+        async for event in agent.run_events(context):
             yield event
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

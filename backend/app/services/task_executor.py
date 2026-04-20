@@ -194,11 +194,11 @@ async def _execute_routine_events(
 ) -> AsyncGenerator[TaskExecutorEvent, None]:
     """
     routine 执行：原生 dict event 版本
-    
-    注意：这里仍然调用 run_agent_stream()，因为 routine 还没有后台化
-    所以需要 parse SSE 回 dict（这是 Phase 3 要解决的）
+
+    现在直接消费 run_agent_events()，不再需要 parse SSE。
     """
-    from app.services.agent import run_agent_stream
+    from app.services.agent import run_agent_events
+
     if asset.asset_type != "sop" or not asset.content_markdown:
         yield {
             "type": "error",
@@ -206,25 +206,20 @@ async def _execute_routine_events(
         }
         yield {"type": "done"}
         return
+
     effective_message = (
         user_message
         or "Please execute the analysis according to the bound SOP."
     )
-    # 暂时仍需 parse SSE（Phase 3 会移除这个）
-    async for sse_line in run_agent_stream(
+
+    async for event in run_agent_events(
         task_id=task.id,
         user_message=effective_message,
         db=db,
         mode="analyst",
         model_override=model_override,
     ):
-        # Parse SSE 回 dict
-        if sse_line.startswith("data: "):
-            try:
-                event = json.loads(sse_line[6:].strip())
-                yield event
-            except json.JSONDecodeError:
-                pass
+        yield event
 
 # ============================================================
 # 保留：兼容层（SSE 版本）

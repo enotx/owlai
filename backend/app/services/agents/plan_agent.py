@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 class PlanAgent(BaseAgent):
     """Plan 模式 Agent - 需求澄清和数据准备评估"""
     
-    async def run(self, context: dict[str, Any]) -> AsyncGenerator[str, None]:
-        """执行 Plan 流程"""
+    async def run_events(self, context: dict[str, Any]) -> AsyncGenerator[dict[str, Any], None]:
+        """执行 Plan 流程（事件原生版）"""
         
         user_message = self._safe_str(context, "user_message")
         history = context.get("history_messages", [])
@@ -68,16 +68,18 @@ class PlanAgent(BaseAgent):
             max_rounds=5,  # Plan 阶段限制轮次
             temperature=0.3,
         ):
-            yield event
-        
-        yield self._sse({"type": "done"})
+            if isinstance(event, dict):
+                yield event
+            else:
+                yield {"type": "text", "content": event}
+        yield {"type": "done"}
     
     async def _on_text_complete(
         self,
         text_content: str,
         messages: list,
         context: dict,
-    ) -> tuple[list[str], list, bool]:
+    ) -> tuple[list[dict[str, Any]], list[dict[str, str]], bool]:
         """
         Plan Agent 的文本完成钩子：检查是否包含 Plan JSON
         """
@@ -87,10 +89,10 @@ class PlanAgent(BaseAgent):
             # 检查是否是错误（被拦截的 Plan）
             if plan_data.get("error") == "premature_plan":
                 # 发送警告，要求重新思考
-                warning_event = self._sse({
+                warning_event = {
                     "type": "text",
                     "content": f"\n\n⚠️ {plan_data['message']}\n\n",
-                })
+                }
                 
                 # 注入警告消息，让模型重新回答
                 extra_messages = [
@@ -107,10 +109,10 @@ class PlanAgent(BaseAgent):
                 return [warning_event], extra_messages, True  # 继续循环
             
             # 正常的 Plan
-            plan_event = self._sse({
+            plan_event = {
                 "type": "plan_generated",
                 "plan": plan_data,
-            })
+            }
             
             return [plan_event], [], False  # 不继续循环
         

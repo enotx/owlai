@@ -18,41 +18,42 @@ logger = logging.getLogger(__name__)
 
 class AnalystAgent(BaseAgent):
     """Analyst 模式 Agent - 执行具体分析"""
+
+    @staticmethod
+    def _normalize_event_chunk(chunk: Any) -> dict[str, Any]:
+        if isinstance(chunk, dict):
+            return chunk
+        return {"type": "message", "content": str(chunk)}
     
-    async def run(self, context: dict[str, Any]) -> AsyncGenerator[str, None]:
-        """执行分析任务"""
+    async def run_events(self, context: dict[str, Any]) -> AsyncGenerator[dict[str, Any], None]:
+        """执行分析任务（事件原生版）"""
         
         # ── Custom handler 路由（优先于标准流程） ──
         handler_type = context.get("invoked_skill_handler_type")
         if handler_type == "custom_handler":
-            # 导入 custom handlers 模块
             from app.services.agents.custom_handlers import (
-                handle_derive_pipeline,
-                handle_extract_sop,
-                handle_extract_script,
+                handle_derive_pipeline_events,
+                handle_extract_sop_events,
+                handle_extract_script_events,
             )
-            
             handler_config = context.get("invoked_skill_handler_config", {})
             handler_name = handler_config.get("handler_name")
-            
-            if handler_name == "derive_pipeline":
-                async for chunk in handle_derive_pipeline(self, context, handler_config):
-                    yield chunk
-                return
-            elif handler_name == "extract_sop":
-                async for chunk in handle_extract_sop(self, context, handler_config):
-                    yield chunk
-                return
-            elif handler_name == "extract_script":
-                async for chunk in handle_extract_script(self, context, handler_config):
-                    yield chunk
+            handler_map = {
+                "derive_pipeline": handle_derive_pipeline_events,
+                "extract_sop": handle_extract_sop_events,
+                "extract_script": handle_extract_script_events,
+            }
+            handler_fn = handler_map.get(handler_name)
+            if handler_fn:
+                async for event in handler_fn(self, context, handler_config):
+                    yield event
                 return
             else:
-                yield self._sse({
+                yield {
                     "type": "error",
                     "content": f"Unknown custom handler: {handler_name}",
-                })
-                yield self._sse({"type": "done"})
+                }
+                yield {"type": "done"}
                 return
         
         # ── 标准分析流程 ──
@@ -125,7 +126,7 @@ class AnalystAgent(BaseAgent):
         agent_tools = get_tools_for_agent("analyst")
         
         # 运行 ReAct 循环
-        async for event in self._run_react_loop(
+        async for event in self._run_react_loop_events(
             messages=messages,
             tools=agent_tools,
             sandbox_env=sandbox_env,
@@ -134,8 +135,7 @@ class AnalystAgent(BaseAgent):
             temperature=0.4,
         ):
             yield event
-        
-        yield self._sse({"type": "done"})
+        yield {"type": "done"}
 
     async def _get_sop_context(self) -> str | None:
         """

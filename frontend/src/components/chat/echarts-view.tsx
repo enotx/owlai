@@ -48,38 +48,50 @@ function normalizeOption(rawOption: EChartsOption): EChartsOption {
       };
     }
     // ── 压缩 grid 布局，为底部腾出空间 ──
+    // 仅当所有 grid 的 top/height 均为百分比时才压缩，
+    // 像素值（raw number 或不含 '%' 的字符串）无法与百分比混合计算
     const grids = option.grid as Record<string, unknown>[];
-    const BOTTOM_RESERVE = 25; // 底部保留 20% 给 x轴标签 + legend
-    const parsed = grids.map((g) => ({
-      top: parseFloat(String(g.top ?? "0").replace("%", "")),
-      height: parseFloat(String(g.height ?? "0").replace("%", "")),
-    }));
-    const startOffset = parsed[0]?.top || 8;
-    const maxBottom = Math.max(
-      ...parsed.map((p) => p.top + p.height)
+    const BOTTOM_RESERVE = 25;
+    const isPixelUnit = (val: unknown): boolean => {
+      if (val == null) return false;
+      if (typeof val === "number") return true;
+      const s = String(val);
+      return !s.endsWith("%") && !isNaN(parseFloat(s));
+    };
+    const hasPixelValues = grids.some(
+      (g) => isPixelUnit(g.top) || isPixelUnit(g.height)
     );
-    const usedSpace = maxBottom - startOffset;
-    const targetSpace = 100 - BOTTOM_RESERVE - startOffset;
-    if (usedSpace > 0 && targetSpace < usedSpace) {
-      const scale = targetSpace / usedSpace;
-      option.grid = grids.map((g, i) => ({
-        ...g,
-        top: `${(startOffset + (parsed[i].top - startOffset) * scale).toFixed(1)}%`,
-        height: `${(parsed[i].height * scale).toFixed(1)}%`,
+    if (!hasPixelValues) {
+      const parsed = grids.map((g) => ({
+        top: parseFloat(String(g.top ?? "0").replace("%", "")),
+        height: parseFloat(String(g.height ?? "0").replace("%", "")),
       }));
-      // 同步压缩子面板标题位置（title 数组中 index ≥ 1 的条目）
-      if (Array.isArray(option.title)) {
-        const titles = option.title as Record<string, unknown>[];
-        for (let i = 1; i < titles.length; i++) {
-          const t = titles[i];
-          if (t && typeof t === "object" && t.top != null) {
-            const oldTop = parseFloat(
-              String(t.top).replace("%", "")
-            );
-            if (!isNaN(oldTop) && oldTop >= startOffset) {
-              const newTop =
-                startOffset + (oldTop - startOffset) * scale;
-              titles[i] = { ...t, top: `${newTop.toFixed(1)}%` };
+      const startOffset = parsed[0]?.top || 8;
+      const maxBottom = Math.max(
+        ...parsed.map((p) => p.top + p.height)
+      );
+      const usedSpace = maxBottom - startOffset;
+      const targetSpace = 100 - BOTTOM_RESERVE - startOffset;
+      if (usedSpace > 0 && targetSpace < usedSpace) {
+        const scale = targetSpace / usedSpace;
+        option.grid = grids.map((g, i) => ({
+          ...g,
+          top: `${(startOffset + (parsed[i].top - startOffset) * scale).toFixed(1)}%`,
+          height: `${(parsed[i].height * scale).toFixed(1)}%`,
+        }));
+        if (Array.isArray(option.title)) {
+          const titles = option.title as Record<string, unknown>[];
+          for (let i = 1; i < titles.length; i++) {
+            const t = titles[i];
+            if (t && typeof t === "object" && t.top != null) {
+              const oldTop = parseFloat(
+                String(t.top).replace("%", "")
+              );
+              if (!isNaN(oldTop) && oldTop >= startOffset) {
+                const newTop =
+                  startOffset + (oldTop - startOffset) * scale;
+                titles[i] = { ...t, top: `${newTop.toFixed(1)}%` };
+              }
             }
           }
         }

@@ -47,11 +47,16 @@ class BaseAgent(ABC):
         self.model = model
     
     @abstractmethod
-    async def run(self, context: dict[str, Any]) -> AsyncGenerator[str, None]:
-        """执行 Agent 逻辑，返回 SSE 流式输出"""
-        if False:  # 永远不会执行，仅用于类型检查
+    async def run_events(self, context: dict[str, Any]) -> AsyncGenerator[dict[str, Any], None]:
+        """执行 Agent 逻辑，返回 dict 事件流（事件原生版）"""
+        if False:
             yield
-    
+
+    async def run(self, context: dict[str, Any]) -> AsyncGenerator[str, None]:
+        """兼容层：包装 run_events() 为 SSE 字符串输出"""
+        async for event in self.run_events(context):
+            yield self._sse(event)
+
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # 安全辅助方法
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -551,8 +556,8 @@ class BaseAgent(ABC):
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # 核心 ReAct 循环
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    
-    async def _run_react_loop(
+
+    async def _run_react_loop_events(
         self,
         *,
         messages: list,
@@ -561,27 +566,21 @@ class BaseAgent(ABC):
         context: dict,
         max_rounds: int = 10,
         temperature: float = 0.4,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """
-        统一的 ReAct 循环：调用 LLM，处理工具调用，流式输出
-        
-        Args:
-            messages: OpenAI messages 列表
-            tools: 工具定义列表
-            sandbox_env: 沙箱环境配置
-            context: 执行上下文（包含 user_message 等）
-            max_rounds: 最大循环轮次
-            temperature: LLM 温度
-        
-        Yields:
-            SSE 格式的字符串
+        统一的 ReAct 循环（事件原生版）：产出 dict event
+
+        这是 _run_react_loop 的内部实现，所有事件以 dict 形式 yield。
         """
+        from app.services.execution_helpers import run_with_heartbeat, is_heartbeat_event
+        from app.services.sandbox import execute_code_in_sandbox, is_sandbox_execution_result
+
         hitl_break = False
-        
+
         for round_idx in range(max_rounds):
             if hitl_break:
                 break
-            
+
             try:
                 stream = await self.client.chat.completions.create(
                     model=self.model,
@@ -592,24 +591,24 @@ class BaseAgent(ABC):
                     temperature=temperature,
                 )
             except Exception as e:
-                yield self._sse({"type": "error", "content": f"LLM error: {str(e)}"})
+                yield {"type": "error", "content": f"LLM error: {str(e)}"}
                 break
-            
+
             text_content = ""
             tool_calls_acc: dict[int, dict[str, str]] = {}
-            
+
             async for chunk in stream:
                 choice = chunk.choices[0] if chunk.choices else None
                 if not choice:
                     continue
-                
+
                 delta = choice.delta
-                
+
                 if delta.content:
                     token = delta.content
                     text_content += token
-                    yield self._sse({"type": "text", "content": token})
-                
+                    yield {"type": "text", "content": token}
+
                 if delta.tool_calls:
                     for tc_delta in delta.tool_calls:
                         idx = tc_delta.index
@@ -622,10 +621,10 @@ class BaseAgent(ABC):
                                 tool_calls_acc[idx]["name"] = tc_delta.function.name
                             if tc_delta.function.arguments:
                                 tool_calls_acc[idx]["arguments"] += tc_delta.function.arguments
-                
+
                 if choice.finish_reason:
                     break
-            
+
             # 处理 tool calls
             if tool_calls_acc:
                 tool_calls_for_api = []
@@ -636,13 +635,13 @@ class BaseAgent(ABC):
                         "type": "function",
                         "function": {"name": tc["name"], "arguments": tc["arguments"]},
                     })
-                
+
                 messages.append({
                     "role": "assistant",
                     "content": text_content or None,
                     "tool_calls": tool_calls_for_api,
-                })  # type: ignore
-                
+                })
+
                 for idx in sorted(tool_calls_acc.keys()):
                     tc = tool_calls_acc[idx]
                     try:
@@ -652,18 +651,18 @@ class BaseAgent(ABC):
                             "role": "tool",
                             "tool_call_id": tc["id"],
                             "content": "ERROR: Invalid arguments",
-                        })  # type: ignore
+                        })
                         continue
-                    
+
                     # ── Tool: execute_python_code ──
                     if tc["name"] == "execute_python_code":
                         code = args.get("code", "")
                         purpose = args.get("purpose", "")
-                        
-                        yield self._sse({"type": "tool_start", "code": code, "purpose": purpose})
-                        
+
+                        yield {"type": "tool_start", "code": code, "purpose": purpose}
+
                         capture_id = uuid.uuid4().hex[:12]
-                        
+
                         try:
                             exec_result = None
                             async for item in self._execute_code_with_heartbeat(
@@ -674,10 +673,18 @@ class BaseAgent(ABC):
                                 persistent_vars=sandbox_env.persistent_vars,
                             ):
                                 if isinstance(item, str):
-                                    yield item  # 心跳转发
+                                    # 心跳是 SSE 字符串，需要解析回 dict
+                                    if item.startswith("data: "):
+                                        try:
+                                            hb_data = json.loads(item[6:].strip())
+                                            yield hb_data
+                                        except json.JSONDecodeError:
+                                            yield {"type": "heartbeat", "content": "tool_running"}
+                                    else:
+                                        yield {"type": "heartbeat", "content": "tool_running"}
                                 else:
                                     exec_result = item
-                            
+
                             if exec_result is None:
                                 exec_result = {
                                     "success": False,
@@ -692,7 +699,7 @@ class BaseAgent(ABC):
                                 "error": str(e),
                                 "execution_time": 0.0,
                             }
-                        
+
                         # 重命名捕获的 DataFrame 文件
                         captured_dfs = exec_result.get("dataframes", [])
                         for df_meta in captured_dfs:
@@ -705,21 +712,21 @@ class BaseAgent(ABC):
                                     os.rename(old_path, new_path)
                                 except OSError:
                                     pass
-                        
+
                         # 收集本轮持久化的变量
                         new_persisted = exec_result.get("persisted_vars", {})
                         if new_persisted:
                             sandbox_env.persistent_vars.update(new_persisted)
-                        
-                        yield self._sse({
+
+                        yield {
                             "type": "tool_result",
                             "success": exec_result["success"],
                             "output": exec_result.get("output"),
                             "error": exec_result.get("error"),
                             "time": exec_result.get("execution_time", 0),
                             "dataframes": captured_dfs,
-                        })
-                        
+                        }
+
                         # 处理沙箱内 create_chart() 捕获的图表
                         sandbox_charts = exec_result.get("charts", [])
                         for chart_meta in sandbox_charts:
@@ -727,18 +734,18 @@ class BaseAgent(ABC):
                             from app.tools import validate_echarts_option
                             ok_chart, err_chart = validate_echarts_option(chart_option)
                             if ok_chart:
-                                yield self._sse({
+                                yield {
                                     "type": "visualization",
                                     "title": chart_meta.get("title", "Untitled Chart"),
                                     "chart_type": chart_meta.get("chart_type", "bar"),
                                     "option": chart_option,
-                                })
+                                }
                             else:
-                                yield self._sse({
+                                yield {
                                     "type": "error",
                                     "content": f"Chart validation failed: {err_chart}",
-                                })
-                        
+                                }
+
                         # 处理沙箱内 create_map() 捕获的地图
                         sandbox_maps = exec_result.get("maps", [])
                         for map_meta in sandbox_maps:
@@ -746,31 +753,31 @@ class BaseAgent(ABC):
                             from app.tools.visualization import validate_map_config
                             ok_map, err_map = validate_map_config(map_config)
                             if ok_map:
-                                yield self._sse({
+                                yield {
                                     "type": "visualization",
                                     "title": map_meta.get("title", "Untitled Map"),
                                     "chart_type": "map",
                                     "option": map_config,
-                                })
+                                }
                             else:
-                                yield self._sse({
+                                yield {
                                     "type": "error",
                                     "content": f"Map validation failed: {err_map}",
-                                })
-                        
+                                }
+
                         tool_output = exec_result.get("output") or "(no output)"
                         if not exec_result["success"]:
                             tool_output = f"ERROR: {exec_result.get('error', 'Unknown')}"
-                        
+
                         if len(tool_output) > 8000:
                             tool_output = tool_output[:8000] + "\n[truncated]"
-                        
+
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc["id"],
                             "content": tool_output,
-                        })  # type: ignore
-                    
+                        })
+
                     # ── Tool: create_visualization ──
                     elif tc["name"] == "create_visualization":
                         from app.tools import (
@@ -778,21 +785,21 @@ class BaseAgent(ABC):
                             normalize_echarts_option,
                             merge_top_level_keys,
                         )
-                        
+
                         title = str(args.get("title", "")).strip() or "Untitled Chart"
                         chart_type = str(args.get("chart_type", "")).strip() or "bar"
                         raw_option = args.get("option", {})
-                        
+
                         normalized_option, norm_err = normalize_echarts_option(raw_option)
                         if normalized_option is None:
                             messages.append({
                                 "role": "tool",
                                 "tool_call_id": tc["id"],
                                 "content": f"ERROR: Invalid ECharts option: {norm_err}",
-                            })  # type: ignore
-                            yield self._sse({"type": "error", "content": f"Visualization option invalid: {norm_err}"})
+                            })
+                            yield {"type": "error", "content": f"Visualization option invalid: {norm_err}"}
                             continue
-                        
+
                         normalized_option = merge_top_level_keys(normalized_option, args)
                         ok, err = validate_echarts_option(normalized_option)
                         if not ok:
@@ -801,23 +808,23 @@ class BaseAgent(ABC):
                                 "tool_call_id": tc["id"],
                                 "content": f"ERROR: Invalid ECharts option: {err}. "
                                            "Please use create_chart() inside execute_python_code instead.",
-                            })  # type: ignore
-                            yield self._sse({"type": "error", "content": f"Visualization option invalid: {err}"})
+                            })
+                            yield {"type": "error", "content": f"Visualization option invalid: {err}"}
                             continue
-                        
-                        yield self._sse({
+
+                        yield {
                             "type": "visualization",
                             "title": title,
                             "chart_type": chart_type,
                             "option": normalized_option,
-                        })
-                        
+                        }
+
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc["id"],
                             "content": f"OK: visualization created. title={title!r}, chart_type={chart_type!r}",
-                        })  # type: ignore
-                    
+                        })
+
                     # ── Tool: get_skill_reference ──
                     elif tc["name"] == "get_skill_reference":
                         skill_name = args.get("skill_name", "")
@@ -828,8 +835,8 @@ class BaseAgent(ABC):
                             "role": "tool",
                             "tool_call_id": tc["id"],
                             "content": ref_content,
-                        })  # type: ignore
-                    
+                        })
+
                     # ── Tool: materialize_to_duckdb ──
                     elif tc["name"] == "materialize_to_duckdb":
                         result_content = await self._handle_materialize_to_duckdb(
@@ -841,8 +848,8 @@ class BaseAgent(ABC):
                             "role": "tool",
                             "tool_call_id": tc["id"],
                             "content": result_content,
-                        })  # type: ignore
-                    
+                        })
+
                     # ── Tool: list_duckdb_tables ──
                     elif tc["name"] == "list_duckdb_tables":
                         result_content = await self._handle_list_duckdb_tables()
@@ -850,76 +857,89 @@ class BaseAgent(ABC):
                             "role": "tool",
                             "tool_call_id": tc["id"],
                             "content": result_content,
-                        })  # type: ignore
-                    
+                        })
+
                     # ── Tool: request_human_input (HITL) ──
                     elif tc["name"] == "request_human_input":
-                        hitl_event, tool_content = self._handle_hitl_request(args)
-                        yield hitl_event
-                        
+                        hitl_event_dict, tool_content = self._handle_hitl_request_event(args)
+                        yield hitl_event_dict
+
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc["id"],
                             "content": json.dumps(tool_content, ensure_ascii=False),
-                        })  # type: ignore
-                        
+                        })
+
                         hitl_break = True
                         break
-                    
+
                     # ── Unknown tool ──
                     else:
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc["id"],
                             "content": f"ERROR: Unknown tool '{tc['name']}'",
-                        })  # type: ignore
-                
+                        })
+
                 if hitl_break:
                     break
-                continue  # 继续下一轮 ReAct
-            
+                continue
+
             # 纯文本回复 - 调用子类钩子
             if text_content.strip():
                 extra_events, extra_messages, should_continue = await self._on_text_complete(
                     text_content, messages, context
                 )
-                
-                # 发送额外事件
+
                 for event in extra_events:
                     yield event
-                
-                # 注入额外消息
+
                 messages.extend(extra_messages)
-                
-                # 决定是否继续
+
                 if not should_continue:
                     break
                 continue
-            
-            # 既没有 tool call 也没有文本 - 结束
+
             break
-    
+
+    async def _run_react_loop(
+        self,
+        *,
+        messages: list,
+        tools: list[dict],
+        sandbox_env: SandboxEnv,
+        context: dict,
+        max_rounds: int = 10,
+        temperature: float = 0.4,
+    ) -> AsyncGenerator[str, None]:
+        """
+        兼容层：包装 _run_react_loop_events() 为 SSE 字符串输出
+        """
+        async for event in self._run_react_loop_events(
+            messages=messages,
+            tools=tools,
+            sandbox_env=sandbox_env,
+            context=context,
+            max_rounds=max_rounds,
+            temperature=temperature,
+        ):
+            yield self._sse(event)
+
     async def _on_text_complete(
         self,
         text_content: str,
         messages: list,
         context: dict,
-    ) -> tuple[list[str], list, bool]:
+    ) -> tuple[list[dict[str, Any]], list, bool]:
         """
         文本回复完成后的钩子，供子类覆盖
-        
-        Args:
-            text_content: LLM 返回的文本内容
-            messages: 当前消息列表
-            context: 执行上下文
-        
+
         Returns:
-            (extra_sse_events, extra_messages, should_continue)
-            - extra_sse_events: 额外的 SSE 事件列表
+            (extra_events, extra_messages, should_continue)
+            - extra_events: 额外的 dict 事件列表
             - extra_messages: 需要注入到 messages 的额外消息
             - should_continue: 是否继续 ReAct 循环
         """
-        # 默认实现：不产生额外事件，不继续循环
         return [], [], False
     
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -992,7 +1012,30 @@ class BaseAgent(ABC):
             )
         }
         return hitl_event, tool_content
-    
+
+    def _handle_hitl_request_event(self, args: dict) -> tuple[dict[str, Any], dict]:
+        """处理 request_human_input 工具调用（dict event 版本）"""
+        title = args.get("title", "Awaiting your guidance")
+        description = args.get("description", "")
+        options = args.get("options", [])
+
+        hitl_event = {
+            "type": "hitl_request",
+            "title": title,
+            "description": description,
+            "options": options,
+        }
+
+        tool_content = {
+            "status": "paused",
+            "message": (
+                "PAUSED: A decision card has been presented to the user. "
+                "The conversation will resume with the user's choice. "
+                "Do NOT continue generating — wait for the user's response."
+            )
+        }
+        return hitl_event, tool_content
+
     async def _handle_materialize_to_duckdb(
         self,
         args: dict,
