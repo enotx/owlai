@@ -9,7 +9,7 @@
 import { useEffect, useRef, useMemo, useCallback, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useTaskStore } from "@/stores/use-task-store";
-import type { Step, PendingToolExecution, StreamingMessage, HITLRequest} from "@/stores/use-task-store";
+import type { Step, PendingToolExecution, StreamingMessage, HITLRequest, Task} from "@/stores/use-task-store";
 import KnowledgeZone from "./knowledge-zone";
 import MessageInput from "./message-input";
 import SubTaskList from "./subtask-list";
@@ -31,6 +31,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import {
   Bot,
@@ -52,11 +59,42 @@ import {
   FolderOpen,
   RefreshCw,
   ClipboardList,
+  Monitor, Server, ArrowLeftRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CapturedDataFrame } from "@/stores/use-task-store";
 import { deleteStepAndAfter, deleteStep, regenerateFromStep, fetchChatHistory, streamChat, exportChat, streamTaskExecutionEvents } from "@/lib/api";
 import type { SSEEvent } from "@/lib/api";
+
+function RuntimeIndicator({
+  task,
+  onSwitch,
+}: {
+  task: Task;
+  onSwitch: () => void;
+}) {
+  const isLocal = !task.execution_backend || task.execution_backend === "local";
+  const label = isLocal ? "Local Sandbox" : task.execution_backend.replace("jupyter:", "Jupyter: ");
+  return (
+    <div className="shrink-0 flex items-center justify-between border-b px-4 py-1.5 bg-muted/20">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        {isLocal ? (
+          <Monitor className="h-3.5 w-3.5" />
+        ) : (
+          <Server className="h-3.5 w-3.5 text-green-600" />
+        )}
+        <span>Runtime: {label}</span>
+      </div>
+      <button
+        onClick={onSwitch}
+        className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+      >
+        <ArrowLeftRight className="h-3 w-3" />
+        Switch
+      </button>
+    </div>
+  );
+}
 
 
 // ── 单条用户消息 ──────────────────────────────────────────────
@@ -500,7 +538,6 @@ function DataFrameLinks({
   );
 }
 
-
 // ── 代码执行中占位（pending tool） ────────────────────────────
 function PendingToolBlock({ tool }: { tool: PendingToolExecution }) {
   return (
@@ -714,6 +751,46 @@ export default function ChatArea() {
     steps.length === 0 &&
     !streamingMessage &&
     !isCurrentTaskPendingSetup;
+  const [showRuntimeSwitch, setShowRuntimeSwitch] = useState(false);
+  const [runtimeOptions, setRuntimeOptions] = useState<Array<{ id: string; label: string }>>([]);
+  const [switchingRuntime, setSwitchingRuntime] = useState(false);
+  const [selectedRuntime, setSelectedRuntime] = useState("");
+  const handleRuntimeSwitch = useCallback(async () => {
+    // 加载可用 runtime 列表
+    try {
+      const { fetchJupyterConfigs } = await import("@/lib/api");
+      const res = await fetchJupyterConfigs();
+      const options = [
+        { id: "local", label: "Local Sandbox" },
+        ...res.data.map((c) => ({ id: `jupyter:${c.id}`, label: c.name })),
+      ];
+      setRuntimeOptions(options);
+      setSelectedRuntime(currentTask?.execution_backend || "local");
+      setShowRuntimeSwitch(true);
+    } catch (err) {
+      console.error("Failed to load runtimes:", err);
+    }
+  }, [currentTask]);
+  const confirmRuntimeSwitch = useCallback(async () => {
+    if (!currentTaskId || !selectedRuntime || switchingRuntime) return;
+    setSwitchingRuntime(true);
+    try {
+      const { switchTaskRuntime, fetchKnowledge } = await import("@/lib/api");
+      await switchTaskRuntime(currentTaskId, selectedRuntime);
+      // 更新 store
+      useTaskStore.getState().updateTask(currentTaskId, {
+        execution_backend: selectedRuntime,
+      } as any);
+      // 清空本地 knowledge 列表
+      useTaskStore.getState().setKnowledgeList([]);
+      useTaskStore.getState().setPreviewData(null);
+      setShowRuntimeSwitch(false);
+    } catch (err) {
+      console.error("Runtime switch failed:", err);
+    } finally {
+      setSwitchingRuntime(false);
+    }
+  }, [currentTaskId, selectedRuntime, switchingRuntime]);
 
   function EmptyState({ taskType }: { taskType?: string }) {
     const messages: Record<string, { icon: typeof Bot; text: string }> = {
@@ -961,6 +1038,13 @@ export default function ChatArea() {
 
   return (
     <div className="flex h-full flex-col">
+      {/* Runtime 指示器 + 切换 */}
+      {currentTaskId && currentTask && (
+        <RuntimeIndicator
+          task={currentTask}
+          onSwitch={handleRuntimeSwitch}
+        />
+      )}
       {/* 顶部：Knowledge Zone */}
       <div className="shrink-0 border-b px-4 py-3">
         {currentTaskId ? (
@@ -1132,6 +1216,55 @@ export default function ChatArea() {
 
       {/* Plan确认对话框 */}
       <PlanConfirmationDialog />
+      {/* Runtime 切换确认 Dialog */}
+      <Dialog open={showRuntimeSwitch} onOpenChange={setShowRuntimeSwitch}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>Switch Runtime</DialogTitle>
+            <DialogDescription>
+              Switching runtime will clear all data sources and intermediate variables for this task. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-3">
+            <Select value={selectedRuntime} onValueChange={setSelectedRuntime}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select runtime" />
+              </SelectTrigger>
+              <SelectContent>
+                {runtimeOptions.map((opt) => (
+                  <SelectItem key={opt.id} value={opt.id}>
+                    <span className="flex items-center gap-2">
+                      {opt.id === "local" ? (
+                        <Monitor className="h-3.5 w-3.5" />
+                      ) : (
+                        <Server className="h-3.5 w-3.5" />
+                      )}
+                      {opt.label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowRuntimeSwitch(false)}
+              disabled={switchingRuntime}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmRuntimeSwitch}
+              disabled={switchingRuntime || selectedRuntime === (currentTask?.execution_backend || "local")}
+            >
+              {switchingRuntime && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+              Confirm Switch
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
     </div>
   );

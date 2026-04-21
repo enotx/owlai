@@ -956,11 +956,11 @@ class BaseAgent(ABC):
     ) -> AsyncGenerator[SandboxExecutionYield, None]:
         """执行代码并定期发送心跳，避免前端 90s 超时"""
         import asyncio
-        from app.services.sandbox import execute_code_in_sandbox
-        
+        from app.services.execution import execute_code
         exec_task = asyncio.create_task(
-            execute_code_in_sandbox(
+            execute_code(
                 code=code,
+                task_id=self.task_id,
                 data_var_map=data_var_map,
                 capture_dir=capture_dir,
                 injected_envs=skill_envs,

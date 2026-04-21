@@ -13,7 +13,7 @@ import { useSettingsStore } from "@/stores/use-settings-store";
 import { useTranslations } from "@/hooks/use-translations";
 import { fetchProviders } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { X, ArrowLeft, Settings, Cpu, Bot, Puzzle, Info, Palette } from "lucide-react";
+import { X, ArrowLeft, Settings, Cpu, Bot, Puzzle, Info, Palette, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import ProvidersView from "./providers-view";
@@ -21,6 +21,8 @@ import AgentsView from "./agents-view";
 import SkillsView from "./skills-view";
 import AboutView from "./about-view";
 import InterfaceView from "./interface-view";
+import RuntimesView from "./runtimes-view";
+
 
 type MenuItem = {
   id: string;
@@ -49,6 +51,7 @@ export default function SettingsDialog() {
     { id: "providers", label: t("providers"), category: t("categories.llm"), icon: Cpu },
     { id: "agents", label: t("agents"), category: t("categories.llm"), icon: Bot },
     { id: "skills", label: t("skills"), category: t("categories.extensions"), icon: Puzzle },
+    { id: "runtimes", label: "Runtimes", category: t("categories.extensions"), icon: Server },
     { id: "misc", label: t("miscellaneous"), category: t("categories.other"), icon: Settings },
     { id: "about", label: t("about"), category: t("categories.other"), icon: Info },
   ];
@@ -92,6 +95,8 @@ export default function SettingsDialog() {
         return <AgentsView />;
       case "skills":
         return <SkillsView />;
+      case "runtimes":
+        return <RuntimesView />;
       case "about":
         return <AboutView />;
       default:

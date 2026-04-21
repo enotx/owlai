@@ -35,6 +35,7 @@ import {
   fetchAgentConfigs,
   checkForUpdate,
   getPlatformInfo,
+  fetchDefaultRuntime,
 } from "@/lib/api";
 import { useSettingsStore } from "@/stores/use-settings-store";
 import { useTaskStore } from "@/stores/use-task-store";
@@ -370,12 +371,13 @@ export default function HomePage() {
     setSettingsOpen(true);
   }, [setSelectedSettingsItem, setSettingsOpen]);
 
-  /* ── Providers / AgentConfigs ── */
+  /* ── Providers / AgentConfigs / Runtime Info ── */
   useEffect(() => {
     if (backendStatus !== "connected") return;
     const s = useSettingsStore.getState();
     fetchProviders().then((r) => s.setProviders(r.data ?? [])).catch(() => {});
     fetchAgentConfigs().then((r) => s.setAgentConfigs(r.data ?? [])).catch(() => {});
+    fetchDefaultRuntime().then((r) => useTaskStore.getState().setDefaultRuntime(r.data.value || "local")).catch(() => {});
   }, [backendStatus]);
 
   return (

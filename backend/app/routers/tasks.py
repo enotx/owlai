@@ -10,8 +10,15 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import select
 
 from app.database import get_db
-from app.models import Task, Step, Knowledge, DataPipeline
-from app.schemas import TaskCreate, TaskUpdate, TaskResponse, TaskModeUpdate, ExecuteTaskRequest
+from app.models import Task, Step, Knowledge, DataPipeline, JupyterConfig
+from app.schemas import (
+    TaskCreate, 
+    TaskUpdate, 
+    TaskResponse, 
+    TaskModeUpdate, 
+    ExecuteTaskRequest, 
+    RuntimeSwitchRequest,
+)
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -696,6 +703,64 @@ async def cancel_execution(
         "status": "cancelling" if ok else session.status,
         "cancelled": ok,
     }
+
+@router.put("/{task_id}/runtime")
+async def switch_task_runtime(
+    task_id: str,
+    body: RuntimeSwitchRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """切换 Task 的执行运行时，清除 Knowledge 和中间变量"""
+    from app.models import Knowledge, JupyterConfig
+    from app.config import UPLOADS_DIR
+    from sqlalchemy import select
+    import shutil
+    import os
+    task = await db.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    old_backend = task.execution_backend
+    new_backend = body.execution_backend
+    if old_backend == new_backend:
+        return {"ok": True, "message": "No change", "cleared": False}
+    # 验证新 backend
+    if new_backend != "local":
+        if not new_backend.startswith("jupyter:"):
+            raise HTTPException(400, "Invalid format. Use 'local' or 'jupyter:{config_id}'")
+        config_id = new_backend.split(":", 1)[1]
+        config = await db.get(JupyterConfig, config_id)
+        if not config or config.status != "active":
+            raise HTTPException(400, "Invalid or inactive Jupyter config")
+    # 清除 Knowledge
+    result = await db.execute(
+        select(Knowledge).where(Knowledge.task_id == task_id)
+    )
+    knowledge_items = list(result.scalars().all())
+    for k in knowledge_items:
+        await db.delete(k)
+    # 清除文件系统
+    captures_dir = os.path.join(str(UPLOADS_DIR), task_id, "captures")
+    if os.path.isdir(captures_dir):
+        shutil.rmtree(captures_dir, ignore_errors=True)
+    # Shutdown 旧 Jupyter kernel
+    if old_backend.startswith("jupyter:"):
+        try:
+            from app.services.execution.resolver import get_backend
+            old_be = get_backend(old_backend)
+            await old_be.shutdown(task_id)
+        except Exception:
+            pass
+    # 更新
+    task.execution_backend = new_backend
+    await db.commit()
+    return {
+        "ok": True,
+        "message": f"Switched to {new_backend}",
+        "cleared": True,
+        "cleared_knowledge_count": len(knowledge_items),
+    }
+
+
 
 def _url_encode(filename: str) -> str:
     """RFC 5987 编码文件名，支持中文"""

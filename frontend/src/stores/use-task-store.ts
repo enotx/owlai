@@ -21,6 +21,7 @@ export interface Task {
   data_source_ids: string[];
   last_run_at: string | null;
   last_run_status: string | null;
+  execution_backend: string; // "local" | "jupyter:{config_id}"
   created_at: string;
   updated_at: string;
 }
@@ -317,6 +318,10 @@ interface TaskStore {
     } | null
   ) => void;
 
+  defaultRuntime: string;
+  setDefaultRuntime: (runtime: string) => void;
+
+
 }
 
 export const useTaskStore = create<TaskStore>((set, get) => ({
@@ -335,6 +340,7 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
       mode: t.mode || "auto",
       plan_confirmed: t.plan_confirmed ?? false,
       current_subtask_id: t.current_subtask_id || null,
+      execution_backend: t.execution_backend || "local",
     })),
   }),
   // 切换 Task 时重置相关状态，避免数据混乱
@@ -604,5 +610,8 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
   },
   pendingTaskSetup: null,
   setPendingTaskSetup: (setup) => set({ pendingTaskSetup: setup }),
+
+  defaultRuntime: "local",
+  setDefaultRuntime: (runtime) => set({ defaultRuntime: runtime }),
 
 }));

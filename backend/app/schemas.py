@@ -15,7 +15,7 @@ class TaskCreate(BaseModel):
     asset_id: str | None = None
     pipeline_id: str | None = None
     data_source_ids: list[str] = Field(default_factory=list)
-
+    execution_backend: str = Field(default="local")
 
 class TaskUpdate(BaseModel):
     title: str | None = Field(None, min_length=1, max_length=255)
@@ -24,7 +24,7 @@ class TaskUpdate(BaseModel):
     asset_id: str | None = None
     pipeline_id: str | None = None
     data_source_ids: list[str] | None = None
-
+    execution_backend: str | None = None
 
 class TaskResponse(BaseModel):
     id: str
@@ -45,6 +45,7 @@ class TaskResponse(BaseModel):
     compact_anchor_created_at: datetime | None
     data_source_ids: list[str] | None
     model_config = {"from_attributes": True}
+    execution_backend: str
 
     @field_validator("data_source_ids", mode="before")
     @classmethod
@@ -451,3 +452,77 @@ class ExecuteTaskRequest(BaseModel):
     """手动触发任务执行"""
     env_vars_override: dict[str, str] | None = None
     user_message: str | None = None  # routine 时可选的额外指令
+
+# ===== Jupyter Config =====
+class JupyterConfigCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    server_url: str = Field(..., min_length=1, max_length=500)
+    token: str | None = None
+    kernel_name: str = Field(default="python3")
+    security_level: str = Field(
+        default="lenient", pattern="^(strict|lenient|off)$"
+    )
+    data_transfer_mode: str = Field(
+        default="upload", pattern="^(upload|shared|inline)$"
+    )
+    shared_storage_path: str | None = None
+    idle_timeout: int = Field(default=1800, ge=60, le=86400)
+
+
+class JupyterConfigUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=255)
+    server_url: str | None = Field(None, min_length=1, max_length=500)
+    token: str | None = None
+    kernel_name: str | None = None
+    security_level: str | None = Field(
+        None, pattern="^(strict|lenient|off)$"
+    )
+    data_transfer_mode: str | None = Field(
+        None, pattern="^(upload|shared|inline)$"
+    )
+    shared_storage_path: str | None = None
+    idle_timeout: int | None = Field(None, ge=60, le=86400)
+
+
+class JupyterConfigResponse(BaseModel):
+    id: str
+    name: str
+    server_url: str
+    token: str | None
+    kernel_name: str
+    security_level: str
+    data_transfer_mode: str
+    shared_storage_path: str | None
+    idle_timeout: int
+    status: str
+    last_connected_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class JupyterTestConnectionResponse(BaseModel):
+    success: bool
+    message: str
+    kernel_specs: list[str] = Field(default_factory=list)
+
+
+# ===== System Setting =====
+class SystemSettingResponse(BaseModel):
+    key: str
+    value: str
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class SystemSettingUpdate(BaseModel):
+    value: str
+
+
+# ===== Runtime Switch =====
+class RuntimeSwitchRequest(BaseModel):
+    """切换 Task 的执行运行时"""
+    execution_backend: str = Field(..., min_length=1)
+    # "local" | "jupyter:{config_id}"

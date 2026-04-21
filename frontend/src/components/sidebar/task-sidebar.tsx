@@ -47,6 +47,7 @@ export default function TaskSidebar({ onClose }: { onClose?: () => void } = {}) 
     setKnowledgeList,
     setSteps,
     setPreviewData,
+    defaultRuntime,
   } = useTaskStore();
 
   const { isReady: backendReady } = useBackend();
@@ -139,12 +140,15 @@ export default function TaskSidebar({ onClose }: { onClose?: () => void } = {}) 
   const { setPendingTaskSetup } = useTaskStore();
   const handleCreateAdHoc = useCallback(async () => {
     const title = `Task ${tasks.length + 1}`;
-    const res = await createTask(title, { task_type: "ad_hoc" });
+    const res = await createTask(title, {
+      task_type: "ad_hoc",
+      execution_backend: defaultRuntime,
+    });
     addTask(res.data);
     await handleSelect(res.data.id);
     setCreateMenuOpen(false);
     onClose?.();
-  }, [tasks.length, addTask, handleSelect, onClose]);
+  }, [tasks.length, addTask, handleSelect, onClose, defaultRuntime]);
   const handleCreateTypedTask = useCallback(
     async (taskType: "routine" | "script" | "pipeline") => {
       const prefixMap = {
@@ -154,6 +158,7 @@ export default function TaskSidebar({ onClose }: { onClose?: () => void } = {}) 
       };
       const res = await createTask(`${prefixMap[taskType]} Task`, {
         task_type: taskType,
+        execution_backend: defaultRuntime,
       });
       addTask(res.data);
       setPendingTaskSetup({
@@ -164,7 +169,7 @@ export default function TaskSidebar({ onClose }: { onClose?: () => void } = {}) 
       setCreateMenuOpen(false);
       onClose?.();
     },
-    [addTask, handleSelect, onClose, setPendingTaskSetup]
+    [addTask, handleSelect, onClose, setPendingTaskSetup, defaultRuntime]
   );
 
 

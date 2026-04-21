@@ -26,7 +26,7 @@ class Base(DeclarativeBase):
 
 # ===== Schema Migration (in-app) =====
 # 使用 SQLite PRAGMA user_version 记录 schema 版本，避免外部迁移脚本依赖
-LATEST_SCHEMA_VERSION = 13
+LATEST_SCHEMA_VERSION = 15
 # v2: multi-agent (tasks.mode/plan_confirmed/current_subtask_id + subtasks + steps.subtask_id)
 # v3: visualization (visualizations table)
 # v4: skill reference_markdown (lazy-loaded reference doc)
@@ -39,6 +39,8 @@ LATEST_SCHEMA_VERSION = 13
 # v11: tasks.data_source_ids (执行输入绑定)
 # v12: tasks.pipeline_id (pipeline task binds DataPipeline instead of Asset)
 # v13: assets.artifacts_json (binary artifact manifest)
+# v14: tasks.execution_backend (Runtime 选择)
+# v15: jupyter_configs + system_settings (Jupyter 连接配置 + 全局设置)
 
 
 async def _get_user_version(conn) -> int:
@@ -408,6 +410,52 @@ async def upgrade_db_schema() -> dict:
                 await _set_user_version(conn, 13)
                 applied.append("set user_version=13")
                 current = 13
+            # ── v14 migration: tasks.execution_backend ──
+            if current < 14:
+                task_cols = await _get_table_columns(conn, "tasks")
+                if "execution_backend" not in task_cols:
+                    await conn.execute(text(
+                        "ALTER TABLE tasks ADD COLUMN execution_backend VARCHAR(100) NOT NULL DEFAULT 'local'"
+                    ))
+                    applied.append("ALTER TABLE tasks ADD COLUMN execution_backend")
+                await _set_user_version(conn, 14)
+                applied.append("set user_version=14")
+                current = 14
+            # ── v15 migration: jupyter_configs + system_settings tables ──
+            if current < 15:
+                # system_settings 表
+                if not await _table_exists(conn, "system_settings"):
+                    await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS system_settings (
+                        key VARCHAR(100) PRIMARY KEY,
+                        value TEXT NOT NULL DEFAULT '',
+                        updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP)
+                    )
+                    """))
+                    applied.append("CREATE TABLE system_settings")
+                # jupyter_configs 表
+                if not await _table_exists(conn, "jupyter_configs"):
+                    await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS jupyter_configs (
+                        id VARCHAR(36) PRIMARY KEY,
+                        name VARCHAR(255) NOT NULL,
+                        server_url VARCHAR(500) NOT NULL,
+                        token VARCHAR(500),
+                        kernel_name VARCHAR(100) NOT NULL DEFAULT 'python3',
+                        security_level VARCHAR(20) NOT NULL DEFAULT 'lenient',
+                        data_transfer_mode VARCHAR(20) NOT NULL DEFAULT 'upload',
+                        shared_storage_path VARCHAR(500),
+                        idle_timeout INTEGER NOT NULL DEFAULT 1800,
+                        status VARCHAR(20) NOT NULL DEFAULT 'active',
+                        last_connected_at DATETIME,
+                        created_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
+                        updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP)
+                    )
+                    """))
+                    applied.append("CREATE TABLE jupyter_configs")
+                await _set_user_version(conn, 15)
+                applied.append("set user_version=15")
+                current = 15
 
             return {
                 "success": True,

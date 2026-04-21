@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import UPLOADS_DIR, WAREHOUSE_PATH
 from app.models import DuckDBTable, DataPipeline
 from app.services import warehouse as wh
-from app.services.sandbox import execute_code_in_sandbox
+from app.services.execution import execute_code
 
 logger = logging.getLogger(__name__)
 
@@ -154,13 +154,15 @@ async def execute_pipeline(
         pass
 
     try:
-        exec_result = await execute_code_in_sandbox(
+        exec_result = await execute_code(
             code=wrapped_code,
-            data_var_map={},  # Pipeline 不加载 CSV，数据通过 warehouse_query 获取
-            timeout=600,  # Pipeline 允许更长时间（10 分钟）
+            task_id=pipeline.id,
+            data_var_map={},
+            timeout=600,
             capture_dir=capture_dir,
             injected_envs=extra_envs if extra_envs else None,
         )
+
     except Exception as e:
         error_msg = f"Pipeline sandbox execution error: {str(e)}"
         logger.error(error_msg)
@@ -187,7 +189,7 @@ async def execute_pipeline(
     # ── Step 3: 从沙箱 persist/ 提取 result_df 或识别 __DERIVE_OK__ ──────────
     result_df = await _extract_result_df(capture_dir)
     # 新增：检查是否有 __DERIVE_OK__ 标记（表示数据已直接写入 DuckDB）
-    derive_ok_meta = await _extract_derive_ok_marker(exec_result.get("output", ""))
+    derive_ok_meta = await _extract_derive_ok_marker(exec_result.get("output") or "")
     if derive_ok_meta:
         # 数据已通过代码直接写入 DuckDB，跳过 DataFrame 写入
         logger.info(f"Pipeline '{pipeline.name}' used direct DuckDB write via __DERIVE_OK__")

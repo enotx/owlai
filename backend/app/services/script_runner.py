@@ -15,9 +15,9 @@ from app.services.data_processor import (
 from app.models import Asset, Step, Visualization
 from app.services.sandbox import (
     SandboxExecutionResult,
-    execute_code_in_sandbox,
     is_sandbox_execution_result,
 )
+from app.services.execution import execute_code
 from app.services.execution_helpers import (
     HeartbeatEvent,
     is_heartbeat_event,
@@ -155,8 +155,9 @@ async def run_script_events(
     try:
         result: SandboxExecutionResult | None = None
         async for item in run_with_heartbeat(
-            execute_code_in_sandbox(
+            execute_code(
                 code=code,
+                task_id=task_id,
                 data_var_map=data_var_map,
                 capture_dir=capture_dir,
                 injected_envs=extra_envs if extra_envs else None,

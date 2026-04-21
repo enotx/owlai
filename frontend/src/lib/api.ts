@@ -69,6 +69,7 @@ export const createTask = async (
     asset_id?: string;
     pipeline_id?: string;
     data_source_ids?: string[];
+    execution_backend?: string;
   }
 ) =>
   (await getApi()).post("/tasks", {
@@ -78,6 +79,7 @@ export const createTask = async (
     asset_id: options?.asset_id,
     pipeline_id: options?.pipeline_id,
     data_source_ids: options?.data_source_ids || [],
+    execution_backend: options?.execution_backend || "local",
   });
 
 export const fetchTasks = async () => (await getApi()).get("/tasks");
@@ -1114,3 +1116,80 @@ export const getCompactStatus = async (taskId: string) =>
   (await getApi()).get<CompactStatusResponse>(
     `/chat/tasks/${taskId}/compact/status`
   );
+
+  // ===== Runtimes (Jupyter) =====
+export interface JupyterConfigData {
+  id: string;
+  name: string;
+  server_url: string;
+  token: string | null;
+  kernel_name: string;
+  security_level: string;
+  data_transfer_mode: string;
+  shared_storage_path: string | null;
+  idle_timeout: number;
+  status: string;
+  last_connected_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface JupyterTestResult {
+  success: boolean;
+  message: string;
+  kernel_specs: string[];
+}
+
+export interface SystemSettingData {
+  key: string;
+  value: string;
+  updated_at: string;
+}
+
+export const fetchJupyterConfigs = async () =>
+  (await getApi()).get<JupyterConfigData[]>("/runtimes");
+
+export const createJupyterConfig = async (data: {
+  name: string;
+  server_url: string;
+  token?: string;
+  kernel_name?: string;
+  security_level?: string;
+  data_transfer_mode?: string;
+  shared_storage_path?: string;
+  idle_timeout?: number;
+}) => (await getApi()).post<JupyterConfigData>("/runtimes", data);
+
+export const updateJupyterConfig = async (
+  id: string,
+  data: Partial<{
+    name: string;
+    server_url: string;
+    token: string;
+    kernel_name: string;
+    security_level: string;
+    data_transfer_mode: string;
+    shared_storage_path: string;
+    idle_timeout: number;
+  }>
+) => (await getApi()).put<JupyterConfigData>(`/runtimes/${id}`, data);
+
+export const deleteJupyterConfig = async (id: string) =>
+  (await getApi()).delete(`/runtimes/${id}`);
+
+export const testJupyterConnection = async (id: string) =>
+  (await getApi()).post<JupyterTestResult>(`/runtimes/${id}/test`);
+
+export const fetchDefaultRuntime = async () =>
+  (await getApi()).get<SystemSettingData>("/runtimes/settings/default");
+
+export const setDefaultRuntime = async (value: string) =>
+  (await getApi()).put<SystemSettingData>("/runtimes/settings/default", { value });
+
+export const switchTaskRuntime = async (taskId: string, executionBackend: string) =>
+  (await getApi()).put<{
+    ok: boolean;
+    message: string;
+    cleared: boolean;
+    cleared_knowledge_count?: number;
+  }>(`/tasks/${taskId}/runtime`, { execution_backend: executionBackend });

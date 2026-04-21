@@ -13,7 +13,7 @@ from app.schemas import HealthResponse
 from app.routers import tasks, knowledge, chat, execute, \
                         llm, database, subtasks, skills, \
                         visualizations, warehouse, assets, \
-                        data_pipelines
+                        data_pipelines, runtimes
 from app.config import UPLOADS_DIR, APP_MODE
 
 
@@ -101,6 +101,7 @@ app.include_router(visualizations.router)
 app.include_router(warehouse.router)
 app.include_router(assets.router)
 app.include_router(data_pipelines.router)
+app.include_router(runtimes.router)
 
 
 

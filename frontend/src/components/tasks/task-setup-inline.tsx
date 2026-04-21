@@ -26,7 +26,7 @@ import {
   RefreshCw,
   Pencil,
   CheckCircle2,
-  AlertCircle,
+  AlertCircle, Monitor, Server,
 } from "lucide-react";
 
 type TypedTaskType = "routine" | "script" | "pipeline";
@@ -353,17 +353,35 @@ export default function TaskSetupInline() {
       ) : (
         <div className="space-y-3 text-sm">
           <div className="grid gap-3 md:grid-cols-2">
+            {/* 现有的 Title 卡片 */}
             <div className="rounded-lg border bg-muted/20 p-3">
               <div className="text-xs text-muted-foreground">Title</div>
               <div className="mt-1 font-medium break-words">{currentTask.title}</div>
             </div>
-
+            {/* 现有的 Asset/Pipeline 卡片 */}
             <div className="rounded-lg border bg-muted/20 p-3">
               <div className="text-xs text-muted-foreground">{meta.assetLabel}</div>
               <div className="mt-1 font-medium break-words">{boundName}</div>
             </div>
+            {/* ========== Runtime 卡片 ========== */}
+            <div className="rounded-lg border bg-muted/20 p-3">
+              <div className="text-xs text-muted-foreground">Runtime</div>
+              <div className="mt-1 font-medium break-words flex items-center gap-1.5">
+                {(!currentTask.execution_backend || currentTask.execution_backend === "local") ? (
+                  <>
+                    <Monitor className="h-3.5 w-3.5 text-muted-foreground" />
+                    Local Sandbox
+                  </>
+                ) : (
+                  <>
+                    <Server className="h-3.5 w-3.5 text-green-600" />
+                    {currentTask.execution_backend.replace("jupyter:", "")}
+                  </>
+                )}
+              </div>
+            </div>
           </div>
-
+          {/* 现有的 Description 卡片 */}
           <div className="rounded-lg border bg-muted/20 p-3">
             <div className="text-xs text-muted-foreground">Description</div>
             <div className="mt-1 break-words">

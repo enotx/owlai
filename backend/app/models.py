@@ -59,6 +59,13 @@ class Task(Base):
     compact_anchor_step_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     compact_anchor_created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    execution_backend: Mapped[str] = mapped_column(
+        String(100), nullable=False, default="local"
+    )
+    # "auto" → 使用全局默认
+    # "local" → 强制本地沙箱
+    # "jupyter:{config_id}" → 指定 Jupyter 配置
+
 
 
 class SubTask(Base):
@@ -307,3 +314,65 @@ class Asset(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+# ── 新增：系统设置（键值表） ──────────────────────────────
+
+class SystemSetting(Base):
+    """系统级键值配置"""
+    __tablename__ = "system_settings"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+# ── 新增：Jupyter 连接配置 ────────────────────────────────
+
+class JupyterConfig(Base):
+    """远程 Jupyter Server 连接配置"""
+    __tablename__ = "jupyter_configs"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=generate_uuid
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    server_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    token: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    kernel_name: Mapped[str] = mapped_column(
+        String(100), nullable=False, default="python3"
+    )
+    security_level: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="lenient"
+    )
+    # "strict" | "lenient" | "off"
+
+    data_transfer_mode: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="upload"
+    )
+    # "upload" | "shared" | "inline"
+
+    shared_storage_path: Mapped[str | None] = mapped_column(
+        String(500), nullable=True
+    )
+
+    idle_timeout: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1800
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active"
+    )
+    # "active" | "inactive" | "error"
+
+    last_connected_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
