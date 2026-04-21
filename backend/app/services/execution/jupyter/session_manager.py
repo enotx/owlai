@@ -115,7 +115,7 @@ class KernelSessionManager:
             return session
 
     async def _wait_for_kernel_ready(
-        self, kernel_id: str, timeout: float = 30.0
+        self, kernel_id: str, timeout: float = 90.0
     ) -> None:
         """等待 kernel 进入 ready 状态"""
         start = time.time()

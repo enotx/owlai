@@ -887,20 +887,48 @@ class BaseAgent(ABC):
 
             # 纯文本回复 - 调用子类钩子
             if text_content.strip():
+                # ── 保存 assistant_message Step ──
+                from app.models import Step
+                from datetime import datetime
+                import uuid
+                
+                new_step = Step(
+                    id=str(uuid.uuid4()),
+                    task_id=self.task_id,
+                    role="assistant",
+                    step_type="assistant_message",
+                    content=text_content,
+                    code=None,
+                    code_output=None,
+                    created_at=datetime.now(),
+                )
+                self.db.add(new_step)
+                await self.db.flush()
+                
+                # 发送 step_saved 事件
+                yield {
+                    "type": "step_saved",
+                    "step": {
+                        "id": new_step.id,
+                        "task_id": new_step.task_id,
+                        "role": new_step.role,
+                        "step_type": new_step.step_type,
+                        "content": new_step.content,
+                        "code": new_step.code,
+                        "code_output": new_step.code_output,
+                        "created_at": new_step.created_at.isoformat(),
+                    }
+                }
+                
                 extra_events, extra_messages, should_continue = await self._on_text_complete(
                     text_content, messages, context
                 )
-
                 for event in extra_events:
                     yield event
-
                 messages.extend(extra_messages)
-
                 if not should_continue:
                     break
                 continue
-
-            break
 
     async def _run_react_loop(
         self,
@@ -956,11 +984,12 @@ class BaseAgent(ABC):
     ) -> AsyncGenerator[SandboxExecutionYield, None]:
         """执行代码并定期发送心跳，避免前端 90s 超时"""
         import asyncio
-        from app.services.execution import execute_code
+        from app.services.execution import execute_code_for_task
         exec_task = asyncio.create_task(
-            execute_code(
+            execute_code_for_task(
                 code=code,
                 task_id=self.task_id,
+                db=self.db,
                 data_var_map=data_var_map,
                 capture_dir=capture_dir,
                 injected_envs=skill_envs,
