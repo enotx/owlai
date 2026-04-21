@@ -86,12 +86,10 @@ class KernelSessionManager:
             # 检查现有 session 是否可用
             if session:
                 if session.status == "dead":
-                    # session 已死，移除并重建
                     logger.warning(f"Session for task {task_id} is dead, recreating")
                     await self._cleanup_session(session)
                     del self._sessions[task_id]
                 else:
-                    # session 可用，更新活动时间
                     session.last_activity = time.time()
                     return session
 
@@ -99,11 +97,12 @@ class KernelSessionManager:
             logger.info(f"Creating new kernel session for task {task_id}")
             kernel_id = await self._wire.start_kernel(self.kernel_name)
 
-            # 等待 kernel 启动（最多 30 秒）
-            await self._wait_for_kernel_ready(kernel_id)
-
-            # 建立 WebSocket 连接
+            # 先建立 WebSocket 连接（这会触发 kernel 完成初始化）
+            logger.info(f"Connecting WebSocket to kernel {kernel_id}")
             ws = await self._wire.connect_ws(kernel_id)
+
+            # 通过 WebSocket 等待 kernel ready
+            await self._wait_for_kernel_ready_ws(ws, kernel_id)
 
             session = KernelSession(
                 task_id=task_id,
@@ -114,21 +113,71 @@ class KernelSessionManager:
             self._sessions[task_id] = session
             return session
 
-    async def _wait_for_kernel_ready(
-        self, kernel_id: str, timeout: float = 90.0
+    async def _wait_for_kernel_ready_ws(
+        self,
+        ws: "WebSocketLike",
+        kernel_id: str,
+        timeout: float = 60.0,
     ) -> None:
-        """等待 kernel 进入 ready 状态"""
-        start = time.time()
-        while time.time() - start < timeout:
-            try:
-                status = await self._wire.get_kernel_status(kernel_id)
-                if status.get("execution_state") == "idle":
-                    return
-            except Exception:
-                pass
-            await asyncio.sleep(1)
-        raise TimeoutError(f"Kernel {kernel_id} did not become ready in {timeout}s")
+        """通过 WebSocket 等待 kernel 进入 idle 状态"""
+        import json as _json
 
+        start = time.time()
+        logger.info(f"Waiting for kernel {kernel_id} to become ready via WebSocket...")
+
+        # 发送 kernel_info_request，触发 kernel 回应
+        kernel_info_msg = {
+            "header": {
+                "msg_id": f"owl_kinit_{kernel_id[:8]}",
+                "msg_type": "kernel_info_request",
+                "username": "owl",
+                "session": f"owl_session_{kernel_id[:8]}",
+                "version": "5.3",
+            },
+            "parent_header": {},
+            "metadata": {},
+            "content": {},
+            "buffers": [],
+            "channel": "shell",
+        }
+        await ws.send(_json.dumps(kernel_info_msg))
+
+        # 等待 status: idle 或 kernel_info_reply
+        while True:
+            elapsed = time.time() - start
+            if elapsed > timeout:
+                raise TimeoutError(
+                    f"Kernel {kernel_id} did not become ready in {timeout}s "
+                    f"(WebSocket connected but no idle status received)"
+                )
+
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                msg = _json.loads(raw)
+                msg_type = msg.get("msg_type", "")
+
+                if msg_type == "status":
+                    state = msg.get("content", {}).get("execution_state")
+                    logger.debug(f"Kernel {kernel_id} status: {state} ({elapsed:.1f}s)")
+                    if state == "idle":
+                        logger.info(
+                            f"Kernel {kernel_id} ready after {elapsed:.1f}s"
+                        )
+                        return
+
+                elif msg_type == "kernel_info_reply":
+                    logger.info(
+                        f"Kernel {kernel_id} responded to kernel_info after {elapsed:.1f}s"
+                    )
+                    # kernel_info_reply 之后通常紧跟 status: idle
+                    # 继续等 idle 确认
+
+            except asyncio.TimeoutError:
+                logger.debug(
+                    f"Kernel {kernel_id} still waiting... ({elapsed:.1f}s)"
+                )
+                continue
+            
     async def shutdown(self, task_id: str) -> None:
         """关闭 task 对应的 kernel session"""
         async with self._lock:

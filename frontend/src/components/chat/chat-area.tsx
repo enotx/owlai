@@ -889,7 +889,10 @@ export default function ChatArea() {
                   steps: s.steps.map((st) => (st.id === tempUserId ? step : st)),
                 });
               } else {
-                clearStreaming();
+                // 如果是 assistant_message,先清空流式消息,再添加 Step
+                if (step.step_type === "assistant_message") {
+                  clearStreaming();
+                }
                 setPendingTool(taskId, null);
                 addStep(step);
                 if (step.step_type === "hitl_request" && step.code_output) {
@@ -905,7 +908,10 @@ export default function ChatArea() {
               break;
             }
             case "done":
-              clearStreaming();
+              // 只在还有流式消息时才清空(防止重复清空)
+              if (useTaskStore.getState().streamingMessage) {
+                clearStreaming();
+              }
               setPendingTool(taskId, null);
               setIsWaitingResponse(false);
               break;

@@ -63,16 +63,23 @@ class JupyterUploader:
             "content": content_b64,
         }
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(
+            timeout=120.0,
+            verify=False,
+            follow_redirects=False,
+            headers=self._headers,
+        ) as client:
             # 先确保目录存在
             await self._ensure_directory(client, remote_dir)
-
             # 上传文件（PUT 会覆盖同名文件）
             resp = await client.put(
                 f"{self.server_url}/api/contents/{remote_path}",
-                headers=self._headers,
                 json=payload,
             )
+            if resp.status_code in (301, 302, 303, 307, 308):
+                raise RuntimeError(
+                    "Jupyter Server 返回重定向，Token 可能无效"
+                )
             resp.raise_for_status()
 
         logger.info(f"Uploaded {file_name} → {remote_path} ({len(content_bytes) / 1024:.1f} KB)")
@@ -84,7 +91,6 @@ class JupyterUploader:
         try:
             resp = await client.get(
                 f"{self.server_url}/api/contents/{dir_path}",
-                headers=self._headers,
             )
             if resp.status_code == 200:
                 return  # 目录已存在
@@ -96,7 +102,6 @@ class JupyterUploader:
         try:
             resp = await client.put(
                 f"{self.server_url}/api/contents/{dir_path}",
-                headers=self._headers,
                 json=payload,
             )
             resp.raise_for_status()

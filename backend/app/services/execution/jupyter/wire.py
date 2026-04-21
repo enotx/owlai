@@ -29,11 +29,20 @@ class JupyterWire:
         if token:
             self._headers["Authorization"] = f"token {token}"
 
+    def _client(self, timeout: float = 30.0) -> httpx.AsyncClient:
+        """统一创建 httpx client，处理 SSL 和重定向"""
+        return httpx.AsyncClient(
+            timeout=timeout,
+            verify=False,
+            follow_redirects=False,
+            headers=self._headers,
+        )
+
     # ── REST API ──────────────────────────────────────────
 
     async def start_kernel(self, kernel_name: str = "python3") -> str:
         """启动一个新 kernel，返回 kernel_id"""
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with self._client(timeout=30.0) as client:
             resp = await client.post(
                 f"{self.server_url}/api/kernels",
                 headers=self._headers,
@@ -47,7 +56,7 @@ class JupyterWire:
 
     async def shutdown_kernel(self, kernel_id: str) -> None:
         """关闭 kernel"""
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with self._client(timeout=20.0) as client:
             resp = await client.delete(
                 f"{self.server_url}/api/kernels/{kernel_id}",
                 headers=self._headers,
@@ -58,7 +67,7 @@ class JupyterWire:
     async def interrupt_kernel(self, kernel_id: str) -> bool:
         """中断 kernel 执行"""
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with self._client(timeout=20.0) as client:
                 resp = await client.post(
                     f"{self.server_url}/api/kernels/{kernel_id}/interrupt",
                     headers=self._headers,
@@ -72,7 +81,7 @@ class JupyterWire:
 
     async def get_kernel_status(self, kernel_id: str) -> dict:
         """获取 kernel 状态"""
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with self._client(timeout=30.0) as client:
             resp = await client.get(
                 f"{self.server_url}/api/kernels/{kernel_id}",
                 headers=self._headers,
@@ -82,7 +91,7 @@ class JupyterWire:
 
     async def list_kernelspecs(self) -> dict[str, Any]:
         """列出可用的 kernel specs"""
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with self._client(timeout=30.0) as client:
             resp = await client.get(
                 f"{self.server_url}/api/kernelspecs",
                 headers=self._headers,
@@ -93,15 +102,20 @@ class JupyterWire:
     # ── WebSocket ─────────────────────────────────────────
 
     async def connect_ws(self, kernel_id: str) -> WebSocketLike:
-        """建立 WebSocket 连接到 kernel channels"""
+        import ssl as _ssl
         ws_url = self.server_url.replace("http://", "ws://").replace("https://", "wss://")
         uri = f"{ws_url}/api/kernels/{kernel_id}/channels"
-
-        # Jupyter Server 的 WebSocket 认证通过 query param 或 header
         if self.token:
             uri += f"?token={self.token}"
-
-        ws = await websockets.connect(uri, max_size=10 * 1024 * 1024)  # 10MB max message
+        # 构建不验证证书的 SSL context
+        ssl_context = _ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = _ssl.CERT_NONE
+        ws = await websockets.connect(
+            uri,
+            max_size=10 * 1024 * 1024,
+            ssl=ssl_context if uri.startswith("wss://") else None,
+        )
         logger.info(f"WebSocket connected to kernel {kernel_id}")
         return ws
 

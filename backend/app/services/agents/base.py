@@ -890,7 +890,6 @@ class BaseAgent(ABC):
                 # ── 保存 assistant_message Step ──
                 from app.models import Step
                 from datetime import datetime
-                import uuid
                 
                 new_step = Step(
                     id=str(uuid.uuid4()),
@@ -904,6 +903,7 @@ class BaseAgent(ABC):
                 )
                 self.db.add(new_step)
                 await self.db.flush()
+                await self.db.commit()
                 
                 # 发送 step_saved 事件
                 yield {
