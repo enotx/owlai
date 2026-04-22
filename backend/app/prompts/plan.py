@@ -4,7 +4,7 @@
 
 from app.prompts.fragments.common_rules import COMMON_RULES
 from app.prompts.fragments import build_visualization_guide
-
+from app.prompts.fragments.execution_profiles import PromptProfile, LOCAL_PROFILE
 
 
 _PLAN_TEMPLATE = """\
@@ -44,7 +44,9 @@ You can ONLY generate a plan when BOTH conditions are met:
 - If the user pushes you to plan prematurely, politely explain what information is still needed
 - If you're unsure about data sufficiency, ASK rather than assume
 
-{rules}
+{common_rules}
+
+{execution_rules}
 
 ## Available Datasets
 {dataset_context}
@@ -58,9 +60,6 @@ You can ONLY generate a plan when BOTH conditions are met:
 ## Visualization Guidelines
 {visualization_guide}
 
-## Local Data Warehouse (DuckDB)
-{warehouse_context}
-
 ## Available Skills
 {skill_context}
 
@@ -71,11 +70,28 @@ If the user explicitly says "just start" or "skip clarification", you may procee
 but you should still note any assumptions you're making.\
 """
 
+
+# ## Local Data Warehouse (DuckDB)
+# {warehouse_context}
+
+
 _FIRST_TURN_REMINDER = (
     "\n\n**IMPORTANT**: This is your FIRST interaction with the user. "
     "You MUST start by asking clarifying questions. "
     "DO NOT generate a plan in this response."
 )
+
+
+def _assemble_execution_rules(profile: PromptProfile) -> str:
+    """组装执行环境相关的规则片段"""
+    return "\n\n".join([
+        profile.sandbox_rules,
+        profile.data_access_guide,
+        profile.env_var_guide,
+        profile.warehouse_guide,
+        profile.persistence_guide,
+        profile.viz_note,
+    ])
 
 
 def build_plan_system_prompt(
@@ -84,22 +100,35 @@ def build_plan_system_prompt(
     text_context: str,
     variable_reference: str,
     skill_context: str,
-    warehouse_context: str,
+    # warehouse_context: str,
     is_first_turn: bool = False,
     include_viz_examples: bool = False,
+    profile: PromptProfile = LOCAL_PROFILE,  # 新增参数
 ) -> str:
+    """
+    构建 PlanAgent 的 system prompt。
+    
+    Args:
+        profile: 执行环境 profile（默认 LOCAL_PROFILE）
+        ... (其他参数不变)
+    """
+    execution_rules = _assemble_execution_rules(profile)
     visualization_guide = build_visualization_guide(
         include_examples=include_viz_examples,
     )
+    
     prompt = _PLAN_TEMPLATE.format(
-        rules=COMMON_RULES,
+        common_rules=COMMON_RULES,
+        execution_rules=execution_rules,
         dataset_context=dataset_context,
         text_context=text_context,
         variable_reference=variable_reference,
-        warehouse_context=warehouse_context,
+        # warehouse_context=warehouse_context,
         skill_context=skill_context,
         visualization_guide=visualization_guide,
     )
+    
     if is_first_turn:
         prompt += _FIRST_TURN_REMINDER
+    
     return prompt

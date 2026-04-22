@@ -2,11 +2,21 @@
 """Prompt 片段：可被多个 Agent 复用的公共文本块"""
 from app.prompts.fragments.common_rules import COMMON_RULES
 from app.prompts.fragments.data_conventions import DATAFRAME_NAMING_CONVENTION
-from app.prompts.fragments.echarts_guide import ECHARTS_GUIDE
+from app.prompts.fragments.execution_profiles import (
+    PromptProfile,
+    LOCAL_PROFILE,
+    JUPYTER_PROFILE,
+    resolve_prompt_profile,
+)
+
 __all__ = [
     "COMMON_RULES",
     "DATAFRAME_NAMING_CONVENTION",
-    "ECHARTS_GUIDE",
+    "build_visualization_guide",
+    "PromptProfile",
+    "LOCAL_PROFILE",
+    "JUPYTER_PROFILE",
+    "resolve_prompt_profile",
 ]
 
 

@@ -1,9 +1,15 @@
 # backend/app/services/context_builder.py
+
 """上下文构建服务 - 独立于 Agent 实例的上下文拼装逻辑"""
 
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Task, Knowledge, Skill, Asset, DataPipeline
+from app.prompts.fragments.execution_profiles import (
+    PromptProfile,
+    LOCAL_PROFILE,
+    resolve_prompt_profile,
+)
 from app.prompts.analyst import build_analyst_system_prompt
 from app.prompts.plan import build_plan_system_prompt
 from app.services.data_processor import (
@@ -16,73 +22,6 @@ from app.config import UPLOADS_DIR
 import os
 import json
 import glob
-
-
-async def build_task_context_snapshot(
-    task_id: str,
-    db: AsyncSession,
-    mode: str = "analyst",
-    include_viz_examples: bool = False,
-) -> dict:
-    """
-    构建 Task 的完整上下文快照（不依赖 LLM 配置）
-    
-    Returns:
-        {
-            "dataset_context": str,
-            "text_context": str,
-            "variable_reference": str,
-            "skill_context": str,
-            "warehouse_context": str,
-            "system_prompt": str,
-        }
-    """
-    # 获取 Knowledge 上下文
-    dataset_ctx, text_ctx, var_ref = await _get_knowledge_context(task_id, db)
-    
-    # 获取 Skill 上下文
-    skill_ctx, _ = await _get_skill_context(db)
-    
-    # 获取 Warehouse 上下文
-    warehouse_ctx = await _get_warehouse_context(db)
-
-    # ── 新增：检测 routine task 的 SOP ──
-    sop_ctx = await _get_sop_context_if_routine(task_id, db)
-
-    # 构建 system prompt（根据 mode）
-    if mode == "plan":
-        system_prompt = build_plan_system_prompt(
-            dataset_context=dataset_ctx,
-            text_context=text_ctx,
-            variable_reference=var_ref,
-            skill_context=skill_ctx,
-            warehouse_context=warehouse_ctx,
-            is_first_turn=False,
-            include_viz_examples=include_viz_examples,
-        )
-    else:  # analyst / auto
-        system_prompt = build_analyst_system_prompt(
-            dataset_context=dataset_ctx,
-            text_context=text_ctx,
-            variable_reference=var_ref,
-            skill_context=skill_ctx,
-            current_task="[Context size estimation]",
-            warehouse_context=warehouse_ctx,
-            include_viz_examples=include_viz_examples,
-        )
-        if sop_ctx:
-            system_prompt = sop_ctx + "\n\n" + system_prompt
-
-    
-    return {
-        "dataset_context": dataset_ctx,
-        "text_context": text_ctx,
-        "variable_reference": var_ref,
-        "skill_context": skill_ctx,
-        "warehouse_context": warehouse_ctx,
-        "system_prompt": system_prompt,
-    }
-
 
 async def _get_knowledge_context(task_id: str, db: AsyncSession) -> tuple[str, str, str]:
     """获取 Knowledge 上下文（复用 BaseAgent 的逻辑）"""
@@ -635,9 +574,13 @@ async def build_agent_context_bundle(
     current_task: str = "[Context building]",
     is_first_turn: bool = False,
     include_viz_examples: bool = False,
+    profile: PromptProfile | None = None,  # 新增参数
 ) -> dict:
     """
     统一的 Agent 上下文构建入口（运行时使用）
+    
+    Args:
+        profile: 执行环境 profile。如果为 None,则根据 Task.execution_backend 自动解析
     
     Returns:
         {
@@ -647,37 +590,50 @@ async def build_agent_context_bundle(
             "data_var_map": dict[str, str],
             "skill_context": str,
             "skill_envs": dict[str, str],
-            "warehouse_context": str,
             "sop_context": str | None,
             "system_prompt": str,
+            "profile": PromptProfile,  # 新增返回值
         }
     """
+    # ── 自动解析 profile（如果未提供） ──────────────────
+    if profile is None:
+        from app.models import Task
+        from sqlalchemy import select
+        result = await db.execute(select(Task).where(Task.id == task_id))
+        task = result.scalar_one_or_none()
+        backend_type = task.execution_backend if task else "local"
+        profile = resolve_prompt_profile(backend_type)
+    
     # 获取各类上下文
     dataset_ctx, text_ctx, var_ref, data_var_map = await _get_knowledge_context_with_assets(task_id, db)
     skill_ctx, skill_envs = await _get_skill_context(db)
-    warehouse_ctx = await _get_warehouse_context(db)
+    # warehouse_ctx = await _get_warehouse_context(db)
     sop_ctx = await _get_sop_context_if_routine(task_id, db)
     
-    # 构建 system prompt
+    # 构建 system prompt（传入 profile）
     if mode == "plan":
+        from app.prompts.plan import build_plan_system_prompt
         system_prompt = build_plan_system_prompt(
             dataset_context=dataset_ctx,
             text_context=text_ctx,
             variable_reference=var_ref,
             skill_context=skill_ctx,
-            warehouse_context=warehouse_ctx,
+            # warehouse_context=warehouse_ctx,
             is_first_turn=is_first_turn,
             include_viz_examples=include_viz_examples,
+            profile=profile,  # 传入 profile
         )
     else:  # analyst / auto
+        from app.prompts.analyst import build_analyst_system_prompt
         system_prompt = build_analyst_system_prompt(
             dataset_context=dataset_ctx,
             text_context=text_ctx,
             variable_reference=var_ref,
             skill_context=skill_ctx,
             current_task=current_task,
-            warehouse_context=warehouse_ctx,
+            # warehouse_context=warehouse_ctx,
             include_viz_examples=include_viz_examples,
+            profile=profile,  # 传入 profile
         )
         if sop_ctx:
             system_prompt = sop_ctx + "\n\n" + system_prompt
@@ -689,7 +645,91 @@ async def build_agent_context_bundle(
         "data_var_map": data_var_map,
         "skill_context": skill_ctx,
         "skill_envs": skill_envs,
-        "warehouse_context": warehouse_ctx,
+        # "warehouse_context": warehouse_ctx,
         "sop_context": sop_ctx,
         "system_prompt": system_prompt,
+        "profile": profile,  # 新增返回值
+    }
+
+async def build_task_context_snapshot(
+    task_id: str,
+    db: AsyncSession,
+    mode: str = "analyst",
+    include_viz_examples: bool = False,
+    profile: PromptProfile | None = None,  # 新增参数
+) -> dict:
+    """
+    构建 Task 的完整上下文快照（不依赖 LLM 配置）
+    
+    Args:
+        profile: 执行环境 profile。如果为 None,则根据 Task.execution_backend 自动解析
+    
+    Returns:
+        {
+            "dataset_context": str,
+            "text_context": str,
+            "variable_reference": str,
+            "skill_context": str,
+            "system_prompt": str,
+            "profile": PromptProfile,  # 新增返回值
+        }
+    """
+    # ── 自动解析 profile（如果未提供） ──────────────────
+    if profile is None:
+        from app.models import Task
+        from sqlalchemy import select
+        result = await db.execute(select(Task).where(Task.id == task_id))
+        task = result.scalar_one_or_none()
+        backend_type = task.execution_backend if task else "local"
+        profile = resolve_prompt_profile(backend_type)
+    
+    # 获取 Knowledge 上下文
+    dataset_ctx, text_ctx, var_ref = await _get_knowledge_context(task_id, db)
+    
+    # 获取 Skill 上下文
+    skill_ctx, _ = await _get_skill_context(db)
+    
+    # 获取 Warehouse 上下文
+    # warehouse_ctx = await _get_warehouse_context(db)
+
+    # 检测 routine task 的 SOP
+    sop_ctx = await _get_sop_context_if_routine(task_id, db)
+
+    # 构建 system prompt（根据 mode + profile）
+    if mode == "plan":
+        from app.prompts.plan import build_plan_system_prompt
+        system_prompt = build_plan_system_prompt(
+            dataset_context=dataset_ctx,
+            text_context=text_ctx,
+            variable_reference=var_ref,
+            skill_context=skill_ctx,
+            # warehouse_context=warehouse_ctx,
+            is_first_turn=False,
+            include_viz_examples=include_viz_examples,
+            profile=profile,
+        )
+    else:  # analyst / auto
+        from app.prompts.analyst import build_analyst_system_prompt
+        system_prompt = build_analyst_system_prompt(
+            dataset_context=dataset_ctx,
+            text_context=text_ctx,
+            variable_reference=var_ref,
+            skill_context=skill_ctx,
+            current_task="[Context size estimation]",
+            # warehouse_context=warehouse_ctx,
+            include_viz_examples=include_viz_examples,
+            profile=profile,
+        )
+        if sop_ctx:
+            system_prompt = sop_ctx + "\n\n" + system_prompt
+
+    
+    return {
+        "dataset_context": dataset_ctx,
+        "text_context": text_ctx,
+        "variable_reference": var_ref,
+        "skill_context": skill_ctx,
+        # "warehouse_context": warehouse_ctx,
+        "system_prompt": system_prompt,
+        "profile": profile,  # 新增返回值
     }

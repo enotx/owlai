@@ -572,6 +572,8 @@ class BaseAgent(ABC):
 
         这是 _run_react_loop 的内部实现，所有事件以 dict 形式 yield。
         """
+        # print("[Agent] Starting ReAct loop with messages:", messages)
+        
         from app.services.execution_helpers import run_with_heartbeat, is_heartbeat_event
         from app.services.sandbox import execute_code_in_sandbox, is_sandbox_execution_result
 

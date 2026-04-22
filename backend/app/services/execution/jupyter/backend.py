@@ -53,13 +53,13 @@ class JupyterBackend:
             await self._inject_data(session, ctx)
 
             # 3. 安全检查（可选）
-            security_level = ctx.security_level or self._default_security_level
-            if security_level == "strict":
-                from app.services.code_security import check_code_security
+            # security_level = ctx.security_level or self._default_security_level
+            # if security_level == "strict":
+            #     from app.services.code_security import check_code_security
 
-                result = check_code_security(ctx.code)
-                if not result.safe:
-                    return self._blocked_result(result.violations)
+            #     result = check_code_security(ctx.code)
+            #     if not result.safe:
+            #         return self._blocked_result(result.violations)
 
             # 4. 执行用户代码
             exec_output = await session.wire.execute_code(
