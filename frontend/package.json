@@ -27,6 +27,7 @@
     "clsx": "^2.1.1",
     "echarts": "^6.0.0",
     "echarts-for-react": "^3.0.6",
+    "js-yaml": "^4.1.1",
     "katex": "^0.16.39",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.577.0",
@@ -46,6 +47,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@tauri-apps/cli": "^2.10.1",
+    "@types/js-yaml": "^4.0.9",
     "@types/katex": "^0.16.8",
     "@types/node": "^20",
     "@types/react": "^19",

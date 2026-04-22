@@ -841,6 +841,19 @@ export const updateSkill = async (
 export const deleteSkill = async (id: string) =>
   (await getApi()).delete(`/skills/${id}`);
 
+export const exportSkill = async (id: string) => {
+  const baseUrl = await getBaseUrl();
+  const url = `${baseUrl}/skills/${id}/export`;
+  await downloadFile(url, `skill-${id}.yaml`);
+};
+
+export const importSkill = async (fileContent: string) => {
+  // 前端先解析 YAML，转为 JSON 后发送
+  const yaml = await import("js-yaml");
+  const data = yaml.load(fileContent);
+  return (await getApi()).post<SkillData>("/skills/import", data);
+};
+
 // ===== Visualizations =====
 export interface VisualizationItem {
   id: string;

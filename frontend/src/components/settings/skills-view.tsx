@@ -12,6 +12,8 @@ import {
   createSkill,
   updateSkill,
   deleteSkill,
+  exportSkill,
+  importSkill,
   type SkillData,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -30,6 +32,7 @@ import {
   X,
   Variable,
   Package,
+  Upload, Download,
 } from "lucide-react";
 
 export default function SkillsView() {
@@ -108,6 +111,33 @@ export default function SkillsView() {
     setEditingSkill(null);
   };
 
+  const handleImport = async () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".yaml,.yml,.json"; // 同时支持 YAML 和 JSON
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const res = await importSkill(text);
+        addSkill(res.data);
+      } catch (err: unknown) {
+        if (
+          err &&
+          typeof err === "object" &&
+          "response" in err &&
+          (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+        ) {
+          alert((err as { response: { data: { detail: string } } }).response.data.detail);
+        } else {
+          alert("Failed to import skill. Please check the file format.");
+        }
+      }
+    };
+    input.click();
+  };
+  
   if (skillView === "edit") {
     return (
       <SkillEditor
@@ -229,13 +259,24 @@ export default function SkillsView() {
           </div>
         )}
         {/* New skill button — at bottom, matching providers-list style */}
-        <Button
-          variant="outline"
-          className="w-full mt-4"
-          onClick={handleCreate}
-        >
-          + New Skill
-        </Button>
+        <div className="flex gap-2 mt-4">
+          <Button
+            variant="outline"
+            className="flex-1"
+            onClick={handleImport}
+          >
+            <Upload className="h-4 w-4 mr-2" />
+            Import Skill
+          </Button>
+          <Button
+            variant="outline"
+            className="flex-1"
+            onClick={handleCreate}
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            New Skill
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -381,6 +422,15 @@ function SkillEditor({ skill, onBack, onSaved }: SkillEditorProps) {
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleExport = async () => {
+    if (!skill) return;
+    try {
+      await exportSkill(skill.id);
+    } catch {
+      setError("Failed to export skill");
     }
   };
 
@@ -623,7 +673,7 @@ price = t.info["currentPrice"]
                         }
                         placeholder="your_value_here"
                         className="border-0 shadow-none h-8 text-sm font-mono focus-visible:ring-0"
-                        type="password"
+                        type="text"
                       />
                     </div>
                     <div className="flex items-center justify-center">
@@ -655,28 +705,41 @@ price = t.info["currentPrice"]
       </div>
 
       {/* Bottom action bar — fixed at bottom, matching provider-form style */}
-      <div className="shrink-0 px-4 sm:px-6 py-4 border-t flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3">
-        <Button
-          variant="outline"
-          onClick={() => setIsActive(!isActive)}
-          className={
-            isActive
-              ? "border-green-500/50 text-green-600"
-              : "border-muted text-muted-foreground"
-          }
-        >
-          {isActive ? (
-            <Power className="h-4 w-4 mr-2" />
-          ) : (
-            <PowerOff className="h-4 w-4 mr-2" />
+      <div className="shrink-0 px-4 sm:px-6 py-4 border-t flex flex-col-reverse sm:flex-row sm:justify-between gap-2 sm:gap-3">
+        <div className="flex gap-2">
+          {!isNew && (
+            <Button
+              variant="outline"
+              onClick={handleExport}
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Export
+            </Button>
           )}
-          {isActive ? "Active" : "Inactive"}
-        </Button>
-
-        <Button onClick={handleSave} disabled={saving}>
-          <Save className="h-4 w-4 mr-2" />
-          {saving ? "Saving..." : "Save"}
-        </Button>
+        </div>
+        
+        <div className="flex gap-2 sm:gap-3">
+          <Button
+            variant="outline"
+            onClick={() => setIsActive(!isActive)}
+            className={
+              isActive
+                ? "border-green-500/50 text-green-600"
+                : "border-muted text-muted-foreground"
+            }
+          >
+            {isActive ? (
+              <Power className="h-4 w-4 mr-2" />
+            ) : (
+              <PowerOff className="h-4 w-4 mr-2" />
+            )}
+            {isActive ? "Active" : "Inactive"}
+          </Button>
+          <Button onClick={handleSave} disabled={saving}>
+            <Save className="h-4 w-4 mr-2" />
+            {saving ? "Saving..." : "Save"}
+          </Button>
+        </div>
       </div>
     </div>
   );

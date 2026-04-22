@@ -185,3 +185,128 @@ async def delete_skill(
         raise HTTPException(status_code=403, detail="Cannot delete a system skill")
     await db.delete(skill)
     await db.commit()
+
+from datetime import datetime
+import yaml
+from fastapi.responses import Response
+# 敏感关键词列表（不区分大小写）
+SENSITIVE_KEYWORDS = [
+    "password", "token", "key", "secret", 
+    "credential", "auth", "api_key", "access"
+]
+def _mask_sensitive_value(key: str, value: str) -> str:
+    """如果 key 包含敏感关键词，返回占位符；否则返回原值"""
+    key_lower = key.lower()
+    for keyword in SENSITIVE_KEYWORDS:
+        if keyword in key_lower:
+            placeholder = f"YOUR_{key.upper()}"
+            return placeholder
+    return value
+@router.get("/{skill_id}/export")
+async def export_skill(skill_id: str, db: AsyncSession = Depends(get_db)):
+    """导出 Skill 为 YAML 格式（敏感环境变量用占位符替代）"""
+    skill = await db.get(Skill, skill_id)
+    if not skill:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    
+    import json
+    
+    # 解析环境变量并替换敏感值
+    env_vars = json.loads(skill.env_vars_json) if skill.env_vars_json else {}
+    masked_env_vars = {
+        k: _mask_sensitive_value(k, v) for k, v in env_vars.items()
+    }
+    
+    # 解析 handler_config
+    handler_config = None
+    if skill.handler_config:
+        try:
+            handler_config = json.loads(skill.handler_config)
+        except json.JSONDecodeError:
+            pass
+    
+    export_data = {
+        "version": "1.0",
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "skill": {
+            "name": skill.name,
+            "description": skill.description,
+            "handler_type": skill.handler_type or "standard",
+            "handler_config": handler_config,
+            "is_active": skill.is_active,
+            "allowed_modules": json.loads(skill.allowed_modules_json) if skill.allowed_modules_json else [],
+            "env_vars": masked_env_vars,
+            "prompt_markdown": skill.prompt_markdown,
+            "reference_markdown": skill.reference_markdown,
+        }
+    }
+    
+    # 生成 YAML
+    yaml_content = yaml.dump(
+        export_data,
+        allow_unicode=True,
+        default_flow_style=False,
+        sort_keys=False,
+        width=120,
+    )
+    
+    filename = f"{skill.name.replace(' ', '_')}_skill.yaml"
+    return Response(
+        content=yaml_content,
+        media_type="application/x-yaml",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+    )
+
+@router.post("/import", response_model=SkillResponse, status_code=201)
+async def import_skill(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """导入 Skill（支持 YAML 或 JSON 格式）"""
+    import json
+    
+    # 验证格式
+    if "skill" not in body:
+        raise HTTPException(status_code=400, detail="Invalid import format: missing 'skill' key")
+    
+    skill_data = body["skill"]
+    required_fields = ["name"]
+    for field in required_fields:
+        if field not in skill_data:
+            raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+    
+    # 检查名称是否已存在
+    existing = await db.execute(select(Skill).where(Skill.name == skill_data["name"]))
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=409, 
+            detail=f"Skill name '{skill_data['name']}' already exists. Please rename before importing."
+        )
+    
+    # 序列化 handler_config
+    handler_config_json = None
+    if skill_data.get("handler_config"):
+        handler_config_json = json.dumps(skill_data["handler_config"], ensure_ascii=False)
+    
+    # 创建新 Skill
+    skill = Skill(
+        name=skill_data["name"],
+        description=skill_data.get("description"),
+        prompt_markdown=skill_data.get("prompt_markdown"),
+        reference_markdown=skill_data.get("reference_markdown"),
+        handler_type=skill_data.get("handler_type", "standard"),
+        handler_config=handler_config_json,
+        env_vars_json=json.dumps(skill_data.get("env_vars", {}), ensure_ascii=False),
+        allowed_modules_json=json.dumps(skill_data.get("allowed_modules", []), ensure_ascii=False),
+        is_active=skill_data.get("is_active", True),
+        is_system=False,
+        slash_command=None,
+    )
+    
+    db.add(skill)
+    await db.commit()
+    await db.refresh(skill)
+    
+    return _skill_to_response(skill)
