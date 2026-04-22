@@ -60,7 +60,7 @@ class PlanAgent(BaseAgent):
         plan_tools = get_tools_for_agent("plan")
         
         # 运行 ReAct 循环
-        async for event in self._run_react_loop(
+        async for event in self._run_react_loop_events(
             messages=messages,
             tools=plan_tools,
             sandbox_env=sandbox_env,
@@ -68,10 +68,7 @@ class PlanAgent(BaseAgent):
             max_rounds=5,  # Plan 阶段限制轮次
             temperature=0.3,
         ):
-            if isinstance(event, dict):
-                yield event
-            else:
-                yield {"type": "text", "content": event}
+            yield event
         yield {"type": "done"}
     
     async def _on_text_complete(

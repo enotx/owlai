@@ -355,7 +355,7 @@ class BaseAgent(ABC):
     
     async def _get_skill_context(self) -> tuple[str, dict[str, str]]:
         """
-        获取所有激活的 Skill 上下文
+        获取所有激活的 Skill 上下文（渐进式披露版本）
         Returns: (skill_prompt, skill_envs)
         """
         result = await self.db.execute(
@@ -370,35 +370,36 @@ class BaseAgent(ABC):
         all_modules: set[str] = set()
         
         for skill in skills:
-            section = f"### 🔧 Skill: {skill.name}\n"
+            # 只显示名称和简短描述
+            section = f"### 🔧 {skill.name}\n"
             if skill.description:
                 section += f"{skill.description}\n"
-            if skill.prompt_markdown:
-                section += f"\n{skill.prompt_markdown}\n"
             
+            # 提示可以查看详细文档
+            if skill.prompt_markdown or skill.reference_markdown:
+                section += (
+                    f"\n> 📚 **Need details?** Call `get_skill_reference('{skill.name}')` "
+                    f"to see usage instructions and examples.\n"
+                )
+            
+            # 环境变量提示（不展开具体内容）
             try:
                 env_dict: dict[str, str] = json.loads(skill.env_vars_json) if skill.env_vars_json else {}
             except (json.JSONDecodeError, TypeError):
                 env_dict = {}
             if env_dict:
                 env_keys = ", ".join(f"`{k}`" for k in env_dict.keys())
-                section += f"\n> **Available env vars** (use `_safe_getenv('KEY')`): {env_keys}\n"
+                section += f"> **Env vars available**: {env_keys}\n"
                 merged_envs.update(env_dict)
             
+            # 收集允许的模块
             try:
                 modules: list[str] = json.loads(skill.allowed_modules_json) if skill.allowed_modules_json else []
             except (json.JSONDecodeError, TypeError):
                 modules = []
             if modules:
                 all_modules.update(modules)
-                section += f"> **Allowed imports**: {', '.join(f'`{m}`' for m in modules)}\n"
             
-            if skill.reference_markdown:
-                section += (
-                    f"\n> 📚 **Detailed reference available** — call "
-                    f"`get_skill_reference('{skill.name}')` when you need "
-                    f"exact API signatures, advanced usage, or troubleshooting.\n"
-                )
             prompt_parts.append(section)
         
         if all_modules:
@@ -406,9 +407,9 @@ class BaseAgent(ABC):
         
         skill_prompt = "\n---\n".join(prompt_parts)
         return skill_prompt, merged_envs
-    
+
     async def _lookup_skill_reference(self, skill_name: str) -> str:
-        """根据 Skill 名称查询其 reference_markdown"""
+        """根据 Skill 名称查询其完整文档（prompt_markdown + reference_markdown）"""
         result = await self.db.execute(
             select(Skill).where(Skill.name == skill_name, Skill.is_active == True)
         )
@@ -426,14 +427,28 @@ class BaseAgent(ABC):
                 )
             return f"ERROR: No active skill named '{skill_name}'. No skills are currently active."
 
-        if not skill.reference_markdown:
+        # 合并 prompt_markdown 和 reference_markdown
+        parts = [f"# Skill: {skill.name}"]
+        
+        if skill.description:
+            parts.append(f"\n{skill.description}\n")
+        
+        if skill.prompt_markdown:
+            parts.append("## Usage Instructions\n")
+            parts.append(skill.prompt_markdown)
+        
+        if skill.reference_markdown:
+            parts.append("\n## Detailed Reference\n")
+            parts.append(skill.reference_markdown)
+        
+        if not skill.prompt_markdown and not skill.reference_markdown:
             return (
-                f"Skill '{skill_name}' has no detailed reference documentation. "
-                f"Use the basic prompt already in your context."
+                f"Skill '{skill_name}' has no detailed documentation. "
+                f"Only the basic description is available in your context."
             )
+        
+        return "\n".join(parts)
 
-        return f"# Reference: {skill.name}\n\n{skill.reference_markdown}"
-    
     async def _build_warehouse_context(self) -> str:
         """构建 DuckDB 仓库的上下文信息"""
         from app.models import DuckDBTable
@@ -572,7 +587,7 @@ class BaseAgent(ABC):
 
         这是 _run_react_loop 的内部实现，所有事件以 dict 形式 yield。
         """
-        # print("[Agent] Starting ReAct loop with messages:", messages)
+        print("[Agent] Starting ReAct loop with messages:", messages)
         
         from app.services.execution_helpers import run_with_heartbeat, is_heartbeat_event
         from app.services.sandbox import execute_code_in_sandbox, is_sandbox_execution_result

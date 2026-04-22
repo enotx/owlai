@@ -80,7 +80,6 @@ async def resolve_backend_for_task(
     if backend_key in _backends:
         return _backends[backend_key]
 
-    # 尝试动态创建 Jupyter backend（Phase 2 实现）
     # 尝试动态创建 Jupyter backend
     if backend_key.startswith("jupyter:"):
         config_id = backend_key.split(":", 1)[1]
