@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
         with contextlib.suppress(asyncio.CancelledError):
             await cleanup_task
             
-app = FastAPI(title="Owl API", version="0.1.3", lifespan=lifespan)
+app = FastAPI(title="Owl API", version="0.1.5", lifespan=lifespan)
 
 # ── CORS 配置（根据 APP_MODE 动态调整）──────────────────────
 if APP_MODE in ("desktop", "dev"):
