@@ -167,8 +167,6 @@ pyod==2.0.7
     # via darts
 pyparsing==3.3.2
     # via matplotlib
-vendor/pytalos-0.2.3-py3-none-any.whl
-    # via backend (pyproject.toml)
 python-dateutil==2.9.0.post0
     # via
     #   holidays
@@ -270,3 +268,8 @@ xlrd==2.0.2
     # via
     #   backend (pyproject.toml)
     #   akshare
+
+
+
+--find-links=./vendor
+pytalos==0.2.3
