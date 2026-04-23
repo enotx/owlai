@@ -30,6 +30,7 @@ import {
   addTableToContext,
   fetchKnowledge,
   type DuckDBTableItem,
+  syncWarehouseMetadata,
 } from "@/lib/api";
 import { useTaskStore } from "@/stores/use-task-store";
 
@@ -89,6 +90,7 @@ export default function DataSourcesTab() {
   }, [contextMenu]);
 
   // ── Data loading ────────────────────────────────────────
+  // 替换原有的 loadTables
   const loadTables = useCallback(async () => {
     setLoading(true);
     try {
@@ -96,6 +98,18 @@ export default function DataSourcesTab() {
       setTables(res.data);
     } catch (err) {
       console.error("Failed to load DuckDB tables:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  const handleRefresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      await syncWarehouseMetadata();
+      const res = await fetchDuckDBTables();
+      setTables(res.data);
+    } catch (err) {
+      console.error("Failed to sync/load DuckDB tables:", err);
     } finally {
       setLoading(false);
     }
@@ -259,7 +273,7 @@ export default function DataSourcesTab() {
           variant="ghost"
           size="sm"
           className="h-7 text-xs shrink-0"
-          onClick={loadTables}
+          onClick={handleRefresh}
           disabled={loading}
         >
           <RefreshCw

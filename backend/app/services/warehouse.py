@@ -6,24 +6,23 @@ DuckDB 本地数据仓库管理服务。
 职责：
 - 管理 warehouse.duckdb 文件
 - 提供 DataFrame 写入（物化）、查询、表管理功能
+- 元数据按需同步（reconcile）
 - 所有 DuckDB 操作在此集中，避免散落各处
 """
 
 import asyncio
 import json
 import re
-# import logging
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, delete
 
 import duckdb
 import pandas as pd
 
 from app.config import WAREHOUSE_PATH
-
-# logger = logging.getLogger(__name__)
 
 # 合法表名正则（字母/下划线开头，仅允许字母数字下划线）
 _VALID_TABLE_NAME = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,127}$")
@@ -236,6 +235,220 @@ def _get_table_schema(con: duckdb.DuckDBPyConnection, table_name: str) -> list[d
     return schema
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 元数据同步（新增）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def reconcile_metadata(db: AsyncSession) -> dict[str, Any]:
+    """
+    轻量级元数据同步：对比 DuckDB 物理表和 SQLite 元数据。
+    
+    策略：
+    - DuckDB 有、SQLite 没有 → 自动创建元数据记录
+    - SQLite 有、DuckDB 没有 → 标记为 error 状态（不删除，保留血缘）
+    - 已存在的记录不强刷 schema/row_count（避免性能开销）
+    
+    适用场景：列表页加载时调用
+    
+    Returns:
+        {"created": int, "marked_error": int, "skipped": int}
+    """
+    from app.models import DuckDBTable
+    
+    # 获取 DuckDB 物理表列表
+    physical_tables = await async_list_tables()
+    physical_table_names = {t["table_name"] for t in physical_tables}
+    
+    # 获取 SQLite 元数据记录
+    result = await db.execute(select(DuckDBTable))
+    metadata_records = {t.table_name: t for t in result.scalars().all()}
+    
+    created = 0
+    marked_error = 0
+    skipped = 0
+    
+    # 处理新增表（DuckDB 有，SQLite 没有）
+    for table_name in physical_table_names:
+        if table_name not in metadata_records:
+            # 创建元数据记录
+            table_info = next(t for t in physical_tables if t["table_name"] == table_name)
+            new_record = DuckDBTable(
+                table_name=table_name,
+                display_name=table_name.replace("_", " ").title(),
+                description="Auto-detected from DuckDB warehouse",
+                table_schema_json=json.dumps(table_info["schema"], ensure_ascii=False),
+                row_count=table_info["row_count"],
+                source_type="code_execution",
+                data_updated_at=datetime.now(),
+                status="ready",
+            )
+            db.add(new_record)
+            created += 1
+        else:
+            skipped += 1
+    
+    # 处理孤立元数据（SQLite 有，DuckDB 没有）
+    for table_name, record in metadata_records.items():
+        if table_name not in physical_table_names:
+            if record.status != "error":
+                record.status = "error"
+                marked_error += 1
+    
+    await db.commit()
+    
+    return {
+        "created": created,
+        "marked_error": marked_error,
+        "skipped": skipped,
+    }
+
+
+async def sync_table_metadata(
+    table_name: str,
+    db: AsyncSession,
+) -> bool:
+    """
+    单表强校验：刷新指定表的 schema、row_count、data_updated_at。
+    
+    适用场景：预览表时调用
+    
+    Returns:
+        是否成功同步（False 表示表不存在）
+    """
+    from app.models import DuckDBTable
+    
+    # 检查物理表是否存在
+    exists = await async_table_exists(table_name)
+    if not exists:
+        # 标记元数据为 error
+        result = await db.execute(
+            select(DuckDBTable).where(DuckDBTable.table_name == table_name)
+        )
+        record = result.scalar_one_or_none()
+        if record:
+            record.status = "error"
+            await db.commit()
+        return False
+    
+    # 获取最新信息
+    schema = await asyncio.to_thread(get_table_schema, table_name)
+    
+    db_path = str(WAREHOUSE_PATH)
+    con = await asyncio.to_thread(duckdb.connect, db_path, read_only=True)
+    try:
+        count_result = await asyncio.to_thread(
+            con.execute(f"SELECT COUNT(*) FROM \"{table_name}\"").fetchone
+        )
+        row_count = count_result[0] if count_result else 0
+    finally:
+        await asyncio.to_thread(con.close)
+    
+    # 更新元数据
+    result = await db.execute(
+        select(DuckDBTable).where(DuckDBTable.table_name == table_name)
+    )
+    record = result.scalar_one_or_none()
+    
+    if record:
+        record.table_schema_json = json.dumps(schema, ensure_ascii=False)
+        record.row_count = row_count
+        record.data_updated_at = datetime.now()
+        record.status = "ready"
+    else:
+        # 不存在则创建
+        record = DuckDBTable(
+            table_name=table_name,
+            display_name=table_name.replace("_", " ").title(),
+            description="Auto-synced from DuckDB warehouse",
+            table_schema_json=json.dumps(schema, ensure_ascii=False),
+            row_count=row_count,
+            source_type="code_execution",
+            data_updated_at=datetime.now(),
+            status="ready",
+        )
+        db.add(record)
+    
+    await db.commit()
+    return True
+
+
+async def full_sync_metadata(db: AsyncSession) -> dict[str, Any]:
+    """
+    显式全量同步：扫描所有 DuckDB 表，完整更新元数据。
+    
+    策略：
+    - 更新所有表的 schema、row_count、data_updated_at
+    - 删除孤立的元数据记录（物理表已不存在）
+    - 创建新发现的表
+    
+    适用场景：用户点击"刷新"按钮时调用
+    
+    Returns:
+        {"created": int, "updated": int, "deleted": int}
+    """
+    from app.models import DuckDBTable
+    
+    # 获取 DuckDB 物理表列表（含详细信息）
+    physical_tables = await async_list_tables()
+    physical_table_map = {t["table_name"]: t for t in physical_tables}
+    physical_table_names = set(physical_table_map.keys())
+    
+    # 获取 SQLite 元数据记录
+    result = await db.execute(select(DuckDBTable))
+    metadata_records = {t.table_name: t for t in result.scalars().all()}
+    
+    created = 0
+    updated = 0
+    deleted = 0
+    now = datetime.now()
+    
+    # 更新/创建物理表的元数据
+    for table_name, table_info in physical_table_map.items():
+        schema_json = json.dumps(table_info["schema"], ensure_ascii=False)
+        row_count = table_info["row_count"]
+        
+        if table_name in metadata_records:
+            # 更新现有记录
+            record = metadata_records[table_name]
+            record.table_schema_json = schema_json
+            record.row_count = row_count
+            record.data_updated_at = now
+            record.status = "ready"
+            updated += 1
+        else:
+            # 创建新记录
+            new_record = DuckDBTable(
+                table_name=table_name,
+                display_name=table_name.replace("_", " ").title(),
+                description="Synced from DuckDB warehouse",
+                table_schema_json=schema_json,
+                row_count=row_count,
+                source_type="code_execution",
+                data_updated_at=now,
+                status="ready",
+            )
+            db.add(new_record)
+            created += 1
+    
+    # 删除孤立的元数据（物理表已不存在）
+    for table_name, record in metadata_records.items():
+        if table_name not in physical_table_names:
+            await db.delete(record)
+            deleted += 1
+    
+    await db.commit()
+    
+    return {
+        "created": created,
+        "updated": updated,
+        "deleted": deleted,
+    }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 异步包装（保持不变）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 async def async_write_dataframe(
     df: pd.DataFrame,
     table_name: str,
@@ -292,11 +505,10 @@ async def update_table_metadata(
         是否成功找到并更新
     """
     from app.models import DuckDBTable
-    from sqlalchemy import select as sa_select
 
     async def _do_update(session: AsyncSession) -> bool:
         result = await session.execute(
-            sa_select(DuckDBTable).where(DuckDBTable.table_name == table_name)
+            select(DuckDBTable).where(DuckDBTable.table_name == table_name)
         )
         table = result.scalar_one_or_none()
         if table is None:

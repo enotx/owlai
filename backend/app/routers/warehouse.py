@@ -85,6 +85,9 @@ async def _ensure_pipeline_in_context(
 
 @router.get("/tables", response_model=list[DuckDBTableResponse])
 async def list_duckdb_tables(db: AsyncSession = Depends(get_db)):
+    # ── 轻量级元数据同步 ──
+    await wh.reconcile_metadata(db)
+
     """列出所有已注册的 DuckDB 表元数据"""
     result = await db.execute(
         select(DuckDBTable).order_by(DuckDBTable.updated_at.desc())
@@ -99,12 +102,27 @@ async def preview_duckdb_table(table_id: str, limit: int = 50, db: AsyncSession 
     table_meta = result.scalar_one_or_none()
     if not table_meta:
         raise HTTPException(status_code=404, detail="Table not found")
-
+    # ── 单表强校验 ──
+    synced = await wh.sync_table_metadata(table_meta.table_name, db)
+    if not synced:
+        raise HTTPException(status_code=404, detail="Physical table not found in DuckDB")
     try:
         preview = await wh.async_get_table_preview(table_meta.table_name, limit)
         return DuckDBTablePreviewResponse(**preview)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Preview failed: {str(e)}")
+
+# 新增显式同步端点
+@router.post("/sync")
+async def sync_warehouse_metadata(db: AsyncSession = Depends(get_db)):
+    """手动触发全量元数据同步"""
+    result = await wh.full_sync_metadata(db)
+    return {
+        "status": "synced",
+        "created": result["created"],
+        "updated": result["updated"],
+        "deleted": result["deleted"],
+    }
 
 
 @router.delete("/tables/{table_id}")

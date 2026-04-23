@@ -972,6 +972,15 @@ export const previewDuckDBTable = async (
     total_rows: number;
   }>(`/warehouse/tables/${tableId}/preview`, { params: { limit } });
 
+export const syncWarehouseMetadata = async () =>
+  (await getApi()).post<{
+    status: string;
+    created: number;
+    updated: number;
+    deleted: number;
+  }>("/warehouse/sync");
+
+
 export const deleteDuckDBTable = async (tableId: string) =>
   (await getApi()).delete(`/warehouse/tables/${tableId}`);
 

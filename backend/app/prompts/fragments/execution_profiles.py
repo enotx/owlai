@@ -71,24 +71,98 @@ LOCAL_ENV_VAR = """\
 
 LOCAL_WAREHOUSE = """\
 ## DuckDB Warehouse (Local Sandbox)
-- The local DuckDB warehouse is a persistent data store shared across all tasks
-- **Listing tables**: Use `list_duckdb_tables` tool to see available tables and their schemas
-- **Querying tables**: Use `getenv('WAREHOUSE_PATH')` to get the database path
+The local DuckDB warehouse is a persistent data store shared across all tasks.
+
+### Querying Existing Tables
+- **List tables**: Use `list_duckdb_tables` tool to see available tables and their schemas
+- **Query data**: Use `getenv('WAREHOUSE_PATH')` to connect
   ```python
   import duckdb
   con = duckdb.connect(getenv('WAREHOUSE_PATH'), read_only=True)
   df = con.execute("SELECT * FROM my_table LIMIT 100").fetchdf()
   con.close()
   ```
-- **Writing data**: Use the `materialize_to_duckdb` tool (see "Data Persistence" section below)
-- **DO NOT** use `sqlite3` or raw file operations — DuckDB is the only supported warehouse
 
-### Data Persistence Rules
-- When the user asks to **save, store, persist, or materialize** data, use `materialize_to_duckdb`
-- **FIRST-TIME write**: Call `request_human_input` first to confirm table name and strategy
-- **Subsequent writes**: Proceed without HITL if user intent is clear
-- Before writing, call `list_duckdb_tables` to check if the table already exists\
+### Writing Data to DuckDB
+When you need to save a DataFrame to the warehouse, write it directly in your code:
+
+```python
+import duckdb
+
+# Connect to warehouse (read-write mode)
+con = duckdb.connect(getenv('WAREHOUSE_PATH'))
+
+# Strategy 1: Replace (drop and recreate) - RECOMMENDED for first-time writes
+con.execute("DROP TABLE IF EXISTS my_table")
+con.execute("CREATE TABLE my_table AS SELECT * FROM df_clean")
+
+# Strategy 2: Append (add rows to existing table)
+con.execute("INSERT INTO my_table SELECT * FROM df_clean")
+
+# Strategy 3: Upsert (update existing rows, insert new ones)
+# Requires a unique key column (e.g., 'id')
+con.execute('''
+    INSERT INTO my_table 
+    SELECT * FROM df_clean
+    ON CONFLICT (id) DO UPDATE SET
+        column1 = EXCLUDED.column1,
+        column2 = EXCLUDED.column2
+''')
+
+con.close()
+print(f"✅ Saved {len(df_clean):,} rows to 'my_table'")
+```
+
+**Important guidelines:**
+- Use descriptive table names (snake_case, lowercase, e.g., `stock_daily_prices`)
+- Always close the connection after writing
+- Print a confirmation message so the user knows the operation succeeded
+- For first-time writes, consider using `request_human_input` to confirm the table name with the user
+- The table will be automatically registered as a data asset and appear in the Data Sources panel
+\
 """
+
+### 下面是一段Warehouse的示例，先不注入了，观察效果
+# **Common patterns:**
+# ```python
+# # Example 1: Save cleaned data
+# con = duckdb.connect(getenv('WAREHOUSE_PATH'))
+# con.execute("DROP TABLE IF EXISTS cleaned_sales")
+# con.execute("CREATE TABLE cleaned_sales AS SELECT * FROM df_clean")
+# con.close()
+# print(f"✅ Saved {len(df_clean):,} rows to 'cleaned_sales'")
+
+# # Example 2: Aggregate and save
+# con = duckdb.connect(getenv('WAREHOUSE_PATH'))
+# con.execute('''
+#     CREATE OR REPLACE TABLE daily_summary AS
+#     SELECT 
+#         date,
+#         SUM(amount) as total_amount,
+#         COUNT(*) as transaction_count
+#     FROM df_transactions
+#     GROUP BY date
+# ''')
+# con.close()
+# print("✅ Created daily_summary table")
+
+# # Example 3: Join multiple DataFrames and save
+# con = duckdb.connect(getenv('WAREHOUSE_PATH'))
+# con.execute('''
+#     CREATE OR REPLACE TABLE enriched_data AS
+#     SELECT 
+#         t.*,
+#         u.user_name,
+#         p.product_name
+#     FROM df_transactions t
+#     LEFT JOIN df_users u ON t.user_id = u.id
+#     LEFT JOIN df_products p ON t.product_id = p.id
+# ''')
+# con.close()
+# print("✅ Created enriched_data table")
+# ```
+
+
 
 LOCAL_PERSISTENCE = """\
 ## Variable Persistence (Local Sandbox)
@@ -157,22 +231,26 @@ JUPYTER_WAREHOUSE = """\
 ### Local App Warehouse (NOT accessible)
 - The local app has a DuckDB warehouse for persistent data storage
 - **You CANNOT access or write to it from the remote kernel**
-- Tools like `materialize_to_duckdb` and `list_duckdb_tables` are not available in this environment
+- Any DuckDB operations you perform exist only in the remote kernel's memory
 
 ### Remote Kernel DuckDB (optional)
-- If DuckDB is installed in the remote kernel, you can use it for temporary analysis:
-  ```python
-  try:
-      import duckdb
-      con = duckdb.connect(':memory:')  # in-memory database
-      con.execute("CREATE TABLE temp AS SELECT * FROM df")
-      result = con.execute("SELECT * FROM temp WHERE ...").fetchdf()
-      con.close()
-  except ImportError:
-      print("DuckDB not available - use pandas operations instead")
-  ```
+If DuckDB is installed in the remote kernel, you can use it for temporary analysis:
+
+```python
+try:
+    import duckdb
+    con = duckdb.connect(':memory:')  # in-memory database
+    con.execute("CREATE TABLE temp AS SELECT * FROM df")
+    result = con.execute("SELECT * FROM temp WHERE ...").fetchdf()
+    con.close()
+except ImportError:
+    print("DuckDB not available - use pandas operations instead")
+```
+
+**Key limitations:**
 - Any tables you create exist only in the remote kernel's memory
 - They are NOT persisted and NOT accessible to other tasks
+- They will be lost when the kernel restarts
 
 ### Data Persistence Strategy
 If you need to save results for future use:
