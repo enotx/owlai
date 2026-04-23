@@ -86,7 +86,7 @@ echo "🐍 Python version:"
 
 # 升级 pip
 echo "📦 Upgrading pip..."
-"$PYTHON_EXE" -m pip install --upgrade pip
+"$PYTHON_EXE" -m pip install --upgrade pip "setuptools<75"
 
 # 安装依赖（修改这里，显式指定 vendor 目录）
 echo "📦 Installing dependencies..."

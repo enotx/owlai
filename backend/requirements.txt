@@ -159,7 +159,7 @@ lightning-utilities==0.15.2 ; python_full_version < '3.10'
     #   torchmetrics
 llvmlite==0.43.0 ; python_full_version < '3.10'
     # via numba
-llvmlite==0.46.0 ; python_full_version >= '3.10'
+llvmlite==0.44.0 ; python_full_version >= '3.10'
     # via
     #   numba
     #   shap
@@ -200,7 +200,7 @@ numba==0.60.0 ; python_full_version < '3.10'
     #   pyod
     #   shap
     #   statsforecast
-numba ; python_full_version >= '3.10'
+numba==0.61.2 ; python_full_version >= '3.10'
     # via
     #   pyod
     #   shap
@@ -463,7 +463,7 @@ scipy==1.17.1 ; python_full_version >= '3.11'
     #   scikit-learn
     #   shap
     #   statsmodels
-setuptools==82.0.1 ; python_full_version < '3.10'
+setuptools==82.0.1
     # via
     #   lightning-utilities
     #   triton
