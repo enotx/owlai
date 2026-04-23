@@ -16,7 +16,10 @@ import {
   Layers,
   Code2,
   ClipboardList,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   addTableToContext,
   addAssetToContext,
@@ -32,6 +35,13 @@ export default function KnowledgeZone() {
   const [isDragging, setIsDragging] = useState(false);
   const [dragSource, setDragSource] = useState<"file" | "datasource" | "asset" | "pipeline" | null>(null);
   const dragCounterRef = useRef(0);
+  const COLLAPSE_THRESHOLD = 2;
+  const [isCollapsed, setIsCollapsed] = useState(true);
+  const shouldCollapse = knowledgeList.length > COLLAPSE_THRESHOLD;
+  const visibleItems = shouldCollapse && isCollapsed
+    ? knowledgeList.slice(0, COLLAPSE_THRESHOLD)
+    : knowledgeList;
+  const hiddenCount = knowledgeList.length - COLLAPSE_THRESHOLD;
 
   const processFile = useCallback(async (file: File) => {
     if (!currentTaskId) return;
@@ -296,31 +306,83 @@ export default function KnowledgeZone() {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* File cards */}
-      <div className="flex flex-wrap items-start gap-3 mb-3">
-        {knowledgeList.map((k) => (
-          <div
-            key={k.id}
-            className="group relative flex items-center gap-2.5 rounded-lg border bg-card px-3 py-2.5 cursor-pointer hover:shadow-sm transition-shadow"
-            onClick={() => handlePreview(k)}
-          >
-            {getFileIcon(k.type)}
-            <div className="min-w-0">
-              <div className="text-sm font-medium truncate max-w-[140px]">{k.name}</div>
-              <div className="text-[10px] text-muted-foreground">{getFileMeta(k)}</div>
-            </div>
-            <button
-              className="ml-1 rounded-full p-0.5 opacity-0 group-hover:opacity-100 hover:bg-muted-foreground/20 transition-all"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleRemove(k.id);
-              }}
+      {/* File cards — collapsible */}
+      {knowledgeList.length > 0 && (
+        <div className="mb-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div
+              className={cn(
+                "flex flex-wrap items-center gap-2",
+                shouldCollapse && !isCollapsed && "max-h-[160px] overflow-y-auto pr-1"
+              )}
             >
-              <X className="h-3.5 w-3.5" />
-            </button>
+              {visibleItems.map((k) => (
+                <div
+                  key={k.id}
+                  className={cn(
+                    "group relative flex items-center gap-2 rounded-lg border bg-card cursor-pointer hover:shadow-sm transition-shadow",
+                    shouldCollapse && isCollapsed
+                      ? "px-2 py-1.5"
+                      : "px-3 py-2.5"
+                  )}
+                  onClick={() => handlePreview(k)}
+                >
+                  {getFileIcon(k.type)}
+                  <div className="min-w-0">
+                    <div
+                      className={cn(
+                        "font-medium truncate",
+                        shouldCollapse && isCollapsed
+                          ? "text-xs max-w-[100px]"
+                          : "text-sm max-w-[140px]"
+                      )}
+                    >
+                      {k.name}
+                    </div>
+                    {!(shouldCollapse && isCollapsed) && (
+                      <div className="text-[10px] text-muted-foreground">
+                        {getFileMeta(k)}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    className="ml-0.5 rounded-full p-0.5 opacity-0 group-hover:opacity-100 hover:bg-muted-foreground/20 transition-all"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRemove(k.id);
+                    }}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+
+              {/* Collapse / Expand toggle */}
+              {shouldCollapse && (
+                <button
+                  onClick={() => setIsCollapsed((v) => !v)}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-lg border border-dashed px-2.5 py-1.5 text-xs text-muted-foreground",
+                    "hover:bg-muted/60 hover:text-foreground transition-colors"
+                  )}
+                >
+                  {isCollapsed ? (
+                    <>
+                      <span>+{hiddenCount} more</span>
+                      <ChevronDown className="h-3 w-3" />
+                    </>
+                  ) : (
+                    <>
+                      <span>Show less</span>
+                      <ChevronUp className="h-3 w-3" />
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
           </div>
-        ))}
-      </div>
+        </div>
+      )}
 
       {/* Drop zone prompt */}
       <div
