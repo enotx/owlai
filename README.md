@@ -18,28 +18,6 @@ An AI-powered data analysis platform — think Jupyter, but conversational. Thro
 - **Skill System** — Extend agent capabilities with Markdown-based knowledge documents that teach agents how to use specific data sources or APIs.
 - **Privacy First** — Fully self-hosted. Runs as a local server or a Tauri desktop app with a bundled Portable Python runtime and common data-science libraries.
 
-## Architecture
-
-```
-┌─────────────────────────────────────────────┐
-│  Frontend — Next.js 16 (App Router) + Tauri │
-│  Tailwind CSS · shadcn/ui · Zustand · dnd-kit│
-└──────────────────┬──────────────────────────┘
-                   │ SSE / REST
-┌──────────────────▼──────────────────────────┐
-│  Backend — FastAPI + Python 3.12            │
-│  SQLAlchemy (async) · SQLite · DuckDB       │
-│  APScheduler · Sandboxed code execution     │
-└──────────────────┬──────────────────────────┘
-                   │
-       ┌───────────┼───────────┐
-       ▼           ▼           ▼
-   PlanAgent  AnalystAgent  TaskManagerAgent
-       └───────────┼───────────┘
-                   ▼
-            AgentOrchestrator
-```
-
 ## Quick Start
 
 ### Prerequisites
@@ -52,8 +30,8 @@ An AI-powered data analysis platform — think Jupyter, but conversational. Thro
 
 ```bash
 # Clone
-git clone https://github.com/your-org/owl.git
-cd owl
+git clone https://github.com/enotx/owlai.git
+cd owlai
 
 # Backend
 cd backend
@@ -99,11 +77,11 @@ npm run tauri build
 npm run tauri build
 ```
 
-Pre-built binaries are available on the [Releases](https://github.com/your-org/owl/releases) page for macOS and Windows.
+Pre-built binaries are available on the [Releases](https://github.com/enotx/owlai/releases) page for macOS and Windows.
 
 ## Configuration
 
-Owl is configured through the in-app Settings UI:
+owl.ai is configured through the in-app Settings UI:
 
 | Section | What you configure |
 |---|---|
@@ -136,7 +114,7 @@ All configuration is stored locally in SQLite — nothing leaves your machine.
 ## Project Structure
 
 ```
-owl/
+owlai/
 ├── backend/
 │   ├── app/
 │   │   ├── models.py          # SQLAlchemy models
