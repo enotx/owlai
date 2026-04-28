@@ -18,8 +18,8 @@ import time
 import uuid
 from typing import Any, TypedDict, TypeGuard
 from app.services.code_security import check_code_security
-from app.config import PYTHON_EXECUTABLE, UPLOADS_DIR
-
+from app.config import PYTHON_EXECUTABLE
+from app.tenant_context import get_uploads_dir, get_warehouse_path
 
 # 沙箱参数
 SANDBOX_TIMEOUT = 60  # 秒
@@ -829,8 +829,7 @@ async def execute_code_in_sandbox(
             if key in os.environ:
                 sandbox_env[key] = os.environ[key]
         # 注入 DuckDB 仓库路径
-        from app.config import WAREHOUSE_PATH
-        sandbox_env["WAREHOUSE_PATH"] = str(WAREHOUSE_PATH)
+        sandbox_env["WAREHOUSE_PATH"] = str(get_warehouse_path())
         # 注入 Skill 环境变量（如 TALOS_USER, TALOS_TOKEN）
         if clean_envs:
             sandbox_env.update(clean_envs)
@@ -839,7 +838,7 @@ async def execute_code_in_sandbox(
             PYTHON_EXECUTABLE, tmp_file.name,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=UPLOADS_DIR,  # 沙箱工作目录
+            cwd=str(get_uploads_dir()),  # 沙箱工作目录
             env=sandbox_env,  # None 时继承父进程环境，有值时使用精简环境
         )
 

@@ -228,7 +228,7 @@ async def switch_task_runtime(
     """
     from app.schemas import RuntimeSwitchRequest as RSR
     from app.models import Task, Knowledge
-    from app.config import UPLOADS_DIR
+    from app.tenant_context import get_uploads_dir
     import shutil
 
     task = await db.get(Task, task_id)
@@ -259,12 +259,12 @@ async def switch_task_runtime(
         await db.delete(k)
 
     # 清除 persist 目录
-    persist_dir = os.path.join(str(UPLOADS_DIR), task_id, "captures", "persist")
+    persist_dir = os.path.join(str(get_uploads_dir()), task_id, "captures", "persist")
     if os.path.isdir(persist_dir):
         shutil.rmtree(persist_dir, ignore_errors=True)
 
     # 清除 captures 目录
-    captures_dir = os.path.join(str(UPLOADS_DIR), task_id, "captures")
+    captures_dir = os.path.join(str(get_uploads_dir()), task_id, "captures")
     if os.path.isdir(captures_dir):
         shutil.rmtree(captures_dir, ignore_errors=True)
 

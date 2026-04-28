@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { useBackend } from "@/contexts/backend-context";
 import { useDatabase } from "@/contexts/database-context";
-import { useOnboarding } from "@/contexts/onboarding-context";
+import LoginDialog from "@/components/auth/login-dialog";
 import {
   fetchProviders,
   fetchAgentConfigs,
@@ -228,7 +228,7 @@ function MobileTitle() {
 export default function HomePage() {
   const { status: backendStatus } = useBackend();
   const { shouldShowWarning: showDatabaseWarning, dismissWarning: dismissDatabaseWarning } = useDatabase();
-  const { shouldShowOnboarding, skipOnboarding, recheckConfiguration } = useOnboarding();
+  // const { shouldShowOnboarding, skipOnboarding, recheckConfiguration } = useOnboarding();
   const { updateStatus, setUpdateStatus, setUpdateInfo, setSettingsOpen, setSelectedSettingsItem } = useSettingsStore();
   const isTauriEnv = typeof window !== "undefined" && "__TAURI__" in window;
   const t = useTranslations("common");
@@ -611,6 +611,7 @@ export default function HomePage() {
       {/* Dialogs */}
       <SettingsDialog />
       <DatabaseWarningDialog open={showDatabaseWarning} onClose={() => dismissDatabaseWarning()} />
+      <LoginDialog />
     </div>
   );
 }

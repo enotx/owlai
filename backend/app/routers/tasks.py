@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import select
 
 from app.database import get_db
+from app.tenant_context import open_tenant_session
 from app.models import Task, Step, Knowledge, DataPipeline, JupyterConfig
 from app.schemas import (
     TaskCreate, 
@@ -46,7 +47,7 @@ async def _run_task_in_background(
     from app.services.execution_registry import execution_registry
 
     try:
-        async with async_session() as db:
+        async with open_tenant_session() as db:
             async for raw_event in execute_task(
                 task_id=task_id,
                 db=db,
@@ -382,7 +383,7 @@ async def update_task_mode(
     
     await db.commit()
     await db.refresh(task)
-
+    return task
 
 @router.post("/{task_id}/auto-rename", response_model=TaskResponse)
 async def auto_rename_task(task_id: str, db: AsyncSession = Depends(get_db)):

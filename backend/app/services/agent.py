@@ -25,11 +25,10 @@ from app.services.data_processor import (
     get_csv_sample_rows,
     read_text_content,
 )
+from app.tenant_context import open_tenant_session
 from app.services.agents.orchestrator import AgentOrchestrator
 
 from app.services.sandbox import execute_code_in_sandbox
-
-from app.config import UPLOADS_DIR
 
 
 # ── 配置 ──────────────────────────────────────────────────────
@@ -247,7 +246,7 @@ async def run_agent_events(
     from sqlalchemy import select
 
     # ── 保存用户消息 ──
-    async with async_session() as write_db:
+    async with open_tenant_session() as write_db:
         user_step = Step(
             task_id=task_id,
             role="user",
@@ -270,7 +269,7 @@ async def run_agent_events(
     execution_mode = mode or task.mode
 
     if mode and mode != task.mode:
-        async with async_session() as write_db:
+        async with open_tenant_session() as write_db:
             result = await write_db.execute(select(Task).where(Task.id == task_id))
             task_to_update = result.scalar_one_or_none()
             if task_to_update:
@@ -288,7 +287,7 @@ async def run_agent_events(
         )
         yield {"type": "text", "content": error_msg}
 
-        async with async_session() as write_db:
+        async with open_tenant_session() as write_db:
             error_step = Step(
                 task_id=task_id,
                 role="assistant",
@@ -333,7 +332,7 @@ async def run_agent_events(
             # ── tool_start：先落盘累积文本，再记录工具信息 ──
             elif event_type == "tool_start":
                 if accumulated_text.strip():
-                    async with async_session() as write_db:
+                    async with open_tenant_session() as write_db:
                         text_step = Step(
                             task_id=task_id,
                             role="assistant",
@@ -352,7 +351,7 @@ async def run_agent_events(
 
             # ── tool_result：保存 tool_use Step ──
             elif event_type == "tool_result":
-                async with async_session() as write_db:
+                async with open_tenant_session() as write_db:
                     tool_step = Step(
                         task_id=task_id,
                         role="assistant",
@@ -379,7 +378,7 @@ async def run_agent_events(
             # ── plan_generated ──
             elif event_type == "plan_generated":
                 if accumulated_text.strip():
-                    async with async_session() as write_db:
+                    async with open_tenant_session() as write_db:
                         text_step = Step(
                             task_id=task_id,
                             role="assistant",
@@ -394,7 +393,7 @@ async def run_agent_events(
                     accumulated_text = ""
 
                 plan_data = event.get("plan", {})
-                async with async_session() as write_db:
+                async with open_tenant_session() as write_db:
                     plan_step = Step(
                         task_id=task_id,
                         role="assistant",
@@ -411,7 +410,7 @@ async def run_agent_events(
             # ── visualization ──
             elif event_type == "visualization":
                 if accumulated_text.strip():
-                    async with async_session() as write_db:
+                    async with open_tenant_session() as write_db:
                         text_step = Step(
                             task_id=task_id,
                             role="assistant",
@@ -441,7 +440,7 @@ async def run_agent_events(
                     yield {"type": "error", "content": "Visualization option too large (>200KB). Please aggregate data."}
                     continue
 
-                async with async_session() as write_db:
+                async with open_tenant_session() as write_db:
                     viz = Visualization(
                         task_id=task_id,
                         title=title,
@@ -477,7 +476,7 @@ async def run_agent_events(
             # ── hitl_request ──
             elif event_type == "hitl_request":
                 if accumulated_text.strip():
-                    async with async_session() as write_db:
+                    async with open_tenant_session() as write_db:
                         text_step = Step(
                             task_id=task_id,
                             role="assistant",
@@ -505,7 +504,7 @@ async def run_agent_events(
                 if event.get("sop") is not None:
                     hitl_data["sop"] = event["sop"]
 
-                async with async_session() as write_db:
+                async with open_tenant_session() as write_db:
                     hitl_step = Step(
                         task_id=task_id,
                         role="assistant",
@@ -524,7 +523,7 @@ async def run_agent_events(
 
         # ── 流结束，落盘剩余文本 ──
         if accumulated_text.strip():
-            async with async_session() as write_db:
+            async with open_tenant_session() as write_db:
                 final_text_step = Step(
                     task_id=task_id,
                     role="assistant",
@@ -545,7 +544,7 @@ async def run_agent_events(
         yield {"type": "error", "content": f"Agent error: {str(e)}"}
 
         try:
-            async with async_session() as write_db:
+            async with open_tenant_session() as write_db:
                 err_step = Step(
                     task_id=task_id,
                     role="assistant",

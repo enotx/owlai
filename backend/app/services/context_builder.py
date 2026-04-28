@@ -18,7 +18,7 @@ from app.services.data_processor import (
     get_excel_sample_rows,
     read_text_content,
 )
-from app.config import UPLOADS_DIR
+
 import os
 import json
 import glob
@@ -144,7 +144,8 @@ async def _get_knowledge_context(task_id: str, db: AsyncSession) -> tuple[str, s
                 pass
     
     # 扫描 persist/ 目录
-    persist_dir = os.path.join(UPLOADS_DIR, task_id, "captures", "persist")
+    from app.tenant_context import get_uploads_dir
+    persist_dir = os.path.join(str(get_uploads_dir()), task_id, "captures", "persist")
     persisted_var_parts: list[str] = []
     
     if os.path.isdir(persist_dir):
@@ -400,7 +401,8 @@ async def _get_knowledge_context_with_assets(
                 pass
     
     # 扫描 persist/ 目录
-    persist_dir = os.path.join(UPLOADS_DIR, task_id, "captures", "persist")
+    from app.tenant_context import get_uploads_dir
+    persist_dir = os.path.join(str(get_uploads_dir()), task_id, "captures", "persist")
     persisted_var_parts: list[str] = []
     
     if os.path.isdir(persist_dir):

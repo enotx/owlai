@@ -24,6 +24,21 @@ import pandas as pd
 
 from app.config import WAREHOUSE_PATH
 
+def _get_warehouse_path() -> str:
+    """获取当前租户的 warehouse 路径"""
+    try:
+        from app.tenant_context import get_warehouse_path
+        return str(get_warehouse_path())
+    except RuntimeError:
+        # Fallback：非请求上下文中（如启动时），使用全局路径
+        from app.config import WAREHOUSE_PATH
+        return _get_warehouse_path()
+def _warehouse_exists() -> bool:
+    """检查 warehouse 文件是否存在"""
+    from pathlib import Path
+    return Path(_get_warehouse_path()).exists()
+
+
 # 合法表名正则（字母/下划线开头，仅允许字母数字下划线）
 _VALID_TABLE_NAME = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,127}$")
 
@@ -79,7 +94,7 @@ def write_dataframe(
     Returns:
         {"rows_written": int, "total_rows": int, "schema": list[dict]}
     """
-    db_path = str(WAREHOUSE_PATH)
+    db_path = _get_warehouse_path()
     con = duckdb.connect(db_path)
     try:
         if strategy == "replace":
@@ -126,7 +141,7 @@ def write_dataframe(
 
 def query(sql: str, limit: int = 100000) -> pd.DataFrame:
     """只读查询 DuckDB 仓库"""
-    db_path = str(WAREHOUSE_PATH)
+    db_path = _get_warehouse_path()
     con = duckdb.connect(db_path, read_only=True)
     try:
         # 安全限制：自动追加 LIMIT（如果用户没写）
@@ -140,8 +155,8 @@ def query(sql: str, limit: int = 100000) -> pd.DataFrame:
 
 def list_tables() -> list[dict[str, Any]]:
     """列出 DuckDB 仓库中的所有表"""
-    db_path = str(WAREHOUSE_PATH)
-    if not WAREHOUSE_PATH.exists():
+    db_path = _get_warehouse_path()
+    if not _warehouse_exists():
         return []
     con = duckdb.connect(db_path, read_only=True)
     try:
@@ -170,7 +185,7 @@ def list_tables() -> list[dict[str, Any]]:
 
 def get_table_preview(table_name: str, limit: int = 50) -> dict[str, Any]:
     """获取表的数据预览"""
-    db_path = str(WAREHOUSE_PATH)
+    db_path = _get_warehouse_path()
     con = duckdb.connect(db_path, read_only=True)
     try:
         total_result = con.execute(f"SELECT COUNT(*) FROM \"{table_name}\"").fetchone()
@@ -191,7 +206,7 @@ def get_table_preview(table_name: str, limit: int = 50) -> dict[str, Any]:
 
 def get_table_schema(table_name: str) -> list[dict[str, str]]:
     """获取单张表的 schema"""
-    db_path = str(WAREHOUSE_PATH)
+    db_path = _get_warehouse_path()
     con = duckdb.connect(db_path, read_only=True)
     try:
         return _get_table_schema(con, table_name)
@@ -201,7 +216,7 @@ def get_table_schema(table_name: str) -> list[dict[str, str]]:
 
 def drop_table(table_name: str) -> bool:
     """删除 DuckDB 中的表"""
-    db_path = str(WAREHOUSE_PATH)
+    db_path = _get_warehouse_path()
     con = duckdb.connect(db_path)
     try:
         con.execute(f"DROP TABLE IF EXISTS \"{table_name}\"")
@@ -212,8 +227,8 @@ def drop_table(table_name: str) -> bool:
 
 def table_exists(table_name: str) -> bool:
     """检查表是否存在"""
-    db_path = str(WAREHOUSE_PATH)
-    if not WAREHOUSE_PATH.exists():
+    db_path = _get_warehouse_path()
+    if not _warehouse_exists():
         return False
     con = duckdb.connect(db_path, read_only=True)
     try:
@@ -333,7 +348,7 @@ async def sync_table_metadata(
     # 获取最新信息
     schema = await asyncio.to_thread(get_table_schema, table_name)
     
-    db_path = str(WAREHOUSE_PATH)
+    db_path = _get_warehouse_path()
     con = await asyncio.to_thread(duckdb.connect, db_path, read_only=True)
     try:
         count_result = await asyncio.to_thread(

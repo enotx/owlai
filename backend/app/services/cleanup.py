@@ -9,7 +9,8 @@ import logging
 import shutil
 from pathlib import Path
 
-from app.config import UPLOADS_DIR, TEMP_DIR
+from app.config import TEMP_DIR
+from app.tenant_context import get_uploads_dir
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ def delete_task_files(task_id: str, knowledge_file_paths: list[str]) -> None:
     同步清理 Task 关联的磁盘文件。
     由 BackgroundTasks 在后台线程池调用，不阻塞 API。
     """
-    uploads_resolved = UPLOADS_DIR.resolve()
+    uploads_resolved = get_uploads_dir().resolve()
 
     # ── 删除 Knowledge 上传文件 ──────────────────────────
     for fpath_str in knowledge_file_paths:
@@ -38,7 +39,7 @@ def delete_task_files(task_id: str, knowledge_file_paths: list[str]) -> None:
             logger.warning(f"Failed to delete knowledge file {fpath_str}: {e}")
 
     # ── 删除 Task 目录 (captures / persist / charts / maps) ──
-    task_dir = UPLOADS_DIR / task_id
+    task_dir = get_uploads_dir() / task_id
     _safe_rmtree(task_dir, uploads_resolved)
 
     # ── 清理空父目录 ────────────────────────────────────
@@ -95,10 +96,10 @@ async def cleanup_orphaned_files() -> dict:
         r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
         re.IGNORECASE,
     )
-    uploads_resolved = UPLOADS_DIR.resolve()
+    uploads_resolved = get_uploads_dir().resolve()
 
-    if UPLOADS_DIR.exists():
-        for child in UPLOADS_DIR.iterdir():
+    if get_uploads_dir().exists():
+        for child in get_uploads_dir().iterdir():
             if not child.is_dir():
                 continue
             if not uuid_pattern.match(child.name):
@@ -152,8 +153,8 @@ async def cleanup_orphaned_files() -> dict:
         logger.warning(f"Failed to query knowledge file paths: {e}")
         live_file_paths = set()
 
-    if UPLOADS_DIR.exists() and live_file_paths is not None:
-        for child in UPLOADS_DIR.iterdir():
+    if get_uploads_dir().exists() and live_file_paths is not None:
+        for child in get_uploads_dir().iterdir():
             if not child.is_file():
                 continue
             resolved = str(child.resolve())

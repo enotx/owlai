@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.database import get_db, async_session as get_async_session
+from app.database import get_db
+from app.tenant_context import open_tenant_session
 from app.models import Step, Task, Visualization
 from app.schemas import ChatRequest, StepResponse
 from app.services.agent import run_agent_events
@@ -13,7 +14,7 @@ import os
 import json as _json
 from datetime import datetime
 from typing import Any, Mapping, Sequence, cast, Dict
-from app.config import UPLOADS_DIR
+from app.tenant_context import get_uploads_dir
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 # ── 后台 chat execution runner ─────────────────────────────────
 async def _run_chat_in_background(
@@ -25,7 +26,7 @@ async def _run_chat_in_background(
 ) -> None:
     """后台执行 agent，事件写入 ExecutionRegistry"""
     try:
-        async with get_async_session() as db:
+        async with open_tenant_session() as db:
             async for event in run_agent_events(
                 task_id=task_id,
                 user_message=user_message,
@@ -153,7 +154,7 @@ async def get_step_dataframe(
         raise HTTPException(status_code=404, detail=f"DataFrame '{df_name}' not found in this step")
 
     capture_id = target.get("capture_id", "")
-    capture_dir = os.path.join(UPLOADS_DIR, step.task_id, "captures")
+    capture_dir = os.path.join(str(get_uploads_dir()), step.task_id, "captures")
     file_path = os.path.join(capture_dir, f"{capture_id}_{df_name}.json")
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Captured data file not found")
@@ -215,7 +216,7 @@ async def export_step_dataframe(
     capture_id = target.get("capture_id", "")
     
     # 3. 组装文件路径
-    capture_dir = os.path.join(UPLOADS_DIR, step.task_id, "captures")
+    capture_dir = os.path.join(str(get_uploads_dir()), step.task_id, "captures")
     file_path = os.path.join(capture_dir, f"{capture_id}_{df_name}.json")
     
     if not os.path.exists(file_path):
@@ -223,7 +224,7 @@ async def export_step_dataframe(
     
     # 安全检查
     real_path = os.path.realpath(file_path)
-    uploads_real = os.path.realpath(UPLOADS_DIR)
+    uploads_real = os.path.realpath(str(get_uploads_dir()))
     if not real_path.startswith(uploads_real):
         raise HTTPException(status_code=403, detail="Access denied")
     
@@ -282,7 +283,7 @@ async def delete_step(
             for df_meta in output_data.get("dataframes", []):
                 capture_id = df_meta.get("capture_id", "")
                 df_name = df_meta.get("name", "")
-                capture_dir = os.path.join(UPLOADS_DIR, step.task_id, "captures")
+                capture_dir = os.path.join(str(get_uploads_dir()), step.task_id, "captures")
                 file_path = os.path.join(capture_dir, f"{capture_id}_{df_name}.json")
                 if os.path.exists(file_path):
                     os.remove(file_path)
@@ -377,7 +378,7 @@ async def regenerate_from_step(
                 for df_meta in output_data.get("dataframes", []):
                     capture_id = df_meta.get("capture_id", "")
                     df_name = df_meta.get("name", "")
-                    capture_dir = os.path.join(UPLOADS_DIR, step.task_id, "captures")
+                    capture_dir = os.path.join(str(get_uploads_dir()), step.task_id, "captures")
                     file_path = os.path.join(capture_dir, f"{capture_id}_{df_name}.json")
                     if os.path.exists(file_path):
                         os.remove(file_path)

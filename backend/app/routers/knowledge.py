@@ -18,7 +18,7 @@ from app.schemas import (
     AddPipelineToContextRequest,
 )
 from app.services.data_processor import parse_csv_metadata, get_csv_preview
-from app.config import UPLOADS_DIR  # 新增：导入动态路径
+from app.tenant_context import get_uploads_dir  # 新增：导入动态路径
 
 from app.services.data_processor import (
     parse_csv_metadata, 
@@ -105,7 +105,7 @@ async def upload_knowledge(
             status_code=409,
             detail=f"A file named '{filename}' already exists in this task. Please rename or delete the existing one first.",
         )
-    task_dir = UPLOADS_DIR / task_id
+    task_dir = get_uploads_dir() / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
     # 文件落盘
     file_path = task_dir / filename
@@ -364,9 +364,9 @@ async def download_knowledge(
     if not item.file_path or not os.path.exists(item.file_path):
         raise HTTPException(status_code=404, detail="File not found on disk")
     
-    # 安全检查：确保文件路径在UPLOADS_DIR内
+    # 安全检查：确保文件路径在UPLOADS_DIR内（用get_uploads_dir()获取）
     real_path = os.path.realpath(item.file_path)
-    uploads_real = os.path.realpath(UPLOADS_DIR)
+    uploads_real = os.path.realpath(str(get_uploads_dir()))
     if not real_path.startswith(uploads_real):
         raise HTTPException(status_code=403, detail="Access denied")
     

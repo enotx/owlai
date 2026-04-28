@@ -5,6 +5,8 @@
  * - Tauri 桌面模式：通过 invoke 获取 sidecar 实际端口
  */
 import axios, { type AxiosInstance } from "axios";
+import { getAccessToken } from "@/lib/supabase";
+
 
 declare global {
   interface Window {
@@ -46,14 +48,23 @@ async function getApi(): Promise<AxiosInstance> {
   if (cachedApi) {
     return cachedApi;
   }
-
   const baseURL = await getBaseUrl();
   cachedApi = axios.create({
     baseURL,
     timeout: 30000,
     headers: { "Content-Type": "application/json" },
   });
-
+  // ── 新增：Cloud 模式下自动附加 JWT ──
+  cachedApi.interceptors.request.use(async (config) => {
+    // 非 Tauri 且有 Supabase 配置时，附加 Bearer token
+    if (!isTauriDesktop() && process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      const token = await getAccessToken();
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+    }
+    return config;
+  });
   return cachedApi;
 }
 
@@ -180,9 +191,17 @@ export async function streamTaskExecutionEvents(
       ? `${baseUrl}/tasks/${taskId}/executions/${executionId}/events?after_seq=${afterSeq}`
       : `/api/backend/tasks/${taskId}/executions/${executionId}/events?after_seq=${afterSeq}`;
 
+    // 构建 headers
+    const headers: Record<string, string> = { Accept: "text/event-stream" };
+    if (!isTauriDesktop() && process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      const token = await getAccessToken();
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+    }
     const res = await fetch(streamUrl, {
       method: "GET",
-      headers: { Accept: "text/event-stream" },
+      headers,
       signal: controller.signal,
     });
 

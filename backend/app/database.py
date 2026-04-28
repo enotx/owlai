@@ -4,10 +4,12 @@
 
 import json
 
+from fastapi import Request
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import select, text
-from app.config import DATA_DIR
+from app.config import DATA_DIR, APP_MODE
+
 import os
 import logging
 
@@ -634,16 +636,95 @@ async def _create_default_agent_configs() -> None:
         await session.commit()
 
 
-async def get_db():
-    """获取数据库会话的依赖注入"""
-    async with async_session() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
+async def get_db(request: Request):
+    """
+    获取数据库会话的依赖注入。
+    
+    - 非 cloud 模式：使用全局 async_session，设置 local 租户上下文
+    - cloud 模式：从 JWT 解析用户，动态路由到租户 DB
+    """
+    from app.config import APP_MODE
 
+    if APP_MODE != "cloud":
+        # ── 非 cloud 模式：行为与原来完全一致 ──
+        from app.tenant_context import set_tenant, _get_local_tenant
+        set_tenant(_get_local_tenant())
+
+        async with async_session() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+    else:
+        # ── Cloud 模式：JWT → 租户目录 → 动态 session ──
+        from fastapi import Request as _Req
+        from app.tenant_context import (
+            TenantInfo,
+            set_tenant,
+            ensure_tenant_db_initialized,
+            _get_or_create_engine,
+        )
+        from app.auth import verify_supabase_jwt
+        from app.config import TENANT_DATA_ROOT
+
+        assert request is not None, "Request required in cloud mode"
+
+        # 提取 JWT
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.startswith("Bearer "):
+            from fastapi import HTTPException, status
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        token = auth_header[7:]
+        payload = verify_supabase_jwt(token)
+        user_id = payload.get("sub", "")
+        email = payload.get("email", "")
+
+        # 构建租户目录
+        tenant_dir = TENANT_DATA_ROOT / f"u_{user_id}"
+        tenant_dir.mkdir(parents=True, exist_ok=True)
+
+        uploads_dir = tenant_dir / "uploads"
+        uploads_dir.mkdir(exist_ok=True)
+
+        warehouse_dir = tenant_dir / "warehouse"
+        warehouse_dir.mkdir(exist_ok=True)
+
+        (tenant_dir / "temp").mkdir(exist_ok=True)
+
+        tenant = TenantInfo(
+            user_id=user_id,
+            email=email,
+            data_dir=tenant_dir,
+            uploads_dir=uploads_dir,
+            warehouse_path=warehouse_dir / "warehouse.duckdb",
+            db_path=tenant_dir / "owl.db",
+        )
+
+        # 设置 contextvars（后续所有深层调用都能读到）
+        set_tenant(tenant)
+
+        # 确保 schema 已初始化
+        await ensure_tenant_db_initialized(tenant)
+
+        # 创建租户 session
+        engine = _get_or_create_engine(tenant.db_path)
+        factory = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False
+        )
+        async with factory() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
 
 async def _seed_builtin_skills() -> None:
     """Seed 内置系统 Skill（幂等：仅在不存在时创建，已存在则同步配置）"""

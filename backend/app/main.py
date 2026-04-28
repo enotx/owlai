@@ -14,7 +14,7 @@ from app.routers import tasks, knowledge, chat, execute, \
                         llm, database, subtasks, skills, \
                         visualizations, warehouse, assets, \
                         data_pipelines, runtimes
-from app.config import UPLOADS_DIR, APP_MODE
+from app.config import APP_MODE
 
 
 
@@ -25,7 +25,12 @@ async def lifespan(app: FastAPI):
 
     logger = logging.getLogger(__name__)
 
-    await init_db()
+    if APP_MODE != "cloud":
+        await init_db()
+    else:
+        # Cloud 模式下不初始化全局 DB，每个租户独立初始化
+        import logging
+        logging.getLogger(__name__).info("Cloud mode: skipping global DB init, tenants are lazy-initialized")
 
     # ── 启动时清理孤儿文件（DB 中已不存在的 Task 残留） ──
     try:
@@ -86,6 +91,16 @@ elif APP_MODE == "docker":
             allow_headers=["*"],
         )
         # print(f"🌐 CORS enabled for origins: {allowed_origins}")
+elif APP_MODE == "cloud":
+    allowed_origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
+    if allowed_origins and allowed_origins[0]:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=allowed_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
 
 # 注册路由

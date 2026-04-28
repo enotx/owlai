@@ -5,6 +5,7 @@ import "katex/dist/katex.min.css";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { AuthProvider } from "@/contexts/auth-context";
 import { BackendProvider } from "@/contexts/backend-context";
 import { OnboardingProvider } from "@/contexts/onboarding-context";
 import { DatabaseProvider } from "@/contexts/database-context";
@@ -30,6 +31,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
+    <AuthProvider>
     <html lang="en">
       <body
         className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}
@@ -46,5 +48,6 @@ export default function RootLayout({
         </I18nProvider>
       </body>
     </html>
+    </AuthProvider>
   );
 }
