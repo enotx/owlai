@@ -15,7 +15,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const messages = require(`@/locales/${locale}.json`);
 
   return (
-    <NextIntlClientProvider locale={locale} messages={messages}>
+    <NextIntlClientProvider locale={locale} messages={messages} timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone}>
       {children}
     </NextIntlClientProvider>
   );
