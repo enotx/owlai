@@ -75,6 +75,10 @@ CLOUD_MODE = APP_MODE == "cloud"
 
 # Supabase JWT 验证（仅 cloud 模式使用）
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
+SUPABASE_JWKS_URL = (
+    f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json" if SUPABASE_URL else ""
+)
 
 # 租户数据根目录（仅 cloud 模式使用）
 home = Path.home()

@@ -682,7 +682,7 @@ async def get_db(request: Request):
             )
 
         token = auth_header[7:]
-        payload = verify_supabase_jwt(token)
+        payload = await verify_supabase_jwt(token)
         user_id = payload.get("sub", "")
         email = payload.get("email", "")
 

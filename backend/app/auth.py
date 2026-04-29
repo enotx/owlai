@@ -5,43 +5,117 @@
 - cloud 模式：验证 Supabase JWT，提取 user_id，动态路由到租户目录
 - dev / docker / desktop 模式：返回固定的 "local" 用户，行为与原来完全一致
 """
-
-from jwt import decode, ExpiredSignatureError, InvalidTokenError
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+import httpx
+import jwt
+from jwt import ExpiredSignatureError, InvalidTokenError, decode
+from jwt.algorithms import get_default_algorithms
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-from app.config import APP_MODE, CLOUD_MODE, SUPABASE_JWT_SECRET, TENANT_DATA_ROOT
+from app.config import (
+    APP_MODE,
+    CLOUD_MODE,
+    SUPABASE_JWT_SECRET,
+    SUPABASE_URL,
+    SUPABASE_JWKS_URL,
+    TENANT_DATA_ROOT,
+)
 
 # cloud 模式使用 Bearer token；其他模式此依赖不生效
 _http_bearer = HTTPBearer(auto_error=False)
 
 
-def verify_supabase_jwt(token: str) -> dict:
+async def verify_supabase_jwt(token: str) -> dict[str, Any]:
     """
-    验证 Supabase JWT，返回 payload dict。
-    
-    供 get_current_user 和 get_db (cloud模式) 共用。
+    验证 Supabase JWT，兼容：
+    - 老方案：HS256 + SUPABASE_JWT_SECRET
+    - 新方案：ES256/RS256 + Supabase JWKS
     """
     try:
-        payload = decode(
+        unverified_header = jwt.get_unverified_header(token)
+        alg = unverified_header.get("alg")
+        kid = unverified_header.get("kid")
+
+        unverified_payload = jwt.decode(
             token,
-            SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            audience="authenticated",
+            options={"verify_signature": False, "verify_exp": False},
+            algorithms=[alg] if alg else None,
         )
-        return payload
+        issuer = unverified_payload.get("iss")
+
+        if alg == "HS256":
+            if not SUPABASE_JWT_SECRET:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="SUPABASE_JWT_SECRET is not configured",
+                )
+            return jwt.decode(
+                token,
+                SUPABASE_JWT_SECRET,
+                algorithms=["HS256"],
+                audience="authenticated",
+                issuer=issuer,
+            )
+
+        if alg in {"RS256", "ES256"}:
+            if not SUPABASE_JWKS_URL:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="SUPABASE_URL is not configured",
+                )
+            if not kid:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid token: missing kid",
+                )
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(SUPABASE_JWKS_URL)
+                resp.raise_for_status()
+                jwks = resp.json()
+
+            keys = jwks.get("keys", [])
+            jwk = next((key for key in keys if key.get("kid") == kid), None)
+            if not jwk:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid token: signing key not found",
+                )
+
+            public_key = get_default_algorithms()[alg].from_jwk(jwk)
+            return jwt.decode(
+                token,
+                public_key,
+                algorithms=[alg],
+                audience="authenticated",
+                issuer=issuer,
+            )
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Unsupported token algorithm: {alg}",
+        )
+
     except ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token expired",
         )
-    except InvalidTokenError:
+    except HTTPException:
+        raise
+    except InvalidTokenError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
+            detail=f"Invalid token: {exc}",
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Failed to fetch JWKS: {exc}",
         )
 
 @dataclass
@@ -100,7 +174,7 @@ async def get_current_user(
             detail="Authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    payload = verify_supabase_jwt(credentials.credentials)
+    payload = await verify_supabase_jwt(credentials.credentials)
     
     user_id = payload.get("sub")
     email = payload.get("email", "")
