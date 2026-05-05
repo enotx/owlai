@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncGenerator
+import duckdb
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -191,15 +192,20 @@ async def ensure_tenant_db_initialized(tenant: TenantInfo) -> None:
     # Seed default agent configs
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as session:
+        from app.database import _create_default_agent_configs, _seed_builtin_skills
         from app.models import AgentConfig
         from sqlalchemy import select
-
         for agent_type in ["default", "plan", "analyst", "task_manager", "misc"]:
             result = await session.execute(
                 select(AgentConfig).where(AgentConfig.agent_type == agent_type)
             )
             if not result.scalar_one_or_none():
                 session.add(AgentConfig(agent_type=agent_type))
+        await _create_default_agent_configs(session)
+        await _seed_builtin_skills(session)
         await session.commit()
-
+    # Ensure DuckDB warehouse file exists
+    tenant.warehouse_path.parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(str(tenant.warehouse_path))
+    con.close()
     _initialized_tenants.add(tenant.user_id)

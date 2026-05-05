@@ -32,7 +32,8 @@ def _get_warehouse_path() -> str:
     except RuntimeError:
         # Fallback：非请求上下文中（如启动时），使用全局路径
         from app.config import WAREHOUSE_PATH
-        return _get_warehouse_path()
+        return str(WAREHOUSE_PATH)
+    
 def _warehouse_exists() -> bool:
     """检查 warehouse 文件是否存在"""
     from pathlib import Path

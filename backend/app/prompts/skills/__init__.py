@@ -14,7 +14,7 @@ def get_builtin_skills() -> list[dict]:
         - is_active, is_system
     """
     return [
-        get_derive_skill(),
+        # get_derive_skill(),
         get_sop_skill(),
         get_script_skill(),
     ]

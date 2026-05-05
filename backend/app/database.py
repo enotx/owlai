@@ -599,9 +599,9 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
 
     # 3) 创建默认配置数据
-    await _create_default_agent_configs()
-    # 4) Seed 内置 Skills
-    await _seed_builtin_skills()
+    async with async_session() as session:
+        await _create_default_agent_configs(session)
+        await _seed_builtin_skills(session)
 
     logger.info(
         f"数据库初始化完成 (schema upgrade: {upgrade_result.get('from_version')} -> {upgrade_result.get('to_version')}, "
@@ -609,7 +609,7 @@ async def init_db() -> None:
     )
 
 
-async def _create_default_agent_configs() -> None:
+async def _create_default_agent_configs(session: AsyncSession) -> None:
     """创建默认的Agent配置（如果不存在）"""
     from app.models import AgentConfig
     
@@ -621,20 +621,17 @@ async def _create_default_agent_configs() -> None:
         {"agent_type": "misc"},
     ]
     
-    async with async_session() as session:
-        for config_data in default_configs:
-            # 检查是否已存在
-            result = await session.execute(
-                select(AgentConfig).where(AgentConfig.agent_type == config_data["agent_type"])
-            )
-            existing = result.scalar_one_or_none()
-            
-            if not existing:
-                config = AgentConfig(**config_data)
-                session.add(config)
+    for config_data in default_configs:
+        result = await session.execute(
+            select(AgentConfig).where(AgentConfig.agent_type == config_data["agent_type"])
+        )
+        existing = result.scalar_one_or_none()
         
-        await session.commit()
-
+        if not existing:
+            config = AgentConfig(**config_data)
+            session.add(config)
+    
+    await session.commit()
 
 async def get_db(request: Request):
     """
@@ -726,42 +723,39 @@ async def get_db(request: Request):
                 await session.rollback()
                 raise
 
-async def _seed_builtin_skills() -> None:
+async def _seed_builtin_skills(session: AsyncSession) -> None:
     """Seed 内置系统 Skill（幂等：仅在不存在时创建，已存在则同步配置）"""
     from app.models import Skill
     from app.prompts.skills import get_builtin_skills
     
     builtin_skills = get_builtin_skills()
     
-    async with async_session() as session:
-        for skill_def in builtin_skills:
-            result = await session.execute(
-                select(Skill).where(Skill.slash_command == skill_def["slash_command"])
-            )
-            existing = result.scalar_one_or_none()
-            
-            if not existing:
-                # 创建新 skill
-                skill = Skill(
-                    name=skill_def["name"],
-                    slash_command=skill_def["slash_command"],
-                    handler_type=skill_def.get("handler_type"),
-                    handler_config=skill_def.get("handler_config"),
-                    description=skill_def["description"],
-                    prompt_markdown=skill_def.get("prompt_markdown"),
-                    reference_markdown=skill_def.get("reference_markdown"),
-                    is_active=skill_def.get("is_active", True),
-                    is_system=True,
-                )
-                session.add(skill)
-            else:
-                # 更新现有 skill 的配置（保留用户的 is_active 状态）
-                existing.handler_type = skill_def.get("handler_type")
-                existing.handler_config = skill_def.get("handler_config")
-                existing.description = skill_def["description"]
-                existing.prompt_markdown = skill_def.get("prompt_markdown")
-                existing.reference_markdown = skill_def.get("reference_markdown")
-                if not existing.is_system:
-                    existing.is_system = True
+    for skill_def in builtin_skills:
+        result = await session.execute(
+            select(Skill).where(Skill.slash_command == skill_def["slash_command"])
+        )
+        existing = result.scalar_one_or_none()
         
-        await session.commit()
+        if not existing:
+            skill = Skill(
+                name=skill_def["name"],
+                slash_command=skill_def["slash_command"],
+                handler_type=skill_def.get("handler_type"),
+                handler_config=skill_def.get("handler_config"),
+                description=skill_def["description"],
+                prompt_markdown=skill_def.get("prompt_markdown"),
+                reference_markdown=skill_def.get("reference_markdown"),
+                is_active=skill_def.get("is_active", True),
+                is_system=True,
+            )
+            session.add(skill)
+        else:
+            existing.handler_type = skill_def.get("handler_type")
+            existing.handler_config = skill_def.get("handler_config")
+            existing.description = skill_def["description"]
+            existing.prompt_markdown = skill_def.get("prompt_markdown")
+            existing.reference_markdown = skill_def.get("reference_markdown")
+            if not existing.is_system:
+                existing.is_system = True
+    
+    await session.commit()
