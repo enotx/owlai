@@ -1,4 +1,4 @@
-# backend/app/config.py
+# owlai/backend/app/config.py
 import os
 import sys
 from pathlib import Path
@@ -86,5 +86,3 @@ TENANT_DATA_ROOT = home / os.getenv("TENANT_DATA_DIR", ".owl/tenant_data")
 if CLOUD_MODE:
     TENANT_DATA_ROOT.mkdir(parents=True, exist_ok=True)
 
-# New API 地址（仅 cloud 模式，用于 LLM 代理）
-NEW_API_BASE_URL = os.getenv("NEW_API_BASE_URL", "http://localhost:3000")

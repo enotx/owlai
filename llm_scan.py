@@ -10,7 +10,7 @@ import subprocess
 # --- 配置 ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR = os.path.join(BASE_DIR, "backend", "app")
-OUTPUT_FILE = "project_context.md"
+OUTPUT_FILE = "owl_app_project_context.md"
 
 class BackendDeepAnalyzer(ast.NodeVisitor):
     def __init__(self, current_file):

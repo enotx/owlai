@@ -5,6 +5,7 @@
 - cloud 模式：验证 Supabase JWT，提取 user_id，动态路由到租户目录
 - dev / docker / desktop 模式：返回固定的 "local" 用户，行为与原来完全一致
 """
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -28,12 +29,47 @@ from app.config import (
 # cloud 模式使用 Bearer token；其他模式此依赖不生效
 _http_bearer = HTTPBearer(auto_error=False)
 
+# ── JWKS 缓存 ──────────────────────────────────────────────
+_jwks_cache: dict[str, Any] | None = None
+_jwks_cache_time: float = 0.0
+_JWKS_CACHE_TTL: float = 3600.0  # 1 小时
+
+
+async def _get_jwks() -> dict[str, Any]:
+    """
+    获取 JWKS，带内存缓存。
+    - 缓存有效期内直接返回
+    - 过期后重新拉取，失败时降级使用旧缓存
+    """
+    global _jwks_cache, _jwks_cache_time
+
+    now = time.time()
+
+    # 缓存命中
+    if _jwks_cache is not None and (now - _jwks_cache_time) < _JWKS_CACHE_TTL:
+        return _jwks_cache
+
+    # 尝试刷新
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(SUPABASE_JWKS_URL)
+            resp.raise_for_status()
+            jwks = resp.json()
+        _jwks_cache = jwks
+        _jwks_cache_time = now
+        return jwks
+    except httpx.HTTPError:
+        # 网络失败但有旧缓存 → 降级使用旧缓存（宁可用过期 key 也不要拒绝用户）
+        if _jwks_cache is not None:
+            return _jwks_cache
+        raise
+
 
 async def verify_supabase_jwt(token: str) -> dict[str, Any]:
     """
     验证 Supabase JWT，兼容：
     - 老方案：HS256 + SUPABASE_JWT_SECRET
-    - 新方案：ES256/RS256 + Supabase JWKS
+    - 新方案：ES256/RS256 + Supabase JWKS（带缓存）
     """
     try:
         unverified_header = jwt.get_unverified_header(token)
@@ -73,13 +109,20 @@ async def verify_supabase_jwt(token: str) -> dict[str, Any]:
                     detail="Invalid token: missing kid",
                 )
 
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(SUPABASE_JWKS_URL)
-                resp.raise_for_status()
-                jwks = resp.json()
+            # 使用缓存的 JWKS
+            jwks = await _get_jwks()
 
             keys = jwks.get("keys", [])
             jwk = next((key for key in keys if key.get("kid") == kid), None)
+
+            if not jwk:
+                # kid 不匹配可能是密钥刚轮换，强制刷新一次
+                global _jwks_cache_time
+                _jwks_cache_time = 0.0  # 使缓存失效
+                jwks = await _get_jwks()
+                keys = jwks.get("keys", [])
+                jwk = next((key for key in keys if key.get("kid") == kid), None)
+
             if not jwk:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
