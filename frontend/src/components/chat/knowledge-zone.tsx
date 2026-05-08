@@ -23,17 +23,16 @@ import { cn } from "@/lib/utils";
 import {
   addTableToContext,
   addAssetToContext,
-  addPipelineToContext,
   fetchKnowledge,
 } from "@/lib/api";
 import { DATASOURCE_DRAG_TYPE } from "@/components/data/data-sources-tab";
-import { ASSET_DRAG_TYPE, PIPELINE_DRAG_TYPE } from "@/components/data/asset-panel";
+import { ASSET_DRAG_TYPE } from "@/components/data/asset-panel";
 
 export default function KnowledgeZone() {
   const { currentTaskId, knowledgeList, addKnowledge, removeKnowledge, setPreviewData } = useTaskStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [dragSource, setDragSource] = useState<"file" | "datasource" | "asset" | "pipeline" | null>(null);
+  const [dragSource, setDragSource] = useState<"file" | "datasource" | "asset"| null>(null);
   const dragCounterRef = useRef(0);
   const COLLAPSE_THRESHOLD = 2;
   const [isCollapsed, setIsCollapsed] = useState(true);
@@ -87,10 +86,7 @@ export default function KnowledgeZone() {
     e.stopPropagation();
     dragCounterRef.current++;
     const types = e.dataTransfer.types;
-    if (types.includes(PIPELINE_DRAG_TYPE)) {
-      setIsDragging(true);
-      setDragSource("pipeline");
-    } else if (types.includes(ASSET_DRAG_TYPE)) {
+    if (types.includes(ASSET_DRAG_TYPE)) {
       setIsDragging(true);
       setDragSource("asset");
     } else if (types.includes(DATASOURCE_DRAG_TYPE)) {
@@ -125,20 +121,6 @@ export default function KnowledgeZone() {
     dragCounterRef.current = 0;
 
     if (!currentTaskId) return;
-
-    // ── Pipeline drop ─────────────────────────────
-    const pipelinePayload = e.dataTransfer.getData(PIPELINE_DRAG_TYPE);
-    if (pipelinePayload) {
-      try {
-        const { id } = JSON.parse(pipelinePayload) as { id: string; name: string };
-        await addPipelineToContext(currentTaskId, id);
-        const knowledgeRes = await fetchKnowledge(currentTaskId);
-        useTaskStore.getState().setKnowledgeList(knowledgeRes.data);
-      } catch (err) {
-        console.error("Failed to add pipeline to context:", err);
-      }
-      return;
-    }
 
     // ── Asset drop ────────────────────────────────
     const assetPayload = e.dataTransfer.getData(ASSET_DRAG_TYPE);
@@ -397,16 +379,14 @@ export default function KnowledgeZone() {
             ? "Drop data source to add to context"
             : isDragging && dragSource === "asset"
               ? "Drop asset to add to context"
-              : isDragging && dragSource === "pipeline"
-                ? "Drop pipeline to add to context"
-                : isDragging && dragSource === "file"
-                  ? "Drop file to upload"
-                  : "Drop files, data sources, assets, or pipelines here"}
+              : isDragging && dragSource === "file"
+                ? "Drop file to upload"
+                : "Drop files, data sources, or assets here"}
         </span>
         <Layers className="h-4 w-4 opacity-40" />
         <Settings className="h-4 w-4 opacity-40" />
       </div>
-
+      
       <input
         ref={fileInputRef}
         type="file"

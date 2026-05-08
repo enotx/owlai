@@ -5,11 +5,9 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   fetchAssets,
-  fetchDataPipelines,
   deleteAsset,
   updateAsset,
   type AssetData,
-  type DataPipelineData,
 } from "@/lib/api";
 
 import { useTaskStore } from "@/stores/use-task-store";
@@ -32,15 +30,12 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type TabId = "scripts" | "pipelines" | "sops";
 export const ASSET_DRAG_TYPE = "application/x-owl-asset";
 export const PIPELINE_DRAG_TYPE = "application/x-owl-pipeline";
 
-
-export default function AssetPanel() {
+type FilterType = "scripts" | "sops";
+export default function AssetPanel({ filterType = "scripts" }: { filterType?: FilterType }) {
   const [assets, setAssets] = useState<AssetData[]>([]);
-  const [pipelines, setPipelines] = useState<DataPipelineData[]>([]);
-  const [activeTab, setActiveTab] = useState<TabId>("scripts");
   const [loading, setLoading] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -51,35 +46,24 @@ export default function AssetPanel() {
   const loadAssets = useCallback(async () => {
     setLoading(true);
     try {
-      if (activeTab === "pipelines") {
-        const res = await fetchDataPipelines();
-        setPipelines(res.data);
-        setAssets([]);
-        return;
-      }
-
       let params: {
         asset_type?: "script" | "sop";
         script_type?: "general" | "pipeline";
       } = {};
-
-      if (activeTab === "scripts") {
+      if (filterType === "scripts") {
         params = { asset_type: "script", script_type: "general" };
       } else {
         params = { asset_type: "sop" };
       }
-
       const res = await fetchAssets(params);
       setAssets(res.data);
-      setPipelines([]);
     } catch (err) {
       console.error("Failed to load assets:", err);
       setAssets([]);
-      setPipelines([]);
     } finally {
       setLoading(false);
     }
-  }, [activeTab]);
+  }, [filterType]);
 
   useEffect(() => {
     loadAssets();
@@ -150,59 +134,17 @@ export default function AssetPanel() {
     e.dataTransfer.effectAllowed = "copy";
   };
 
-  const handlePipelineDragStart = (
-    e: React.DragEvent<HTMLDivElement>,
-    pipeline: DataPipelineData
-  ) => {
-    e.dataTransfer.setData(
-      PIPELINE_DRAG_TYPE,
-      JSON.stringify({
-        id: pipeline.id,
-        name: pipeline.name,
-        target_table_name: pipeline.target_table_name,
-      })
-    );
-    e.dataTransfer.setData("text/plain", pipeline.name);
-    e.dataTransfer.effectAllowed = "copy";
-  };
-
   const getIcon = () => {
-    switch (activeTab) {
+    switch (filterType) {
       case "scripts":
         return <Code2 className="h-4 w-4" />;
-      case "pipelines":
-        return <Database className="h-4 w-4" />;
       case "sops":
         return <FileText className="h-4 w-4" />;
     }
   };
-
+  
   return (
     <div className="flex h-full flex-col">
-      {/* Tabs */}
-      <div className="flex border-b">
-        {(
-          [
-            { id: "scripts" as const, label: "Scripts" },
-            { id: "pipelines" as const, label: "Pipelines" },
-            { id: "sops" as const, label: "SOPs" },
-          ] as const
-        ).map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={cn(
-              "px-4 py-2 text-sm font-medium transition-colors",
-              activeTab === tab.id
-                ? "border-b-2 border-primary text-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
       {/* Asset List */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {loading ? (
@@ -212,88 +154,16 @@ export default function AssetPanel() {
         ) : assets.length === 0 ? (
           <div className="text-center text-sm text-muted-foreground py-8">
             <div className="mb-2">{getIcon()}</div>
-            No {activeTab} yet.
+            No {filterType} yet.
             <br />
             <span className="text-xs">
               Use{" "}
               <code className="rounded bg-muted px-1 py-0.5">
-                /{activeTab === "sops" ? "sop" : activeTab === "pipelines" ? "derive" : "script"}
+                /{filterType === "sops" ? "sop" : "script"}
               </code>{" "}
               in a task to extract one.
             </span>
           </div>
-        ) : activeTab === "pipelines" ? (
-          pipelines.map((pipeline) => {
-            const isExpanded = expandedId === pipeline.id;
-
-            return (
-              <Card key={pipeline.id} className="overflow-hidden">
-                <div
-                  className="p-4 group relative"
-                  draggable
-                  onDragStart={(e) => handlePipelineDragStart(e, pipeline)}
-                >
-                  <div className="absolute left-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-40 transition-opacity">
-                    <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                      <Database className="h-4 w-4" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-medium text-sm truncate">
-                        {pipeline.name}
-                      </h3>
-                      {pipeline.description && (
-                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                          {pipeline.description}
-                        </p>
-                      )}
-
-                      <div className="flex flex-wrap gap-1.5 mt-2">
-                        <span className="text-[10px] rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
-                          target: {pipeline.target_table_name}
-                        </span>
-                        <span className="text-[10px] rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
-                          {pipeline.write_strategy}
-                        </span>
-                        <span className="text-[10px] rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
-                          {pipeline.status}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 mt-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            setExpandedId(isExpanded ? null : pipeline.id)
-                          }
-                          className="h-7 text-xs"
-                        >
-                          <Eye className="h-3 w-3 mr-1" />
-                          {isExpanded ? "Hide" : "View"}
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {isExpanded && (
-                  <div className="border-t bg-muted/20">
-                    <div className="p-4">
-                      <div className="text-xs font-medium text-muted-foreground mb-2">
-                        Transform Code
-                      </div>
-                      <pre className="text-xs overflow-x-auto max-h-80 leading-relaxed">
-                        <code>{pipeline.transform_code}</code>
-                      </pre>
-                    </div>
-                  </div>
-                )}
-              </Card>
-            );
-          })
         ) : (
           assets.map((asset) => {
             const isExpanded = expandedId === asset.id;

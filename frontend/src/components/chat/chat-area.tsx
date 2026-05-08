@@ -704,6 +704,95 @@ function ExportDropdown({ taskId, hasSteps }: { taskId: string; hasSteps: boolea
   );
 }
 
+// ── Overview Panel (Routine / Pipeline) ──────────────────────
+function OverviewPanel({ type }: { type: "routine" | "pipeline" }) {
+  const tasks = useTaskStore((s) => s.tasks);
+  const items = useMemo(
+    () =>
+      type === "routine"
+        ? tasks.filter((t) => t.task_type === "routine" || t.task_type === "script")
+        : tasks.filter((t) => t.task_type === "pipeline"),
+    [tasks, type]
+  );
+
+  const title = type === "routine" ? "Routine Tasks Overview" : "Data Pipelines Overview";
+  const Icon = type === "routine" ? ClipboardList : RefreshCw;
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="shrink-0 border-b px-6 py-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <Icon className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold">{title}</h2>
+            <p className="text-xs text-muted-foreground">{items.length} task{items.length !== 1 ? "s" : ""}</p>
+          </div>
+        </div>
+      </div>
+
+      <ScrollArea className="flex-1">
+        <div className="p-6 space-y-3 max-w-2xl mx-auto">
+          {items.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+              <Icon className="h-10 w-10 opacity-30 mb-3" />
+              <p className="text-sm">No {type === "routine" ? "routine tasks" : "pipelines"} yet</p>
+              <p className="text-xs mt-1">Create one from the sidebar dropdown</p>
+            </div>
+          ) : (
+            items.map((task) => (
+              <div
+                key={task.id}
+                className="rounded-lg border p-4 hover:border-primary/30 transition-colors cursor-pointer"
+                onClick={() => {
+                  useTaskStore.getState().setActiveOverview(null);
+                  useTaskStore.getState().setCurrentTaskId(task.id);
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {task.task_type === "script" ? (
+                      <FileCode2 className="h-4 w-4 text-muted-foreground" />
+                    ) : task.task_type === "pipeline" ? (
+                      <RefreshCw className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <ClipboardList className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    <span className="text-sm font-medium">{task.title}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {task.last_run_status && (
+                      <span
+                        className={cn(
+                          "text-[10px] rounded-full px-2 py-0.5 font-medium",
+                          task.last_run_status === "success"
+                            ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
+                            : "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
+                        )}
+                      >
+                        {task.last_run_status}
+                      </span>
+                    )}
+                    {task.last_run_at && (
+                      <span className="text-[10px] text-muted-foreground">
+                        {new Date(task.last_run_at).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {task.description && (
+                  <p className="mt-1.5 text-xs text-muted-foreground line-clamp-2">{task.description}</p>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
+
 // ── 主组件 ────────────────────────────────────────────────────
 export default function ChatArea() {
   const {
@@ -726,6 +815,7 @@ export default function ChatArea() {
     pendingTaskSetup,
   } = useTaskStore();
   const pendingTool = getCurrentPendingTool();
+  const activeOverview = useTaskStore((s) => s.activeOverview);
   // 新增：移动端 Knowledge Zone 折叠状态
   const [isKnowledgeExpanded, setIsKnowledgeExpanded] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -1041,6 +1131,9 @@ export default function ChatArea() {
     }
   }, [steps, streamingMessage, pendingTool, isWaitingResponse]);
 
+  if (activeOverview) {
+    return <OverviewPanel type={activeOverview} />;
+  }
 
   return (
     <div className="flex h-full flex-col">
