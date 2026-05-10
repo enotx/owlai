@@ -24,7 +24,7 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import UPLOADS_DIR, WAREHOUSE_PATH
+from app.tenant_context import get_uploads_dir, get_warehouse_path
 from app.models import DuckDBTable, DataPipeline
 from app.services import warehouse as wh
 from app.services.execution import execute_code
@@ -138,7 +138,7 @@ async def execute_pipeline(
 
     # 创建临时捕获目录
     capture_dir = os.path.join(
-        UPLOADS_DIR, "_pipelines", pipeline.id, "captures"
+        str(get_uploads_dir()), "_pipelines", pipeline.id, "captures"
     )
     os.makedirs(capture_dir, exist_ok=True)
 

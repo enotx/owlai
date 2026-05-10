@@ -8,7 +8,7 @@ import re
 import os
 import uuid
 
-from app.config import UPLOADS_DIR
+from app.tenant_context import get_uploads_dir
 from app.database import async_session
 
 if TYPE_CHECKING:
@@ -751,7 +751,6 @@ async def _execute_derive_code_with_heartbeat(
     from app.services.data_processor import sanitize_variable_name
     from app.models import Knowledge, Skill
     from sqlalchemy import select
-    from app.config import UPLOADS_DIR
 
     # 准备 data_var_map
     data_var_map: dict[str, str] = {}
@@ -763,11 +762,11 @@ async def _execute_derive_code_with_heartbeat(
             var_name = sanitize_variable_name(k.name)
             data_var_map[var_name] = os.path.abspath(k.file_path)
 
-    capture_dir = os.path.join(UPLOADS_DIR, agent.task_id, "captures", "derive_exec")
+    capture_dir = os.path.join(str(get_uploads_dir()), agent.task_id, "captures", "derive_exec")
     os.makedirs(capture_dir, exist_ok=True)
 
     # 准备 persistent_vars
-    persist_dir = os.path.join(UPLOADS_DIR, agent.task_id, "captures", "persist")
+    persist_dir = os.path.join(str(get_uploads_dir()), agent.task_id, "captures", "persist")
     persisted_var_map: dict[str, str] = {}
     if os.path.isdir(persist_dir):
         import glob
@@ -798,7 +797,7 @@ async def _execute_derive_code_with_heartbeat(
             pass
 
     # 注入 ARTIFACT_DIR
-    artifact_dir = os.path.join(UPLOADS_DIR, agent.task_id, "captures", "artifacts")
+    artifact_dir = os.path.join(str(get_uploads_dir()), agent.task_id, "captures", "artifacts")
     skill_envs["ARTIFACT_DIR"] = artifact_dir
 
     # 复用 base 的心跳包装器
@@ -2092,7 +2091,6 @@ async def _execute_script_validation_with_heartbeat(
     from app.services.data_processor import sanitize_variable_name
     from app.models import Knowledge, Skill
     from sqlalchemy import select
-    from app.config import UPLOADS_DIR
 
     # 准备 data_var_map
     data_var_map: dict[str, str] = {}
@@ -2104,11 +2102,11 @@ async def _execute_script_validation_with_heartbeat(
             var_name = sanitize_variable_name(k.name)
             data_var_map[var_name] = os.path.abspath(k.file_path)
 
-    capture_dir = os.path.join(UPLOADS_DIR, agent.task_id, "captures", "script_validate")
+    capture_dir = os.path.join(str(get_uploads_dir()), agent.task_id, "captures", "script_validate")
     os.makedirs(capture_dir, exist_ok=True)
 
     # 准备 persistent_vars
-    persist_dir = os.path.join(UPLOADS_DIR, agent.task_id, "captures", "persist")
+    persist_dir = os.path.join(str(get_uploads_dir()), agent.task_id, "captures", "persist")
     persisted_var_map: dict[str, str] = {}
     if os.path.isdir(persist_dir):
         import glob
@@ -2139,7 +2137,7 @@ async def _execute_script_validation_with_heartbeat(
             pass
 
     # 注入 ARTIFACT_DIR（指向任务主 artifact 目录，而非 script_validate 子目录）
-    artifact_dir = os.path.join(UPLOADS_DIR, agent.task_id, "captures", "artifacts")
+    artifact_dir = os.path.join(str(get_uploads_dir()), agent.task_id, "captures", "artifacts")
     skill_envs["ARTIFACT_DIR"] = artifact_dir
 
     # 合并 context 中 extra_skill_envs
@@ -2218,10 +2216,10 @@ async def _save_script_asset(agent: "BaseAgent", config: dict) -> AsyncGenerator
 
         # ── 复制 artifacts 到 asset 专属目录 ──
         import shutil
-        task_artifact_dir = os.path.join(UPLOADS_DIR, agent.task_id, "captures", "artifacts")
+        task_artifact_dir = os.path.join(str(get_uploads_dir()), agent.task_id, "captures", "artifacts")
         artifacts_manifest: list[dict] = []
         if os.path.isdir(task_artifact_dir):
-            asset_artifact_dir = os.path.join(UPLOADS_DIR, "assets", asset.id, "artifacts")
+            asset_artifact_dir = os.path.join(str(get_uploads_dir()), "assets", asset.id, "artifacts")
             os.makedirs(asset_artifact_dir, exist_ok=True)
             for fname in sorted(os.listdir(task_artifact_dir)):
                 if not fname.endswith(".joblib"):
@@ -2323,12 +2321,12 @@ async def _save_script_asset_events(
 
         # ── 复制 artifacts 到 asset 专属目录 ──
         task_artifact_dir = os.path.join(
-            UPLOADS_DIR, agent.task_id, "captures", "artifacts"
+            str(get_uploads_dir()), agent.task_id, "captures", "artifacts"
         )
         artifacts_manifest: list[dict] = []
         if os.path.isdir(task_artifact_dir):
             asset_artifact_dir = os.path.join(
-                UPLOADS_DIR, "assets", asset.id, "artifacts"
+                str(get_uploads_dir()), "assets", asset.id, "artifacts"
             )
             os.makedirs(asset_artifact_dir, exist_ok=True)
             for fname in sorted(os.listdir(task_artifact_dir)):

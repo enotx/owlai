@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, text
 from app.database import get_db
 from app.tenant_context import open_tenant_session
 from app.models import Step, Task, Visualization
@@ -114,7 +114,9 @@ async def stream_message(body: ChatRequest, db: AsyncSession = Depends(get_db)):
 async def get_history(task_id: str, db: AsyncSession = Depends(get_db)):
     """获取指定 Task 的对话历史"""
     result = await db.execute(
-        select(Step).where(Step.task_id == task_id).order_by(Step.created_at.asc())
+        select(Step)
+        .where(Step.task_id == task_id)
+        .order_by(text("steps.rowid ASC"))
     )
     return result.scalars().all()
 

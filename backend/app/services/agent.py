@@ -17,8 +17,7 @@ from typing import AsyncGenerator, Any
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-
+from sqlalchemy import select, text
 from app.models import Step, Knowledge
 from app.services.data_processor import (
     sanitize_variable_name,
@@ -101,7 +100,6 @@ async def _load_history_messages(
     2. 只加载 compact_anchor_created_at 之后的新 steps
     """
     from app.models import Step, Task
-    from sqlalchemy import select
     
     # 获取 Task
     result = await db.execute(select(Task).where(Task.id == task_id))
@@ -124,21 +122,28 @@ async def _load_history_messages(
         })
         
         # 只加载 anchor 之后的 steps
-        result = await db.execute(
-            select(Step)
-            .where(
-                Step.task_id == task_id,
-                Step.created_at > task.compact_anchor_created_at,
-            )
-            .order_by(Step.created_at.asc())
+        anchor_rowid_result = await db.execute(
+            text("SELECT rowid FROM steps WHERE id = :step_id"),
+            {"step_id": task.compact_anchor_step_id},
         )
-        recent_steps = list(result.scalars().all())
+        anchor_rowid = anchor_rowid_result.scalar_one_or_none()
+        if anchor_rowid is None:
+            recent_steps = []
+        else:
+            result = await db.execute(
+                select(Step)
+                .where(Step.task_id == task_id)
+                .where(text("steps.rowid > :anchor_rowid"))
+                .order_by(text("steps.rowid ASC")),
+                {"anchor_rowid": anchor_rowid},
+            )
+            recent_steps = list(result.scalars().all())
     else:
         # 没有压缩上下文，加载全部历史（移除 MAX_HISTORY_STEPS 限制）
         result = await db.execute(
             select(Step)
             .where(Step.task_id == task_id)
-            .order_by(Step.created_at.asc())
+            .order_by(text("steps.rowid ASC"))
         )
         recent_steps = list(result.scalars().all())
     

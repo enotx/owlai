@@ -8,7 +8,7 @@ import logging
 from typing import Any, AsyncGenerator, Mapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import UPLOADS_DIR
+from app.tenant_context import get_uploads_dir, get_warehouse_path
 from app.services.data_processor import (
     sanitize_variable_name
 )
@@ -99,10 +99,10 @@ async def run_script_events(
     if allowed_modules:
         extra_envs["__allowed_modules__"] = json.dumps(allowed_modules)
     # 注入 ARTIFACT_DIR（指向 asset 专属 artifact 目录）
-    asset_artifact_dir = os.path.join(UPLOADS_DIR, "assets", asset.id, "artifacts")
+    asset_artifact_dir = os.path.join(str(get_uploads_dir()), "assets", asset.id, "artifacts")
     if os.path.isdir(asset_artifact_dir):
         extra_envs["ARTIFACT_DIR"] = asset_artifact_dir
-    capture_dir = os.path.join(UPLOADS_DIR, task_id, "captures")
+    capture_dir = os.path.join(str(get_uploads_dir()), task_id, "captures")
     os.makedirs(capture_dir, exist_ok=True)
     # 3. 构建 data_var_map
     from app.models import Knowledge
@@ -374,10 +374,9 @@ async def _preload_duckdb_table(
     返回临时文件路径，供 sandbox 的 data_var_map 加载。
     """
     import duckdb
-    from app.config import WAREHOUSE_PATH
-
-    if not WAREHOUSE_PATH or not os.path.exists(WAREHOUSE_PATH):
-        logger.warning("WAREHOUSE_PATH not set or not found")
+    warehouse_path = str(get_warehouse_path())
+    if not warehouse_path or not os.path.exists(warehouse_path):
+        logger.warning("Warehouse path not set or not found")
         return None
 
     preload_dir = os.path.join(capture_dir, "_preloaded")
@@ -386,7 +385,7 @@ async def _preload_duckdb_table(
     safe_name = sanitize_variable_name(display_name)
     temp_csv_path = os.path.join(preload_dir, f"{safe_name}.csv")
 
-    con = duckdb.connect(WAREHOUSE_PATH, read_only=True)
+    con = duckdb.connect(warehouse_path, read_only=True)
     try:
         df = con.execute(
             f"SELECT * FROM \"{table_name}\" LIMIT {row_limit}"

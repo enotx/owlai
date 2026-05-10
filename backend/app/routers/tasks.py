@@ -713,7 +713,7 @@ async def switch_task_runtime(
 ):
     """切换 Task 的执行运行时，清除 Knowledge 和中间变量"""
     from app.models import Knowledge, JupyterConfig
-    from app.config import UPLOADS_DIR
+    from tenant_context import get_uploads_dir
     from sqlalchemy import select
     import shutil
     import os
@@ -740,7 +740,7 @@ async def switch_task_runtime(
     for k in knowledge_items:
         await db.delete(k)
     # 清除文件系统
-    captures_dir = os.path.join(str(UPLOADS_DIR), task_id, "captures")
+    captures_dir = os.path.join(str(get_uploads_dir()), task_id, "captures")
     if os.path.isdir(captures_dir):
         shutil.rmtree(captures_dir, ignore_errors=True)
     # Shutdown 旧 Jupyter kernel

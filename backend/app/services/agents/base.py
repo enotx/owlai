@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from openai import AsyncOpenAI
 
-from app.config import UPLOADS_DIR
+from app.tenant_context import get_uploads_dir
 from app.models import Knowledge, Skill
 from app.services.data_processor import sanitize_variable_name, get_csv_sample_rows, get_excel_sample_rows, read_text_content
 
@@ -242,7 +242,8 @@ class BaseAgent(ABC):
         text_context = "\n\n".join(text_parts) if text_parts else "[No reference documents.]"
         
         # 扫描 persist/ 目录，将已持久化的中间变量摘要加入 variable_reference
-        persist_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "persist")
+        uploads_dir = str(get_uploads_dir())
+        persist_dir = os.path.join(uploads_dir, self.task_id, "captures", "persist")
         persisted_var_parts: list[str] = []
         _seen_vars: set[str] = set()
         
@@ -539,7 +540,8 @@ class BaseAgent(ABC):
             skill_envs = effective_envs
         
         # 收集 persistent_vars
-        persist_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "persist")
+        uploads_dir = str(get_uploads_dir())
+        persist_dir = os.path.join(uploads_dir, self.task_id, "captures", "persist")
         persistent_vars: dict[str, str] = {}
         if os.path.isdir(persist_dir):
             for fpath in glob.glob(os.path.join(persist_dir, "*.json")):
@@ -552,13 +554,13 @@ class BaseAgent(ABC):
         
         # 准备 capture_dir
         if capture_subdir:
-            capture_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", capture_subdir)
+            capture_dir = os.path.join(uploads_dir, self.task_id, "captures", capture_subdir)
         else:
-            capture_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures")
+            capture_dir = os.path.join(uploads_dir, self.task_id, "captures")
         os.makedirs(capture_dir, exist_ok=True)
 
         # 注入 ARTIFACT_DIR（任务级 artifact 目录）
-        artifact_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "artifacts")
+        artifact_dir = os.path.join(uploads_dir, self.task_id, "captures", "artifacts")
         skill_envs["ARTIFACT_DIR"] = artifact_dir
 
         return SandboxEnv(
@@ -894,7 +896,7 @@ class BaseAgent(ABC):
             if text_content.strip():
                 # ── 保存 assistant_message Step ──
                 from app.models import Step
-                from datetime import datetime
+                from datetime import datetime, timezone
                 
                 new_step = Step(
                     id=str(uuid.uuid4()),
@@ -904,7 +906,7 @@ class BaseAgent(ABC):
                     content=text_content,
                     code=None,
                     code_output=None,
-                    created_at=datetime.now(),
+                    created_at=datetime.now(timezone.utc).replace(tzinfo=None),
                 )
                 self.db.add(new_step)
                 await self.db.flush()
@@ -1124,7 +1126,9 @@ class BaseAgent(ABC):
                 effective_envs.update(extra_skill_envs)
         
         # 收集 persistent_vars
-        persist_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "persist")
+        uploads_dir = str(get_uploads_dir())
+        persist_dir = os.path.join(uploads_dir, self.task_id, "captures", "persist")
+
         persistent_vars: dict[str, str] = {}
         if os.path.isdir(persist_dir):
             for fpath in glob.glob(os.path.join(persist_dir, "*.json")):
@@ -1136,12 +1140,12 @@ class BaseAgent(ABC):
         
         # 准备 capture_dir
         if capture_subdir:
-            capture_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", capture_subdir)
+            capture_dir = os.path.join(uploads_dir, self.task_id, "captures", capture_subdir)
         else:
-            capture_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures")
+            capture_dir = os.path.join(uploads_dir, self.task_id, "captures")
         os.makedirs(capture_dir, exist_ok=True)
         
-        artifact_dir = os.path.join(UPLOADS_DIR, self.task_id, "captures", "artifacts")
+        artifact_dir = os.path.join(uploads_dir, self.task_id, "captures", "artifacts")
         effective_envs["ARTIFACT_DIR"] = artifact_dir
 
         return SandboxEnv(

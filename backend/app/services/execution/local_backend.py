@@ -8,7 +8,7 @@ import glob
 import json
 import os
 
-from app.config import UPLOADS_DIR
+from app.tenant_context import get_uploads_dir
 from app.services.execution.backend import ExecutionBackend
 from app.services.execution.types import ExecutionContext
 from app.services.sandbox import SandboxExecutionResult, execute_code_in_sandbox
@@ -42,7 +42,7 @@ class LocalSandboxBackend:
     async def list_variables(self, task_id: str) -> list[dict]:
         """从 persist/ 目录扫描变量元信息"""
         persist_dir = os.path.join(
-            UPLOADS_DIR, task_id, "captures", "persist"
+            str(get_uploads_dir()), task_id, "captures", "persist"
         )
         if not os.path.isdir(persist_dir):
             return []
