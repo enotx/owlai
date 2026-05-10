@@ -1,4 +1,4 @@
-# backend/app/models.py
+# owlai/backend/app/models.py
 
 """SQLAlchemy ORM 数据模型"""
 
@@ -132,6 +132,7 @@ class LLMProvider(Base):
     base_url: Mapped[str] = mapped_column(String(500), nullable=False)
     api_key: Mapped[str | None] = mapped_column(String(500), nullable=True)  # 可选，支持通过 header 管理
     models_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")  # JSON 数组：[{"id": "gpt-4", "name": "GPT-4"}]
+    is_platform: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False) # True = 由 owl-server 下发，不允许用户删除
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

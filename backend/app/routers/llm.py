@@ -1,10 +1,11 @@
-# backend/app/routers/llm.py
+# owlai/backend/app/routers/llm.py
 
 """LLM Provider 配置管理路由"""
 
 import json
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -233,3 +234,69 @@ async def update_agent_config(
     await db.refresh(config)
     
     return config
+
+
+import httpx
+from app.config import OWL_SERVER_URL
+class _SyncPlatformRequest(BaseModel):
+    """前端只需传 JWT"""
+    access_token: str
+@router.post("/platform-sync", status_code=200)
+async def sync_platform_config(
+    payload: _SyncPlatformRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    前端登录后调用此接口，后端拿 JWT 去 owl-server 拉取配置并写入本地。
+    幂等：已存在则仅更新 api_key，不重复创建。
+    """
+    if not OWL_SERVER_URL:
+        return {"ok": False, "reason": "OWL_SERVER_URL not configured"}
+    # 1. 后端请求 owl-server
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{OWL_SERVER_URL.rstrip('/')}/api/v1/llm/config",
+                headers={"Authorization": f"Bearer {payload.access_token}"},
+            )
+            if resp.status_code != 200:
+                return {"ok": False, "reason": f"owl-server returned {resp.status_code}"}
+            config = resp.json()
+    except httpx.HTTPError as e:
+        return {"ok": False, "reason": f"Failed to reach owl-server: {e}"}
+    # 2. 写入本地 DB（幂等）
+    result = await db.execute(
+        select(LLMProvider).where(LLMProvider.is_platform == True)
+    )
+    provider = result.scalar_one_or_none()
+    if provider:
+        # 已存在 → 仅更新 token 和模型列表
+        provider.api_key = payload.access_token
+        provider.base_url = config["base_url"]
+        provider.models_json = json.dumps(config["models"])
+    else:
+        # 首次创建
+        provider = LLMProvider(
+            display_name="Owl Cloud",
+            base_url=config["base_url"],
+            api_key=payload.access_token,
+            models_json=json.dumps(config["models"]),
+            is_platform=True,
+        )
+        db.add(provider)
+        await db.flush()
+        # 对未配置的 AgentConfig 设为此 Provider
+        for agent_type in ["default", "plan", "analyst", "misc", "task_manager"]:
+            cfg_result = await db.execute(
+                select(AgentConfig).where(AgentConfig.agent_type == agent_type)
+            )
+            cfg = cfg_result.scalar_one_or_none()
+            if cfg is None:
+                cfg = AgentConfig(agent_type=agent_type)
+                db.add(cfg)
+                await db.flush()
+            if cfg.provider_id is None:
+                cfg.provider_id = provider.id
+                cfg.model_id = config.get("default_model", "deepseek-v4-flash")
+    await db.commit()
+    return {"ok": True, "provider_id": provider.id}

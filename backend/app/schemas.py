@@ -1,4 +1,4 @@
-# backend/app/schemas.py
+# owlai/backend/app/schemas.py
 
 """Pydantic 请求/响应数据模型"""
 

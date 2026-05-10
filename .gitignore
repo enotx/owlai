@@ -2,6 +2,8 @@
 backend/venv/
 backend/.venv/
 backend/__pycache__/
+__pycache__/
+.venv/
 *.pyc
 backend/.env
 # Node.js

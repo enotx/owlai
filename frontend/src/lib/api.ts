@@ -1234,3 +1234,28 @@ export const switchTaskRuntime = async (taskId: string, executionBackend: string
     cleared: boolean;
     cleared_knowledge_count?: number;
   }>(`/tasks/${taskId}/runtime`, { execution_backend: executionBackend });
+
+// ===== Owl Server Integration =====
+export interface PlatformLLMConfig {
+  base_url: string;
+  models: Array<{ id: string; name: string }>;
+  default_model: string;
+  token_quota: number;
+  token_used: number;
+  token_remaining: number;
+}
+
+
+// ===== Owl Server Integration =====
+/**
+ * 通知后端同步平台配置（后端负责请求 owl-server）
+ */
+export const syncPlatformConfig = async (accessToken: string): Promise<boolean> => {
+  try {
+    const api = await getApi();
+    const res = await api.post("/llm/platform-sync", { access_token: accessToken });
+    return res.data?.ok === true;
+  } catch {
+    return false;
+  }
+};

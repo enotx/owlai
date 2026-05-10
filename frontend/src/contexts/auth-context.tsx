@@ -1,9 +1,10 @@
 // frontend/src/contexts/auth-context.tsx
 "use client";
 
-import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, useCallback, type ReactNode, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
+import { syncPlatformConfig } from "@/lib/api";
 
 interface AuthState {
   user: User | null;
@@ -47,6 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
+      if (session?.access_token) handlePlatformSync(session.access_token);
     });
 
     // 监听 auth 状态变化
@@ -54,11 +56,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       (_event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
+        // 登录或 token 刷新时同步平台配置
+        if (session?.access_token) handlePlatformSync(session.access_token);
       }
     );
 
     return () => subscription.unsubscribe();
   }, [isCloud]);
+
+  const syncingRef = useRef(false);
+  const handlePlatformSync = useCallback(async (accessToken: string) => {
+    if (syncingRef.current) return;  // 防止并发
+    syncingRef.current = true;
+    try {
+      await syncPlatformConfig(accessToken);
+    } finally {
+      syncingRef.current = false;
+    }
+  }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });

@@ -1,4 +1,4 @@
-# backend/app/routers/database.py
+# owlai/backend/app/routers/database.py
 
 """数据库管理相关 API"""
 

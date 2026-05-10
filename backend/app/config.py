@@ -72,6 +72,7 @@ WAREHOUSE_PATH = WAREHOUSE_DIR / "warehouse.duckdb"
 
 # ── Cloud 模式配置 ──────────────────────────────────────
 CLOUD_MODE = APP_MODE == "cloud"
+OWL_SERVER_URL = os.getenv("OWL_SERVER_URL", "http://localhost:8001").rstrip("/")  
 
 # Supabase JWT 验证（仅 cloud 模式使用）
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")

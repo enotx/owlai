@@ -28,7 +28,7 @@ class Base(DeclarativeBase):
 
 # ===== Schema Migration (in-app) =====
 # 使用 SQLite PRAGMA user_version 记录 schema 版本，避免外部迁移脚本依赖
-LATEST_SCHEMA_VERSION = 15
+LATEST_SCHEMA_VERSION = 16
 # v2: multi-agent (tasks.mode/plan_confirmed/current_subtask_id + subtasks + steps.subtask_id)
 # v3: visualization (visualizations table)
 # v4: skill reference_markdown (lazy-loaded reference doc)
@@ -42,7 +42,9 @@ LATEST_SCHEMA_VERSION = 15
 # v12: tasks.pipeline_id (pipeline task binds DataPipeline instead of Asset)
 # v13: assets.artifacts_json (binary artifact manifest)
 # v14: tasks.execution_backend (Runtime 选择)
-# v15: jupyter_configs + system_settings (Jupyter 连接配置 + 全局设置)
+# v15: jupyter_configs + system_settings (Jupyter 连接配置 + 全局设置)\
+# v16: llm_providers.is_platform (平台下发的 Provider 标记)
+
 
 
 async def _get_user_version(conn) -> int:
@@ -458,6 +460,16 @@ async def upgrade_db_schema() -> dict:
                 await _set_user_version(conn, 15)
                 applied.append("set user_version=15")
                 current = 15
+            if current < 16:
+                provider_cols = await _get_table_columns(conn, "llm_providers")
+                if "is_platform" not in provider_cols:
+                    await conn.execute(text(
+                        "ALTER TABLE llm_providers ADD COLUMN is_platform BOOLEAN NOT NULL DEFAULT 0"
+                    ))
+                    applied.append("ALTER TABLE llm_providers ADD COLUMN is_platform")
+                await _set_user_version(conn, 16)
+                applied.append("set user_version=16")
+                current = 16
 
             return {
                 "success": True,
