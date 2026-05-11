@@ -39,3 +39,10 @@ structure.txt
 project_context.md
 owl_app_project_context.md
 *.bak
+
+# 忽略所有以 .env 开头的文件
+.env*
+# 显式排除（即允许提交）特定的模版或非敏感文件
+!.env.example
+!.env.docker
+!.env.local.example
