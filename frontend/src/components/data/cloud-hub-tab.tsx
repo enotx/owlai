@@ -22,6 +22,9 @@ import {
 } from "@/lib/api";
 import { useTaskStore } from "@/stores/use-task-store";
 
+export const CLOUD_DATASET_DRAG_TYPE = "application/x-owl-cloud-dataset";
+
+
 export default function CloudHubTab() {
   const [datasets, setDatasets] = useState<CloudDatasetItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -103,7 +106,14 @@ export default function CloudHubTab() {
           {datasets.map((ds) => (
             <div
               key={ds.slug}
-              className="group relative rounded-lg border p-3 hover:shadow-sm transition-all"
+              draggable
+              onDragStart={(e) => {
+                const payload = JSON.stringify({ slug: ds.slug, name: ds.name });
+                e.dataTransfer.setData(CLOUD_DATASET_DRAG_TYPE, payload);
+                e.dataTransfer.setData("text/plain", ds.name);
+                e.dataTransfer.effectAllowed = "copy";
+              }}
+              className="group relative rounded-lg border p-3 hover:shadow-sm transition-all cursor-grab active:cursor-grabbing"
             >
               <div className="flex items-center gap-2">
                 <Cloud className="h-3.5 w-3.5 text-sky-500 shrink-0" />

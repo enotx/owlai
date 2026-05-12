@@ -28,6 +28,8 @@ import {
 } from "@/lib/api";
 import { DATASOURCE_DRAG_TYPE } from "@/components/data/data-sources-tab";
 import { ASSET_DRAG_TYPE } from "@/components/data/asset-panel";
+import { CLOUD_DATASET_DRAG_TYPE } from "@/components/data/cloud-hub-tab";
+
 
 export default function KnowledgeZone() {
   const { currentTaskId, knowledgeList, addKnowledge, removeKnowledge, setPreviewData } = useTaskStore();
@@ -87,7 +89,10 @@ export default function KnowledgeZone() {
     e.stopPropagation();
     dragCounterRef.current++;
     const types = e.dataTransfer.types;
-    if (types.includes(ASSET_DRAG_TYPE)) {
+    if (types.includes(CLOUD_DATASET_DRAG_TYPE)) {
+      setIsDragging(true);
+      setDragSource("datasource"); // 复用 datasource 的视觉样式
+    } else if (types.includes(ASSET_DRAG_TYPE)) {
       setIsDragging(true);
       setDragSource("asset");
     } else if (types.includes(DATASOURCE_DRAG_TYPE)) {
@@ -122,6 +127,21 @@ export default function KnowledgeZone() {
     dragCounterRef.current = 0;
 
     if (!currentTaskId) return;
+
+    // ── Cloud dataset drop ────────────────────────
+    const cloudPayload = e.dataTransfer.getData(CLOUD_DATASET_DRAG_TYPE);
+    if (cloudPayload) {
+      try {
+        const { slug } = JSON.parse(cloudPayload) as { slug: string; name: string };
+        const { addCloudDatasetToContext } = await import("@/lib/api");
+        await addCloudDatasetToContext(slug, currentTaskId);
+        const knowledgeRes = await fetchKnowledge(currentTaskId);
+        useTaskStore.getState().setKnowledgeList(knowledgeRes.data);
+      } catch (err) {
+        console.error("Failed to add cloud dataset to context:", err);
+      }
+      return;
+    }
 
     // ── Asset drop ────────────────────────────────
     const assetPayload = e.dataTransfer.getData(ASSET_DRAG_TYPE);
