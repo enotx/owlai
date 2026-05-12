@@ -1259,3 +1259,31 @@ export const syncPlatformConfig = async (accessToken: string): Promise<boolean> 
     return false;
   }
 };
+
+// ===== Cloud Datasets =====
+export interface CloudDatasetItem {
+  slug: string;
+  name: string;
+  description: string;
+  row_count: number | null;
+  last_run_at: string | null;
+}
+
+export interface CloudDatasetSchema {
+  slug: string;
+  columns: string[];
+  sample_rows: unknown[][];
+}
+
+export const fetchCloudDatasets = async () =>
+  (await getApi()).get<CloudDatasetItem[]>("/cloud-datasets");
+
+export const fetchCloudDatasetSchema = async (slug: string) =>
+  (await getApi()).get<CloudDatasetSchema>(`/cloud-datasets/${slug}/schema`);
+
+export const addCloudDatasetToContext = async (slug: string, taskId: string) =>
+  (await getApi()).post<{ status: string; knowledge_id: string }>(
+    `/cloud-datasets/${slug}/add-to-context`,
+    null,
+    { params: { task_id: taskId } }
+  );

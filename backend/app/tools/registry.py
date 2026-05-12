@@ -10,6 +10,7 @@ from app.tools.definitions import (
     CREATE_VISUALIZATION_TOOL,
     GET_SKILL_REFERENCE_TOOL,
     REQUEST_HUMAN_INPUT_TOOL,
+    CLOUD_QUERY_TOOL,
 )
 
 
@@ -31,6 +32,7 @@ def get_tools_for_agent(
                 CREATE_VISUALIZATION_TOOL,
                 GET_SKILL_REFERENCE_TOOL,
                 REQUEST_HUMAN_INPUT_TOOL,
+                CLOUD_QUERY_TOOL,
                 ]
 
     elif agent_type == "analyst":
@@ -38,6 +40,7 @@ def get_tools_for_agent(
                  CREATE_VISUALIZATION_TOOL,
                  GET_SKILL_REFERENCE_TOOL,
                  REQUEST_HUMAN_INPUT_TOOL,
+                 CLOUD_QUERY_TOOL,
                 ]
         # 有数据集时才提供独立的可视化 tool
         # （即使没有这个 tool，Agent 仍可通过 create_chart() 在沙箱内创建图表）

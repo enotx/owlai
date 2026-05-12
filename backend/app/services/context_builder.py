@@ -142,7 +142,49 @@ async def _get_knowledge_context(task_id: str, db: AsyncSession) -> tuple[str, s
                 dataset_parts.append(section)
             except (json.JSONDecodeError, Exception):
                 pass
-    
+        # ── Cloud Dataset ──
+        elif k.type == "cloud_dataset" and k.metadata_json:
+            try:
+                meta = json.loads(k.metadata_json)
+                slug = meta.get("slug", k.name)
+                display_name = meta.get("name", slug)
+                desc = meta.get("description", "")
+                columns = meta.get("columns", [])
+                row_count = meta.get("row_count")
+                sample_rows = meta.get("sample_rows", [])
+                section = f"### ☁️ [Cloud] {display_name}  →  slug: `{slug}`\n"
+                if row_count:
+                    section += f"- **Rows**: ~{row_count:,}\n"
+                if desc:
+                    section += f"- **Description**: {desc}\n"
+                if columns:
+                    col_info = ", ".join(f"`{c}`" for c in columns[:15])
+                    if len(columns) > 15:
+                        col_info += f", ... ({len(columns)} total)"
+                    section += f"- **Columns**: {col_info}\n"
+                if sample_rows:
+                    import pandas as pd
+                    try:
+                        sample_df = pd.DataFrame(sample_rows, columns=columns)
+                        sample_str = sample_df.to_string(index=False, max_rows=5)
+                        if len(sample_str) > 2000:
+                            sample_str = sample_str[:2000] + "\n... [truncated]"
+                        section += f"- **Sample rows**:\n```\n{sample_str}\n```\n"
+                    except Exception:
+                        pass
+                section += (
+                    f"\n> **Query this dataset**: Use the `cloud_query` tool:\n"
+                    f"> ```\n"
+                    f"> cloud_query(slug=\"{slug}\", sql=\"SELECT * FROM {slug} WHERE ...\", save_as=\"my_df\")\n"
+                    f"> ```\n"
+                    f"> The result will be available as a DataFrame variable in subsequent code execution.\n"
+                )
+                dataset_parts.append(section)
+            except (json.JSONDecodeError, Exception):
+                pass
+
+
+
     # 扫描 persist/ 目录
     from app.tenant_context import get_uploads_dir
     persist_dir = os.path.join(str(get_uploads_dir()), task_id, "captures", "persist")
@@ -399,7 +441,51 @@ async def _get_knowledge_context_with_assets(
                 dataset_parts.append(section)
             except (json.JSONDecodeError, Exception):
                 pass
-    
+
+        # ── Cloud Dataset ──
+        elif k.type == "cloud_dataset" and k.metadata_json:
+            try:
+                meta = json.loads(k.metadata_json)
+                slug = meta.get("slug", k.name)
+                display_name = meta.get("name", slug)
+                desc = meta.get("description", "")
+                columns = meta.get("columns", [])
+                row_count = meta.get("row_count")
+                sample_rows = meta.get("sample_rows", [])
+
+                section = f"### ☁️ [Cloud] {display_name}  →  slug: `{slug}`\n"
+                if row_count:
+                    section += f"- **Rows**: ~{row_count:,}\n"
+                if desc:
+                    section += f"- **Description**: {desc}\n"
+                if columns:
+                    col_info = ", ".join(f"`{c}`" for c in columns[:15])
+                    if len(columns) > 15:
+                        col_info += f", ... ({len(columns)} total)"
+                    section += f"- **Columns**: {col_info}\n"
+                if sample_rows:
+                    import pandas as pd
+                    try:
+                        sample_df = pd.DataFrame(sample_rows, columns=columns)
+                        sample_str = sample_df.to_string(index=False, max_rows=5)
+                        if len(sample_str) > 2000:
+                            sample_str = sample_str[:2000] + "\n... [truncated]"
+                        section += f"- **Sample rows**:\n```\n{sample_str}\n```\n"
+                    except Exception:
+                        pass
+
+                section += (
+                    f"\n> **Query this dataset**: Use the `cloud_query` tool:\n"
+                    f"> ```\n"
+                    f"> cloud_query(slug=\"{slug}\", sql=\"SELECT * FROM {slug} WHERE ...\", save_as=\"my_df\")\n"
+                    f"> ```\n"
+                    f"> The result will be available as a DataFrame variable in subsequent code execution.\n"
+                )
+
+                dataset_parts.append(section)
+            except (json.JSONDecodeError, Exception):
+                pass
+
     # 扫描 persist/ 目录
     from app.tenant_context import get_uploads_dir
     persist_dir = os.path.join(str(get_uploads_dir()), task_id, "captures", "persist")

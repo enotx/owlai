@@ -157,3 +157,33 @@ REQUEST_HUMAN_INPUT_TOOL = {
     },
 }
 
+CLOUD_QUERY_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "cloud_query",
+        "description": (
+            "Query a remote cloud dataset hosted on owl-server. "
+            "Use this for datasets marked as [Cloud] in your context. "
+            "The result is saved as a local DataFrame variable for subsequent use in execute_python_code. "
+            "Only SELECT queries are allowed. Results are limited to prevent full data extraction."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "slug": {
+                    "type": "string",
+                    "description": "Dataset slug identifier (shown in context as [Cloud] dataset).",
+                },
+                "sql": {
+                    "type": "string",
+                    "description": "SQL SELECT query to run against the dataset. The table name is the slug itself.",
+                },
+                "save_as": {
+                    "type": "string",
+                    "description": "Variable name to save the result DataFrame as (for use in subsequent code execution).",
+                },
+            },
+            "required": ["slug", "sql", "save_as"],
+        },
+    },
+}

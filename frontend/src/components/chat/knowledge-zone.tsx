@@ -18,6 +18,7 @@ import {
   ClipboardList,
   ChevronDown,
   ChevronUp,
+  Cloud,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -255,6 +256,7 @@ export default function KnowledgeZone() {
     if (type === "asset_script") return <Code2 className="h-5 w-5 text-violet-600" />;
     if (type === "asset_sop") return <ClipboardList className="h-5 w-5 text-amber-600" />;
     if (type === "data_pipeline") return <Layers className="h-5 w-5 text-sky-600" />;
+    if (type === "cloud_dataset") return <Cloud className="h-5 w-5 text-sky-500" />;
     return <FileText className="h-5 w-5 text-gray-500" />;
   };
 
@@ -263,6 +265,7 @@ export default function KnowledgeZone() {
     if (k.type === "asset_script") return "Script Asset";
     if (k.type === "asset_sop") return "SOP Asset";
     if (k.type === "data_pipeline") return "Data Pipeline";
+    if (k.type === "cloud_dataset") return "Cloud Dataset";
     const ext = k.name.slice(k.name.lastIndexOf(".")).toLowerCase();
     if (ext === ".csv") return "CSV Data";
     if (ext === ".xlsx" || ext === ".xls") return "Excel Sheet";

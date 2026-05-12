@@ -238,6 +238,33 @@ class BaseAgent(ABC):
                 except (json.JSONDecodeError, Exception):
                     pass
 
+            # ── Cloud Dataset ──
+            elif k.type == "cloud_dataset" and k.metadata_json:
+                try:
+                    meta = json.loads(k.metadata_json)
+                    slug = meta.get("slug", k.name)
+                    display_name = meta.get("name", slug)
+                    desc = meta.get("description", "")
+                    columns = meta.get("columns", [])
+                    row_count = meta.get("row_count")
+
+                    section = f"### ☁️ [Cloud] {display_name}  →  slug: `{slug}`\n"
+                    if row_count:
+                        section += f"- **Rows**: ~{row_count:,}\n"
+                    if desc:
+                        section += f"- **Description**: {desc}\n"
+                    if columns:
+                        col_info = ", ".join(f"`{c}`" for c in columns[:15])
+                        if len(columns) > 15:
+                            col_info += f", ... ({len(columns)} total)"
+                        section += f"- **Columns**: {col_info}\n"
+                    section += (
+                        f"\n> **Query**: Use `cloud_query(slug=\"{slug}\", sql=\"SELECT ... FROM {slug}\", save_as=\"df_name\")`\n"
+                    )
+                    dataset_parts.append(section)
+                except (json.JSONDecodeError, Exception):
+                    pass
+
         dataset_context = "\n".join(dataset_parts) if dataset_parts else "[No datasets uploaded yet.]"
         text_context = "\n\n".join(text_parts) if text_parts else "[No reference documents.]"
         
@@ -864,6 +891,70 @@ class BaseAgent(ABC):
                             "role": "tool",
                             "tool_call_id": tc["id"],
                             "content": result_content,
+                        })
+
+                    # ── Tool: cloud_query ──
+                    elif tc["name"] == "cloud_query":
+                        slug = args.get("slug", "")
+                        sql = args.get("sql", "")
+                        save_as = args.get("save_as", "cloud_result")
+
+                        yield {"type": "tool_start", "code": f"cloud_query('{slug}', '{sql[:100]}...', save_as='{save_as}')", "purpose": f"Query cloud dataset: {slug}"}
+
+                        try:
+                            from app.services.cloud_datasets import query_cloud_dataset
+                            import pandas as pd
+
+                            result = await query_cloud_dataset(slug, sql, limit=5000)
+                            columns = result.get("columns", [])
+                            rows = result.get("rows", [])
+
+                            # 转为 DataFrame 并保存到 persist/
+                            df = pd.DataFrame(rows, columns=columns)
+                            uploads_dir = str(get_uploads_dir())
+                            persist_dir = os.path.join(uploads_dir, self.task_id, "captures", "persist")
+                            os.makedirs(persist_dir, exist_ok=True)
+                            parquet_path = os.path.join(persist_dir, f"{save_as}.parquet")
+                            df.to_parquet(parquet_path, engine="pyarrow", index=False)
+
+                            # 更新 sandbox_env 的 persistent_vars
+                            sandbox_env.persistent_vars[save_as] = parquet_path
+
+                            col_preview = ", ".join(columns[:10])
+                            if len(columns) > 10:
+                                col_preview += f", ... ({len(columns)} total)"
+                            tool_output = (
+                                f"OK: Query returned {len(rows)} rows, {len(columns)} columns.\n"
+                                f"Columns: {col_preview}\n"
+                                f"Saved as variable `{save_as}` (DataFrame). "
+                                f"Use it in execute_python_code."
+                            )
+                            truncated = result.get("truncated", False)
+                            if truncated:
+                                tool_output += "\nNote: Results were truncated by server limit."
+
+                            yield {
+                                "type": "tool_result",
+                                "success": True,
+                                "output": tool_output,
+                                "error": None,
+                                "time": 0,
+                            }
+
+                        except Exception as e:
+                            tool_output = f"ERROR: Cloud query failed: {str(e)}"
+                            yield {
+                                "type": "tool_result",
+                                "success": False,
+                                "output": None,
+                                "error": tool_output,
+                                "time": 0,
+                            }
+
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": tool_output,
                         })
 
                     # ── Tool: request_human_input (HITL) ──
