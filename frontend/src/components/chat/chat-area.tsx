@@ -100,8 +100,8 @@ function RuntimeIndicator({
 // ── 单条用户消息 ──────────────────────────────────────────────
 function UserBubble({ step }: { step: Step }) {
   return (
-    <div className="flex min-w-0 gap-3 justify-end">
-      <div className="min-w-0 max-w-[90%] md:max-w-[80%] overflow-hidden rounded-lg bg-primary px-3.5 py-2.5 text-sm leading-relaxed text-primary-foreground">
+    <div className="flex w-full min-w-0 max-w-full overflow-hidden gap-3 justify-end">
+      <div className="min-w-0 max-w-[90%] shrink overflow-hidden rounded-lg bg-primary px-3.5 py-2.5 text-sm leading-relaxed text-primary-foreground md:max-w-[80%]">
         <p style={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>{step.content}</p>
       </div>
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary">
@@ -117,7 +117,7 @@ function AssistantBubble({ content }: { content: string }) {
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
         <Bot className="h-4 w-4" />
       </div>
-      <div className="w-fit min-w-0 max-w-[90%] md:max-w-[80%] overflow-hidden rounded-lg bg-muted px-3.5 py-2.5 text-sm leading-relaxed">
+      <div className="min-w-0 w-full max-w-[95%] md:max-w-[90%] overflow-hidden rounded-lg bg-muted px-3.5 py-2.5 text-sm leading-relaxed">
         <MarkdownRenderer content={content} />
       </div>
     </div>
@@ -145,11 +145,11 @@ function ToolUseBlock({ step }: { step: Step }) {
   }, [step.code_output]);
 
   return (
-    <div className="flex gap-3 justify-start">
+    <div className="flex w-full min-w-0 max-w-full overflow-hidden gap-3 justify-start">
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-500 text-white">
         <Code2 className="h-4 w-4" />
       </div>
-      <div className="max-w-[85%] w-full space-y-2">
+      <div className="min-w-0 flex-1 overflow-hidden space-y-2">
         {/* 目的说明 */}
         {step.content && (
           <p className="text-xs text-muted-foreground italic">
@@ -172,8 +172,8 @@ function ToolUseBlock({ step }: { step: Step }) {
               <span>{isCodeExpanded ? "Hide code" : "Show code"}</span>
             </button>
             {isCodeExpanded && (
-              <pre className="overflow-x-auto rounded-md bg-zinc-900 p-3 text-xs text-green-400 leading-relaxed">
-                <code>{step.code}</code>
+              <pre className="w-full min-w-0 max-w-full overflow-x-auto rounded-md bg-zinc-900 p-3 text-xs text-green-400 leading-relaxed">
+                <code className="block min-w-full whitespace-pre">{step.code}</code>
               </pre>
             )}
           </div>
@@ -181,35 +181,35 @@ function ToolUseBlock({ step }: { step: Step }) {
 
         {/* 执行结果 - 永远展示 */}
         {parsed && (
-          <div
-            className={cn(
-              "rounded-md border p-3 text-xs",
-              parsed.success
-                ? "border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950"
-                : "border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950"
-            )}
-          >
-            <div className="mb-1 flex items-center gap-1.5">
-              {parsed.success ? (
-                <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
-              ) : (
-                <XCircle className="h-3.5 w-3.5 text-red-600" />
+            <div
+              className={cn(
+                "w-full min-w-0 max-w-full overflow-hidden rounded-md border p-3 text-xs",
+                parsed.success
+                  ? "border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950"
+                  : "border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950"
               )}
-              <span className="font-medium">
+            >
+            <div className="mb-1 flex min-w-0 items-center gap-1.5">
+              {parsed.success ? (
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-600" />
+              ) : (
+                <XCircle className="h-3.5 w-3.5 shrink-0 text-red-600" />
+              )}
+              <span className="min-w-0 truncate font-medium">
                 {parsed.success ? "Execution succeeded" : "Execution failed"}
               </span>
-              <span className="ml-auto text-muted-foreground flex items-center gap-1">
+              <span className="ml-auto flex shrink-0 items-center gap-1 text-muted-foreground">
                 <Clock className="h-3 w-3" />
                 {parsed.execution_time.toFixed(2)}s
               </span>
             </div>
             {parsed.output && (
-              <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-words text-foreground">
+              <pre className="mt-2 w-full min-w-0 max-w-full max-h-60 overflow-auto whitespace-pre-wrap break-words text-foreground">
                 {parsed.output}
               </pre>
             )}
             {parsed.error && (
-              <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-words text-red-600 dark:text-red-400">
+              <pre className="mt-2 w-full min-w-0 max-w-full max-h-60 overflow-auto whitespace-pre-wrap break-words text-red-600 dark:text-red-400">
                 {parsed.error}
               </pre>
             )}
@@ -241,7 +241,7 @@ function VisualizationBlock({ step }: { step: Step }) {
 
   if (!parsed?.option) {
     return (
-      <div className="flex gap-3 justify-start">
+      <div className="flex w-full min-w-0 max-w-full overflow-hidden gap-3 justify-start">
         <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
           <Bot className="h-4 w-4" />
         </div>
@@ -256,7 +256,7 @@ function VisualizationBlock({ step }: { step: Step }) {
   const isMap = parsed.chart_type === "map";
 
   return (
-    <div className="flex gap-3 justify-start">
+    <div className="flex w-full min-w-0 max-w-full overflow-hidden gap-3 justify-start">
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
         <Bot className="h-4 w-4" />
       </div>
@@ -397,8 +397,8 @@ function StreamingBubble({ message }: { message: StreamingMessage }) {
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
         <Bot className="h-4 w-4" />
       </div>
-      <div className="w-fit min-w-0 max-w-[90%] md:max-w-[80%] overflow-hidden rounded-lg bg-muted px-3.5 py-2.5 text-sm leading-relaxed">
-        <div className="min-w-0 max-w-full">
+      <div className="min-w-0 w-full max-w-[95%] md:max-w-[90%] overflow-hidden rounded-lg bg-muted px-3.5 py-2.5 text-sm leading-relaxed">
+        <div className="min-w-0 w-full max-w-full overflow-hidden">
           <MarkdownRenderer content={message.content} />
           <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-foreground/60 align-text-bottom" />
         </div>
@@ -410,7 +410,7 @@ function StreamingBubble({ message }: { message: StreamingMessage }) {
 // ── 等待LLM首次响应的占位块 ──────────────────────────────────
 function WaitingBubble() {
   return (
-    <div className="flex gap-3 justify-start">
+    <div className="flex w-full min-w-0 max-w-full overflow-hidden gap-3 justify-start">
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
         <Bot className="h-4 w-4" />
       </div>
@@ -539,11 +539,11 @@ function DataFrameLinks({
 // ── 代码执行中占位（pending tool） ────────────────────────────
 function PendingToolBlock({ tool }: { tool: PendingToolExecution }) {
   return (
-    <div className="flex gap-3 justify-start">
+    <div className="flex w-full min-w-0 max-w-full overflow-hidden gap-3 justify-start">
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-500 text-white">
         <Code2 className="h-4 w-4" />
       </div>
-      <div className="min-w-0 max-w-[85%] flex-1 space-y-2">
+      <div className="min-w-0 flex-1 overflow-hidden space-y-2">
         {tool.purpose && (
           <p className="text-xs text-muted-foreground italic">
             📌 {tool.purpose}
@@ -561,14 +561,14 @@ function PendingToolBlock({ tool }: { tool: PendingToolExecution }) {
           </div>
         )}
         {tool.status === "done" && tool.result && (
-          <div
-            className={cn(
-              "rounded-md border p-3 text-xs",
-              tool.result.success
-                ? "border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950"
-                : "border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950"
-            )}
-          >
+            <div
+              className={cn(
+                "w-full min-w-0 max-w-full overflow-hidden rounded-md border p-3 text-xs",
+                tool.result.success
+                  ? "border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950"
+                  : "border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950"
+              )}
+            >
             <div className="mb-1 flex items-center gap-1.5">
               {tool.result.success ? (
                 <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
@@ -584,12 +584,12 @@ function PendingToolBlock({ tool }: { tool: PendingToolExecution }) {
               </span>
             </div>
             {tool.result.output && (
-              <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-words text-foreground">
+              <pre className="mt-2 w-full min-w-0 max-w-full max-h-60 overflow-auto whitespace-pre-wrap break-words text-foreground">
                 {tool.result.output}
               </pre>
             )}
             {tool.result.error && (
-              <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-words text-red-600 dark:text-red-400">
+              <pre className="mt-2 w-full min-w-0 max-w-full max-h-60 overflow-auto whitespace-pre-wrap break-words text-red-600 dark:text-red-400">
                 {tool.result.error}
               </pre>
             )}
@@ -717,7 +717,7 @@ function OverviewPanel({ type }: { type: "routine" | "pipeline" }) {
   const Icon = type === "routine" ? ClipboardList : RefreshCw;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-w-0 overflow-hidden flex-col">
       <div className="shrink-0 border-b px-6 py-4">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -731,7 +731,7 @@ function OverviewPanel({ type }: { type: "routine" | "pipeline" }) {
       </div>
 
       <ScrollArea className="flex-1 min-h-0 min-w-0 overflow-hidden px-4">
-        <div className="mx-auto w-full max-w-2xl min-w-0 space-y-4 py-4">
+        <div className="mx-auto w-full max-w-2xl overflow-hidden min-w-0 space-y-4 py-4">
           {items.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
               <Icon className="h-10 w-10 opacity-30 mb-3" />
@@ -1186,7 +1186,7 @@ export default function ChatArea() {
 
       {/* 中间：消息列表，支持鼠标滚轮浏览历史 */}
       <ScrollArea
-        className="flex-1 min-h-0 px-4"
+        className="flex-1 min-h-0 min-w-0 max-w-full overflow-hidden px-4"
         ref={(node) => {
           // 获取 Radix ScrollArea 内部的实际可滚动 viewport
           if (node) {
@@ -1197,7 +1197,7 @@ export default function ChatArea() {
           }
         }}
       >
-        <div className="mx-auto w-full max-w-2xl min-w-0 space-y-4 py-4">
+        <div className="mx-auto w-full max-w-2xl min-w-0 overflow-hidden space-y-4 py-4">
           {/* 新增：待配置任务表单 */}
           <TaskSetupInline />
 
@@ -1213,7 +1213,7 @@ export default function ChatArea() {
 
             if (step.step_type === "user_message") {
               return (
-                <div key={step.id} className="group relative">
+                <div key={step.id} className="group relative w-full min-w-0 overflow-hidden">
                   <UserBubble step={step} />
                   {!isTemp && (
                     <div className="absolute -bottom-1 right-10">
@@ -1225,7 +1225,7 @@ export default function ChatArea() {
             }
             if (step.step_type === "tool_use") {
               return (
-                <div key={step.id} className="group relative">
+                <div key={step.id} className="group relative w-full min-w-0 overflow-hidden">
                   <ToolUseBlock step={step} />
                   {!isTemp && (
                     <div className="absolute -bottom-1 left-10">
@@ -1237,7 +1237,7 @@ export default function ChatArea() {
             }
             if (step.step_type === "visualization") {
               return (
-                <div key={step.id} className="group relative">
+                <div key={step.id} className="group relative w-full min-w-0 overflow-hidden">
                   <VisualizationBlock step={step} />
                   {!isTemp && (
                     <div className="absolute -bottom-1 left-10">
@@ -1249,7 +1249,7 @@ export default function ChatArea() {
             }
             if (step.step_type === "hitl_request") {
               return (
-                <div key={step.id} className="group relative">
+                <div key={step.id} className="group relative w-full min-w-0 overflow-hidden">
                   <HITLBlock
                     step={step}
                     onSubmit={handleHITLSubmit}
@@ -1267,7 +1267,7 @@ export default function ChatArea() {
               );
             }
             return (
-              <div key={step.id} className="group relative">
+              <div key={step.id} className="group relative w-full min-w-0 overflow-hidden">
                 <AssistantBubble content={step.content} />
                 {!isTemp && (
                   <div className="absolute -bottom-1 left-10">
