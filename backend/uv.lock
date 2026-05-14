@@ -301,6 +301,7 @@ dependencies = [
     { name = "aiofiles" },
     { name = "aiosqlite" },
     { name = "akshare" },
+    { name = "baostock" },
     { name = "darts", version = "0.37.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "darts", version = "0.42.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "duckdb", version = "1.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
@@ -353,6 +354,7 @@ requires-dist = [
     { name = "aiofiles", specifier = ">=25.1.0" },
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "akshare", specifier = ">=1.18.49" },
+    { name = "baostock", specifier = ">=0.9.1" },
     { name = "darts", specifier = ">=0.37.1" },
     { name = "duckdb", specifier = ">=1.4.4" },
     { name = "fastapi", specifier = ">=0.128.8" },
@@ -381,6 +383,19 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.39.0" },
     { name = "websockets", specifier = ">=15.0.1" },
     { name = "xlrd", specifier = ">=2.0.2" },
+]
+
+[[package]]
+name = "baostock"
+version = "0.9.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pandas", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/43/5e/471c14eebb204ed89de0fe11740d6f4513d44454fe5e35bc13b29ef3e510/baostock-0.9.1.tar.gz", hash = "sha256:5ec3a44cbec9471872b0a4ae02c39aea29db688bb740b769167393bc6e244a39", size = 25560, upload-time = "2026-04-14T09:55:28.382Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c8/eb/fadb92e38fbb2fefa3d9d3c14d016cf3a5920e34666aeb9950bc5311c856/baostock-0.9.1-py3-none-any.whl", hash = "sha256:a30749f095fd58ecd7ba3799dad605d355ad8e6d19310bc437039e1e526f15fe", size = 47918, upload-time = "2026-04-14T09:55:27.129Z" },
 ]
 
 [[package]]

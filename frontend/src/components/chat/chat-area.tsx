@@ -100,9 +100,9 @@ function RuntimeIndicator({
 // ── 单条用户消息 ──────────────────────────────────────────────
 function UserBubble({ step }: { step: Step }) {
   return (
-    <div className="flex gap-3 justify-end">
-      <div className="max-w-[90%] md:max-w-[80%] rounded-lg bg-primary px-3.5 py-2.5 text-sm leading-relaxed text-primary-foreground">
-        <p className="whitespace-pre-wrap">{step.content}</p>
+    <div className="flex min-w-0 gap-3 justify-end">
+      <div className="min-w-0 max-w-[90%] md:max-w-[80%] rounded-lg bg-primary px-3.5 py-2.5 text-sm leading-relaxed text-primary-foreground">
+        <p className="whitespace-pre-wrap break-words">{step.content}</p>
       </div>
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary">
         <User className="h-4 w-4" />
@@ -114,11 +114,11 @@ function UserBubble({ step }: { step: Step }) {
 // ── 单条 assistant 文本消息 ───────────────────────────────────
  function AssistantBubble({ content }: { content: string }) {
    return (
-     <div className="flex gap-3 justify-start">
+     <div className="flex min-w-0 gap-3 justify-start">
        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
          <Bot className="h-4 w-4" />
        </div>
-        <div className="max-w-[90%] md:max-w-[80%] rounded-lg bg-muted px-3.5 py-2.5 text-sm leading-relaxed">
+        <div className="min-w-0 max-w-[90%] md:max-w-[80%] overflow-hidden rounded-lg bg-muted px-3.5 py-2.5 text-sm leading-relaxed">
         <MarkdownRenderer content={content} />
        </div>
      </div>
@@ -545,13 +545,13 @@ function PendingToolBlock({ tool }: { tool: PendingToolExecution }) {
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-500 text-white">
         <Code2 className="h-4 w-4" />
       </div>
-      <div className="max-w-[85%] w-full space-y-2">
+      <div className="min-w-0 max-w-[85%] flex-1 space-y-2">
         {tool.purpose && (
           <p className="text-xs text-muted-foreground italic">
             📌 {tool.purpose}
           </p>
         )}
-        <pre className="overflow-x-auto rounded-md bg-zinc-900 p-3 text-xs text-green-400 leading-relaxed">
+        <pre className="max-w-full overflow-x-auto rounded-md bg-zinc-900 p-3 text-xs text-green-400 leading-relaxed">
           <code>{tool.code}</code>
         </pre>
         {tool.status === "running" && (
@@ -732,8 +732,8 @@ function OverviewPanel({ type }: { type: "routine" | "pipeline" }) {
         </div>
       </div>
 
-      <ScrollArea className="flex-1">
-        <div className="p-6 space-y-3 max-w-2xl mx-auto">
+      <ScrollArea className="flex-1 min-h-0 min-w-0 px-4">
+        <div className="mx-auto w-full max-w-2xl min-w-0 space-y-4 py-4">
           {items.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
               <Icon className="h-10 w-10 opacity-30 mb-3" />

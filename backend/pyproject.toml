@@ -37,6 +37,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     "pyjwt[crypto]>=2.12.1",
     "httpx>=0.28.1",
+    "baostock>=0.9.1",
 ]
 
 
