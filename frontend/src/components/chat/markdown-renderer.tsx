@@ -20,14 +20,14 @@ interface MarkdownRendererProps {
 
 function MarkdownRendererRaw({ content, className }: MarkdownRendererProps) {
   return (
-    <div className={cn("markdown-body", className)}>
+    <div className={cn("markdown-body min-w-0 max-w-full", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
         components={{
           // ── 代码块（```code```）──
           pre: ({ children }) => (
-            <pre className="overflow-x-auto rounded-md bg-zinc-900 p-3 text-xs leading-relaxed my-2">
+            <pre className="my-2 w-fit min-w-0 max-w-full overflow-x-auto rounded-md bg-zinc-900 p-3 text-xs leading-relaxed">
               {children}
             </pre>
           ),
@@ -37,7 +37,7 @@ function MarkdownRendererRaw({ content, className }: MarkdownRendererProps) {
             if (langClass && /language-/.test(langClass)) {
               return (
                 <code
-                  className={cn("text-green-400 font-mono text-xs", langClass)}
+                  className={cn("block w-max min-w-0 text-green-400 font-mono text-xs", langClass)}
                   {...props}
                 >
                   {children}
@@ -56,8 +56,8 @@ function MarkdownRendererRaw({ content, className }: MarkdownRendererProps) {
           },
           // ── 表格样式 ──
           table: ({ children }) => (
-            <div className="overflow-x-auto my-2">
-              <table className="min-w-full border-collapse text-xs">{children}</table>
+            <div className="my-2 w-fit min-w-0 max-w-full overflow-x-auto">
+              <table className="border-collapse text-xs">{children}</table>
             </div>
           ),
           thead: ({ children }) => (
