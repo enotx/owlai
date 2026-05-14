@@ -101,8 +101,8 @@ function RuntimeIndicator({
 function UserBubble({ step }: { step: Step }) {
   return (
     <div className="flex min-w-0 gap-3 justify-end">
-      <div className="min-w-0 max-w-[90%] md:max-w-[80%] rounded-lg bg-primary px-3.5 py-2.5 text-sm leading-relaxed text-primary-foreground">
-        <p className="whitespace-pre-wrap break-words">{step.content}</p>
+      <div className="min-w-0 max-w-[90%] md:max-w-[80%] overflow-hidden rounded-lg bg-primary px-3.5 py-2.5 text-sm leading-relaxed text-primary-foreground">
+        <p style={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>{step.content}</p>
       </div>
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary">
         <User className="h-4 w-4" />
@@ -110,7 +110,6 @@ function UserBubble({ step }: { step: Step }) {
     </div>
   );
 }
-
 // ── 单条 assistant 文本消息 ───────────────────────────────────
  function AssistantBubble({ content }: { content: string }) {
    return (
