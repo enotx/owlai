@@ -193,7 +193,10 @@ async def _load_history_messages(
             })  # type: ignore
         elif s.step_type == "assistant_message":
             if content.strip():
-                messages.append({"role": "assistant", "content": content})
+                msg: ChatCompletionMessageParam = {"role": "assistant", "content": content}
+                if s.code:  # reasoning_content 存在 code 字段
+                    msg["reasoning_content"] = s.code  # type: ignore[typeddict-unknown-key]
+                messages.append(msg)
         elif s.step_type == "visualization":
             if content.strip():
                 messages.append({"role": "assistant", "content": f"[Visualization created] {content}"})

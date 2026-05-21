@@ -642,6 +642,7 @@ class BaseAgent(ABC):
 
             text_content = ""
             tool_calls_acc: dict[int, dict[str, str]] = {}
+            reasoning_content = ""
 
             async for chunk in stream:
                 choice = chunk.choices[0] if chunk.choices else None
@@ -649,6 +650,11 @@ class BaseAgent(ABC):
                     continue
 
                 delta = choice.delta
+
+                # 捕获 reasoning_content（thinking 模式）
+                rc = getattr(delta, "reasoning_content", None)
+                if rc:
+                    reasoning_content += rc
 
                 if delta.content:
                     token = delta.content
@@ -682,11 +688,14 @@ class BaseAgent(ABC):
                         "function": {"name": tc["name"], "arguments": tc["arguments"]},
                     })
 
-                messages.append({
+                assistant_msg: dict[str, Any] = {
                     "role": "assistant",
                     "content": text_content or None,
                     "tool_calls": tool_calls_for_api,
-                })
+                }
+                if reasoning_content:
+                    assistant_msg["reasoning_content"] = reasoning_content
+                messages.append(assistant_msg)
 
                 for idx in sorted(tool_calls_acc.keys()):
                     tc = tool_calls_acc[idx]
@@ -995,10 +1004,9 @@ class BaseAgent(ABC):
                     role="assistant",
                     step_type="assistant_message",
                     content=text_content,
-                    code=None,
+                    code=reasoning_content or None,   # ← 唯一改动
                     code_output=None,
-                    created_at=datetime.now(timezone.utc).replace(tzinfo=None),
-                )
+                    created_at=datetime.now(timezone.utc).replace(tzinfo=None),)
                 self.db.add(new_step)
                 await self.db.flush()
                 await self.db.commit()
@@ -1017,7 +1025,11 @@ class BaseAgent(ABC):
                         "created_at": new_step.created_at.isoformat(),
                     }
                 }
-                
+                assistant_msg: dict[str, Any] = {"role": "assistant", "content": text_content}
+                if reasoning_content:
+                    assistant_msg["reasoning_content"] = reasoning_content
+                messages.append(assistant_msg)
+
                 extra_events, extra_messages, should_continue = await self._on_text_complete(
                     text_content, messages, context
                 )
